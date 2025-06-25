@@ -1,0 +1,87 @@
+# CMake Build Folders
+# CMake's standard out-of-source build directory
+build/
+*/build/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+install_manifest.txt
+CTestTestfile.cmake
+.cmake/
+
+# Executables and Libraries (for cross-platform output in bin/)
+# We set CMAKE_RUNTIME_OUTPUT_DIRECTORY to bin/${CMAKE_SYSTEM_NAME}/${CMAKE_BUILD_TYPE}
+# So we should ignore the entire bin/ directory as it contains generated binaries.
+bin/
+
+# Object files
+*.o
+*.obj
+
+# Compiled shared libraries
+*.so
+*.dylib
+*.dll
+
+# Compiled static libraries
+*.a
+*.lib
+
+# IDE-specific files (e.g., VS Code, Visual Studio, Xcode, CLion)
+.vscode/
+.idea/
+*.VC.db
+*.VC.opendb
+*.suo
+*.user
+*.aps
+*.bsc
+*.ilk
+*.ipch
+*.pgc
+*.pgd
+*.pidb
+*.pdb
+*.sbr
+*.tlog
+*.vspscc
+*.vssscc
+*.vsdir
+*.vcproj.filters
+*.sln
+*.vcxproj
+*.vcxproj.user
+*.filters
+*.ncb
+*.opensdf
+*.sdf
+*.xcodeproj/
+*.xcworkspace/
+*.pro.user
+*.kdev4
+*.creator
+*.autosave
+
+# JUCE specific files
+# JUCE projects often generate platform-specific IDE project files and build folders
+# within the JUCE source itself or the project directory.
+# If using Projucer, these are often placed beside the .jucer file.
+JuceLibraryCode/
+Builds/
+*.jucer.user
+*.jucer.bak
+*.jucer.license
+*.jucer.settings
+
+# SFML specific (if any generated temp files)
+# SFML itself doesn't typically create many transient files in your project root,
+# but build output is covered by the .o, .so, .dll, etc. rules.
+
+# Other common temporary files
+*~
+*.bak
+*.tmp
+*.swp
+*.swo
+.DS_Store # macOS specific
+Thumbs.db # Windows specific
