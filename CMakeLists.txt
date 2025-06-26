@@ -94,3 +94,28 @@ target_compile_definitions(MULO PRIVATE
 
 install(TARGETS MULO DESTINATION bin)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin/${CMAKE_SYSTEM_NAME}/${CMAKE_BUILD_TYPE})
+
+# Copy SFML DLLs on Windows after build
+if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
+    set(SFML_DLLS_RELEASE
+        "${CMAKE_SOURCE_DIR}/external/windows/SFML-3.0.0-MSVC/bin/sfml-graphics-3.dll"
+        "${CMAKE_SOURCE_DIR}/external/windows/SFML-3.0.0-MSVC/bin/sfml-window-3.dll"
+        "${CMAKE_SOURCE_DIR}/external/windows/SFML-3.0.0-MSVC/bin/sfml-system-3.dll"
+    )
+    set(SFML_DLLS_DEBUG
+        "${CMAKE_SOURCE_DIR}/external/windows/SFML-3.0.0-MSVC/bin/sfml-graphics-d-3.dll"
+        "${CMAKE_SOURCE_DIR}/external/windows/SFML-3.0.0-MSVC/bin/sfml-window-d-3.dll"
+        "${CMAKE_SOURCE_DIR}/external/windows/SFML-3.0.0-MSVC/bin/sfml-system-d-3.dll"
+    )
+
+    set(RELEASE_DIR "${CMAKE_SOURCE_DIR}/bin/Windows/Release")
+    set(DEBUG_DIR   "${CMAKE_SOURCE_DIR}/bin/Windows/Debug")
+
+    add_custom_target(copy_sfml_dlls ALL
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${RELEASE_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${DEBUG_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${SFML_DLLS_RELEASE} "${RELEASE_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${SFML_DLLS_DEBUG}   "${DEBUG_DIR}"
+        COMMENT "Copying SFML DLLs to output folders"
+    )
+endif()
