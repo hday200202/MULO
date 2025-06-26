@@ -12,7 +12,7 @@ elseif (CMAKE_SYSTEM_NAME STREQUAL "Windows")
     add_subdirectory(external/windows/JUCE)
 endif()
 
-set(_SFML_INCLUDE_DIRS "")
+set(SFML_INCLUDE_DIRS "")
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     find_package(PkgConfig REQUIRED)
@@ -24,12 +24,17 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_library(SFML::Graphics ALIAS PkgConfig::SFML_PC)
     add_library(SFML::Window ALIAS PkgConfig::SFML_PC)
     add_library(SFML::System ALIAS PkgConfig::SFML_PC)
-    set(_SFML_INCLUDE_DIRS ${SFML_PC_INCLUDE_DIRS})
-else()
-    find_package(SFML CONFIG REQUIRED COMPONENTS graphics window system)
+    set(SFML_INCLUDE_DIRS ${SFML_PC_INCLUDE_DIRS})
+
+elseif (CMAKE_SYSTEM_NAME STREQUAL "Windows")
+    set(SFML_DIR "${CMAKE_SOURCE_DIR}/external/windows/SFML-3.0.0-MSVC/lib/cmake/SFML")
+    find_package(SFML COMPONENTS Graphics Window System REQUIRED)
+
 endif()
 
-find_package(CURL REQUIRED)
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    find_package(CURL REQUIRED)
+endif()
 
 file(GLOB_RECURSE MULO_SOURCES
     "${CMAKE_SOURCE_DIR}/src/*.cpp"
@@ -44,24 +49,39 @@ target_include_directories(MULO PRIVATE
     "${CMAKE_SOURCE_DIR}/src/frontend"
     "${CMAKE_SOURCE_DIR}/src/audio"
     "${CMAKE_SOURCE_DIR}/external"
-    ${_SFML_INCLUDE_DIRS}
-)
-
-target_link_libraries(MULO PRIVATE
-    juce::juce_core
-    juce::juce_data_structures
-    juce::juce_events
-    juce::juce_graphics
-    juce::juce_gui_basics
-    SFML::Graphics
-    SFML::Window
-    SFML::System
-    curl
+    ${SFML_INCLUDE_DIRS}
 )
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_libraries(MULO PRIVATE
+        juce::juce_core
+        juce::juce_data_structures
+        juce::juce_events
+        juce::juce_graphics
+        juce::juce_gui_basics
+        SFML::Graphics
+        SFML::Window
+        SFML::System
+        curl
+    )
+
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+    target_link_libraries(MULO PRIVATE
+        juce::juce_core
+        juce::juce_data_structures
+        juce::juce_events
+        juce::juce_graphics
+        juce::juce_gui_basics
+        SFML::Graphics
+        SFML::Window
+        SFML::System
+    )
+
+endif()
+
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_compile_definitions(MULO PRIVATE JUCE_LINUX=1)
-elseif (CMAKE_SYSTEM_NAME STREQUAL "Darwin") # macOS
+elseif (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
     target_compile_definitions(MULO PRIVATE JUCE_MAC=1)
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Windows")
     target_compile_definitions(MULO PRIVATE JUCE_WINDOWS=1)

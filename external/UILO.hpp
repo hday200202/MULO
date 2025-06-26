@@ -922,24 +922,29 @@ T* obj(Args&&... args) {
     return raw;
 }
 
-inline Row* row(auto&&... args) {
-    return obj<Row>(std::forward<decltype(args)>(args)...);
+template <typename... Args>
+inline Row* row(Args&&... args) {
+    return obj<Row>(std::forward<Args>(args)...);
 }
 
-inline Column* column(auto&&... args) {
-    return obj<Column>(std::forward<decltype(args)>(args)...);
+template <typename... Args>
+inline Column* column(Args&&... args) {
+    return obj<Column>(std::forward<Args>(args)...);
 }
 
-inline Spacer* spacer(auto&&... args) {
-    return obj<Spacer>(std::forward<decltype(args)>(args)...);
+template <typename... Args>
+inline Spacer* spacer(Args&&... args) {
+    return obj<Spacer>(std::forward<Args>(args)...);
 }
 
-inline Button* button(auto&&... args) {
-    return obj<Button>(std::forward<decltype(args)>(args)...);
+template <typename... Args>
+inline Button* button(Args&&... args) {
+    return obj<Button>(std::forward<Args>(args)...);
 }
 
-inline Text* text(auto&&... args) {
-    return obj<Text>(std::forward<decltype(args)>(args)...);
+template <typename... Args>
+inline Text* text(Args&&... args) {
+    return obj<Text>(std::forward<Args>(args)...);
 }
 
 // ---------------------------------------------------------------------------- //
