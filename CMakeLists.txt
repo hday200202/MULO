@@ -2,7 +2,11 @@ cmake_minimum_required(VERSION 3.20)
 
 project(MULO)
 
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin/${CMAKE_SYSTEM_NAME}/${CMAKE_BUILD_TYPE})
+# Set output directories for all build types and platforms
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG   ${CMAKE_SOURCE_DIR}/bin/${CMAKE_SYSTEM_NAME}/Debug)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE ${CMAKE_SOURCE_DIR}/bin/${CMAKE_SYSTEM_NAME}/Release)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${CMAKE_SOURCE_DIR}/bin/${CMAKE_SYSTEM_NAME}/RelWithDebInfo)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL ${CMAKE_SOURCE_DIR}/bin/${CMAKE_SYSTEM_NAME}/MinSizeRel)
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_subdirectory(external/linux/JUCE)
@@ -93,7 +97,6 @@ target_compile_definitions(MULO PRIVATE
 )
 
 install(TARGETS MULO DESTINATION bin)
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin/${CMAKE_SYSTEM_NAME}/${CMAKE_BUILD_TYPE})
 
 # Copy SFML DLLs on Windows after build
 if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
@@ -121,10 +124,8 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
 endif()
 
 # Copy assets folder to output directory for all platforms after build
-set(ASSETS_DST "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/assets")
-
 add_custom_target(copy_assets ALL
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/assets" "${ASSETS_DST}"
-    COMMENT "Copying assets folder to ${ASSETS_DST}"
+        "${CMAKE_SOURCE_DIR}/assets" "$<TARGET_FILE_DIR:MULO>/assets"
+    COMMENT "Copying assets folder to $<TARGET_FILE_DIR:MULO>/assets"
 )
