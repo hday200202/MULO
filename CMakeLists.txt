@@ -119,3 +119,12 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
         COMMENT "Copying SFML DLLs to output folders"
     )
 endif()
+
+# Copy assets folder to output directory for all platforms after build
+set(ASSETS_DST "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/assets")
+
+add_custom_target(copy_assets ALL
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/assets" "${ASSETS_DST}"
+    COMMENT "Copying assets folder to ${ASSETS_DST}"
+)
