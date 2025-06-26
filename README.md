@@ -1,4 +1,4 @@
-# MDAW
+# MULO
  Modular DAW empowers users to build and tailor their own audio production environment. Inspired by modern software development tools and professional audio platforms, 
  it supports user-defined plugins, workspace arrangement, and project management.
 
