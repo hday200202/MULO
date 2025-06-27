@@ -58,6 +58,14 @@ void loop() {
                             std::cout << "Bottom row clicked!" << std::endl;
                         }),
                 contains{
+                    slider(
+                        Modifier()
+                            .setfixedHeight(180)
+                            .setfixedWidth(25)
+                            .align(Align::CENTER_Y),
+                        sf::Color::White,
+                        sf::Color::Black
+                    ),
 
                 })
             })

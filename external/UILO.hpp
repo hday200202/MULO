@@ -275,6 +275,35 @@ private:
 
 
 // ---------------------------------------------------------------------------- //
+// Button Element
+// ---------------------------------------------------------------------------- //
+class Slider : public Element {
+public:
+    Slider(
+        Modifier modifier = default_mod,
+        sf::Color knobColor = sf::Color::White,
+        sf::Color barColor = sf::Color::Black
+    );
+
+    void update(sf::RectangleShape& parentBounds) override;
+    void render(sf::RenderTarget& target) override;
+    void checkClick(const sf::Vector2f& pos) override;
+
+private:
+    float m_minVal = 0.f;
+    float m_maxVal = 1.f;
+    float m_curVal = 0.75f;
+
+    sf::Color m_knobColor = sf::Color::White;
+    sf::Color m_barColor = sf::Color::Black;
+
+    sf::RectangleShape m_knobRect;
+    sf::RectangleShape m_barRect;
+};
+
+
+
+// ---------------------------------------------------------------------------- //
 // Page View
 // ---------------------------------------------------------------------------- //
 class Page {
@@ -330,6 +359,7 @@ private:
 
     bool m_running       = false;
     bool m_shouldUpdate  = true;
+    bool m_mouseDragging = false;
 
     sf::Vector2u m_lastWindowSize;
     std::optional<sf::Vector2f> m_clickPosition;
@@ -912,6 +942,63 @@ inline void Button::setText(const std::string& newStr) {
 
 
 // ---------------------------------------------------------------------------- //
+// Slider Implementation
+// ---------------------------------------------------------------------------- //
+inline Slider::Slider(
+    Modifier modifier,
+    sf::Color knobColor,
+    sf::Color barColor
+) : m_knobColor(knobColor), m_barColor(barColor) {
+    m_modifier = modifier;
+    m_knobRect.setFillColor(m_knobColor);
+    m_barRect.setFillColor(m_barColor);
+}
+
+inline void Slider::update(sf::RectangleShape& parentBounds) {
+    resize(parentBounds);
+    applyModifiers();
+
+    m_knobRect.setSize
+    ({
+        m_bounds.getSize().x, 
+        m_bounds.getSize().x * 0.25f
+    });
+    
+    m_barRect.setSize
+    ({
+        4.f, 
+        m_bounds.getSize().y
+    });
+
+    m_barRect.setPosition
+    ({
+        m_bounds.getPosition().x + (m_bounds.getSize().x / 2) - 2, 
+        m_bounds.getPosition().y
+    });
+
+    m_knobRect.setPosition
+    ({
+        m_bounds.getPosition().x, 
+        m_bounds.getPosition().y + m_bounds.getSize().y - (m_bounds.getSize().y * m_curVal)
+    });
+}
+
+inline void Slider::render(sf::RenderTarget& target) {
+    target.draw(m_barRect);
+    target.draw(m_knobRect);
+}
+
+inline void Slider::checkClick(const sf::Vector2f& pos) {
+    if (m_bounds.getGlobalBounds().contains(pos)) {
+        float relY = pos.y - m_bounds.getPosition().y;
+        float t = 1.f - (relY / m_bounds.getSize().y); // 1 at top, 0 at bottom
+        m_curVal = std::clamp(m_minVal + t * (m_maxVal - m_minVal), m_minVal, m_maxVal);
+    }
+}
+
+
+
+// ---------------------------------------------------------------------------- //
 // Element Factory
 // ---------------------------------------------------------------------------- //
 template <typename T, typename... Args>
@@ -946,6 +1033,13 @@ template <typename... Args>
 inline Text* text(Args&&... args) {
     return obj<Text>(std::forward<Args>(args)...);
 }
+
+template<typename... Args>
+inline Slider* slider(Args&&... args) {
+    return obj<Slider>(std::forward<Args>(args)...);
+}
+
+
 
 // ---------------------------------------------------------------------------- //
 // Page Implementation
@@ -1093,7 +1187,7 @@ inline void UILO::update() {
         return;
 
     sf::Vector2u currentSize = m_window.getSize();
-    if (currentSize != m_lastWindowSize) {
+    if (currentSize != m_lastWindowSize || m_clickPosition) {
         m_shouldUpdate = true;
         m_pollCount = 5;
     }
@@ -1119,6 +1213,8 @@ inline void UILO::update() {
         m_currentPage->dispatchClick(*m_clickPosition);
         m_clickPosition.reset();
     }
+
+    // if (m_mouseDragging && m_pollCount == 1) m_currentPage->dispatchClick(*m_clickPosition);
 }    
 
 inline void UILO::update(sf::View& windowView) {
@@ -1220,9 +1316,14 @@ inline void UILO::pollEvents() {
             if (mousePressed->button == sf::Mouse::Button::Left) {
                 if (m_windowOwned) m_clickPosition = m_window.mapPixelToCoords(mousePressed->position);
                 else m_clickPosition = m_userWindow->mapPixelToCoords(mousePressed->position);
+                m_mouseDragging = true;
             }
 
             m_shouldUpdate = true;
+        }
+
+        if (const auto* mouseReleased = event->getIf<sf::Event::MouseButtonReleased>()) {
+            m_mouseDragging = false;
         }
     }
 
