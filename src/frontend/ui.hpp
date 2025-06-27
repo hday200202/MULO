@@ -17,10 +17,7 @@ void loop() {
                     Modifier()
                         .setColor(sf::Color(210, 210, 210))
                         .setWidth(1.f)
-                        .setfixedHeight(64)
-                        .onClick([&]() {
-                            std::cout << "Bottom row clicked!" << std::endl;
-                        }),
+                        .setfixedHeight(64),
                 contains{
 
                 }),
@@ -30,10 +27,7 @@ void loop() {
                         .setColor(sf::Color(200, 200, 200))
                         .setfixedWidth(256)
                         .setHeight(1.f)
-                        .align(Align::LEFT)
-                        .onClick([&]() {
-                            std::cout << "Left column clicked!" << std::endl;
-                        }),
+                        .align(Align::LEFT),
                 contains{
                     spacer(Modifier().setfixedHeight(16)),
 
@@ -53,26 +47,47 @@ void loop() {
                     Modifier()
                         .setColor(sf::Color(210, 210, 210))
                         .setWidth(1.f)
-                        .setfixedHeight(256)
-                        .onClick([&]() {
-                            std::cout << "Bottom row clicked!" << std::endl;
-                        }),
+                        .setfixedHeight(256),
                 contains{
                     slider(
                         Modifier()
                             .setfixedHeight(180)
                             .setfixedWidth(25)
-                            .align(Align::CENTER_Y),
+                            .align(Align::CENTER_Y | Align::CENTER_X),
                         sf::Color::White,
-                        sf::Color::Black
+                        sf::Color::Black,
+                        "My Slider"
                     ),
+
+                    button(
+                        Modifier()
+                            .setfixedHeight(64)
+                            .setfixedWidth(256)
+                            .align(Align::CENTER_Y | Align::CENTER_X)
+                            .setColor(sf::Color::Red),
+                        ButtonStyle::Pill,
+                        "My Button",
+                        "assets/fonts/SpaceMono-Regular.ttf",
+                        sf::Color::White, // <-- text color
+                        "My Button"
+                    )
 
                 })
             })
         }), "base" }
     });
 
+    float sliderVal = sliders["My Slider"]->getValue();
     while (ui.isRunning()) {
+        if (sliders["My Slider"]->getValue() != sliderVal) {
+            sliderVal = sliders["My Slider"]->getValue();
+            std::cout << sliderVal << std::endl;
+        }
+
+        if (buttons["My Button"]->isClicked()) {
+            std::cout << "Button clicked!" << std::endl;
+        }
+        
         ui.update();
         ui.render();
     }

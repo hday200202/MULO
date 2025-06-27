@@ -31,6 +31,10 @@ class Row;
 class Column;
 class Page;
 class UILO;
+class Slider;
+class Text;
+class Spacer;
+class Button;
 
 
 
@@ -40,6 +44,12 @@ class UILO;
 static std::unordered_set<Page*> uilo_owned_pages;
 static std::vector<std::unique_ptr<Element>> uilo_owned_elements;
 static bool time_to_delete = false;
+
+static std::unordered_map<std::string, Slider*> sliders;
+static std::unordered_map<std::string, Container*> containers;
+static std::unordered_map<std::string, Text*> texts;
+static std::unordered_map<std::string, Spacer*> spacers;
+static std::unordered_map<std::string, Button*> buttons;
 
 
 
@@ -137,6 +147,8 @@ public:
     Modifier m_modifier;
     bool m_uiloOwned = false;
 
+    std::string m_name = "";
+
     Element();
     virtual ~Element();
 
@@ -160,7 +172,7 @@ protected:
 
 class Container : public Element {
 public:
-    Container(std::initializer_list<Element*> elements);
+    Container(std::initializer_list<Element*> elements, const std::string& name = "");
     Container(Modifier modifier, std::initializer_list<Element*> elements);
     ~Container();
 
@@ -217,7 +229,7 @@ private:
 // ---------------------------------------------------------------------------- //
 class Text : public Element {
 public:
-    Text(Modifier modifier = default_mod, const std::string& str = "", sf::Font font = sf::Font());
+    Text(Modifier modifier = default_mod, const std::string& str = "", sf::Font font = sf::Font(), const std::string& name = "");
     Text(Modifier modifier = default_mod, const std::string& str = "", const std::string& fontPath = "");
     void update(sf::RectangleShape& parentBounds) override;
     void render(sf::RenderTarget& target) override;
@@ -237,7 +249,7 @@ private:
 // ---------------------------------------------------------------------------- //
 class Spacer : public Element {
 public:
-    Spacer(Modifier& modifier);
+    Spacer(Modifier& modifier, const std::string& name = "");
     void update(sf::RectangleShape& parentBounds) override;
 };
 
@@ -253,7 +265,8 @@ public:
         ButtonStyle buttonStyle = ButtonStyle::Default,
         const std::string& buttonText = "",
         const std::string& textFont = "",
-        sf::Color textColor = sf::Color::White
+        sf::Color textColor = sf::Color::White,
+        const std::string& name = ""
     );
 
     void update(sf::RectangleShape& parentBounds) override;
@@ -261,6 +274,11 @@ public:
     void checkClick(const sf::Vector2f& pos) override;
 
     void setText(const std::string& newStr);
+
+    bool isClicked() const { return m_isClicked; }
+    bool isHovered() const { return m_isHovered; }
+
+    void setClicked(bool clicked) { m_isClicked = clicked; }
 
 private:
     ButtonStyle m_buttonStyle = ButtonStyle::Default;
@@ -270,24 +288,31 @@ private:
     sf::CircleShape m_rightCircle;
 
     Text* m_text;
+
+    bool m_isClicked = false;
+    bool m_isHovered = false;
 };
 
 
 
 // ---------------------------------------------------------------------------- //
-// Button Element
+// Slider Element
 // ---------------------------------------------------------------------------- //
 class Slider : public Element {
 public:
     Slider(
         Modifier modifier = default_mod,
         sf::Color knobColor = sf::Color::White,
-        sf::Color barColor = sf::Color::Black
+        sf::Color barColor = sf::Color::Black,
+        const std::string& name = ""
     );
 
     void update(sf::RectangleShape& parentBounds) override;
     void render(sf::RenderTarget& target) override;
     void checkClick(const sf::Vector2f& pos) override;
+
+    float getValue() const;
+    void setValue(float newVal);
 
 private:
     float m_minVal = 0.f;
@@ -469,9 +494,16 @@ inline void Element::applyModifiers() {
 // ---------------------------------------------------------------------------- //
 // Container Implementation
 // ---------------------------------------------------------------------------- //
-inline Container::Container(std::initializer_list<Element*> elements) {
+inline Container::Container(std::initializer_list<Element*> elements, const std::string& name) {
     for (auto& e : elements)
         m_elements.push_back(e);
+
+    m_name = name;
+    if (m_name != "" && containers.find(m_name) == containers.end()) {
+        containers[m_name] = this;
+    } else {
+        std::cerr << "Warning: Element name '" << m_name << "' already exists or is empty." << std::endl;
+    }
 }
 
 inline Container::Container(Modifier modifier, std::initializer_list<Element*> elements) {
@@ -772,9 +804,15 @@ inline void Column::applyHorizontalAlignment(Element* e, const sf::RectangleShap
 // ---------------------------------------------------------------------------- //
 // Text Implementation
 // ---------------------------------------------------------------------------- //
-inline Text::Text(Modifier modifier, const std::string& str, sf::Font font) 
-: m_string(str), m_font(font) {
+inline Text::Text(Modifier modifier, const std::string& str, sf::Font font, const std::string& name) 
+: m_string(str), m_font(font){
     m_modifier = modifier;
+    m_name = name;
+    if (m_name != "" && texts.find(m_name) == texts.end()) {
+        texts[m_name] = this;
+    } else {
+        std::cerr << "Warning: Element name '" << m_name << "' already exists or is empty." << std::endl;
+    }
 }
 
 inline Text::Text(Modifier modifier, const std::string& str, const std::string& fontPath)
@@ -827,8 +865,14 @@ inline void Text::setString(const std::string& newStr) {
 // ---------------------------------------------------------------------------- //
 // Spacer Implementation
 // ---------------------------------------------------------------------------- //
-inline Spacer::Spacer(Modifier& modifier) { 
+inline Spacer::Spacer(Modifier& modifier, const std::string& name) { 
     m_modifier = modifier;
+    m_name = name;
+    if (m_name != "" && spacers.find(m_name) == spacers.end()) {
+        spacers[m_name] = this;
+    } else {
+        std::cerr << "Warning: Element name '" << m_name << "' already exists or is empty." << std::endl;
+    }
 }
 
 inline void Spacer::update(sf::RectangleShape& parentBounds) {
@@ -848,7 +892,8 @@ inline Button::Button(
     ButtonStyle buttonStyle, 
     const std::string& buttonText,
     const std::string& textFont,
-    sf::Color textColor
+    sf::Color textColor,
+    const std::string& name
 ) {
     m_modifier = modifier;
     m_buttonStyle = buttonStyle;
@@ -866,6 +911,13 @@ inline Button::Button(
             buttonText, 
             textFont
         );
+    }
+
+    m_name = name;
+    if (m_name != "" && buttons.find(m_name) == buttons.end()) {
+        buttons[m_name] = this;
+    } else {
+        std::cerr << "Warning: Element name '" << m_name << "' already exists or is empty." << std::endl;
     }
 }
 
@@ -925,11 +977,14 @@ inline void Button::render (sf::RenderTarget& target) {
     if (m_text) {
         m_text->render(target);
     }
+
+    m_isClicked = false;
 }
 
 inline void Button::checkClick(const sf::Vector2f& pos) {
     if (m_bounds.getGlobalBounds().contains(pos)) {
         if (m_modifier.getOnClick()) m_modifier.getOnClick()();
+        m_isClicked = true;
     }
 }
 
@@ -947,11 +1002,19 @@ inline void Button::setText(const std::string& newStr) {
 inline Slider::Slider(
     Modifier modifier,
     sf::Color knobColor,
-    sf::Color barColor
+    sf::Color barColor,
+    const std::string& name
 ) : m_knobColor(knobColor), m_barColor(barColor) {
     m_modifier = modifier;
     m_knobRect.setFillColor(m_knobColor);
     m_barRect.setFillColor(m_barColor);
+
+    m_name = name;
+    if (m_name != "" && sliders.find(m_name) == sliders.end()) {
+        sliders[m_name] = this;
+    } else {
+        std::cerr << "Warning: Element name '" << m_name << "' already exists or is empty." << std::endl;
+    }
 }
 
 inline void Slider::update(sf::RectangleShape& parentBounds) {
@@ -994,6 +1057,14 @@ inline void Slider::checkClick(const sf::Vector2f& pos) {
         float t = 1.f - (relY / m_bounds.getSize().y); // 1 at top, 0 at bottom
         m_curVal = std::clamp(m_minVal + t * (m_maxVal - m_minVal), m_minVal, m_maxVal);
     }
+}
+
+inline float Slider::getValue() const {
+    return m_curVal;
+}
+
+inline void Slider::setValue(float newVal) {
+    m_curVal = newVal < m_minVal ? m_minVal : (newVal > m_maxVal ? m_maxVal : newVal);
 }
 
 
@@ -1182,6 +1253,10 @@ inline UILO::~UILO() {
 
 inline void UILO::update() {
     pollEvents();
+
+    for (auto& [name, btn] : buttons) {
+        btn->setClicked(false);
+    }
 
     if (!m_windowOwned)
         return;
