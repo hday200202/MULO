@@ -48,7 +48,14 @@ void application() {
                         .setfixedHeight(64)
                         .setColor(sf::Color(200, 200, 200)),
                 contains{
-
+                    button(
+                        Modifier().align(Align::CENTER_Y | Align::CENTER_X).setHeight(.75f).setfixedWidth(96).setColor(sf::Color::Red),
+                        ButtonStyle::Rect,
+                        "Save",
+                        "assets/fonts/OpenSans-Regular.ttf",
+                        sf::Color::White,
+                        "SAVE"
+                    )
                 }),
 
                 row(
@@ -155,6 +162,10 @@ void application() {
         if (buttons["SNARE"]->isClicked()) {
             engine.setPosition(25.0);
             engine.play();
+        }
+
+        if (buttons["SAVE"]->isClicked()) {
+            std::cout << "Save button clicked!\n";
         }
 
         bool currNumpad1 = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Numpad1);

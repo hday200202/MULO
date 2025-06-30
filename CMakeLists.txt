@@ -1,13 +1,13 @@
 cmake_minimum_required(VERSION 3.20)
-
 project(MULO)
 
-# Set output directories for all build types and platforms
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG   ${CMAKE_SOURCE_DIR}/bin/${CMAKE_SYSTEM_NAME}/Debug)
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE ${CMAKE_SOURCE_DIR}/bin/${CMAKE_SYSTEM_NAME}/Release)
+# Output directories per build type and platform
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG         ${CMAKE_SOURCE_DIR}/bin/${CMAKE_SYSTEM_NAME}/Debug)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE       ${CMAKE_SOURCE_DIR}/bin/${CMAKE_SYSTEM_NAME}/Release)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${CMAKE_SOURCE_DIR}/bin/${CMAKE_SYSTEM_NAME}/RelWithDebInfo)
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL ${CMAKE_SOURCE_DIR}/bin/${CMAKE_SYSTEM_NAME}/MinSizeRel)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL    ${CMAKE_SOURCE_DIR}/bin/${CMAKE_SYSTEM_NAME}/MinSizeRel)
 
+# Platform-specific JUCE
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_subdirectory(external/linux/JUCE)
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
@@ -16,6 +16,7 @@ elseif (CMAKE_SYSTEM_NAME STREQUAL "Windows")
     add_subdirectory(external/windows/JUCE)
 endif()
 
+# SFML Setup
 set(SFML_INCLUDE_DIRS "")
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -26,40 +27,28 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
         sfml-system
     )
     add_library(SFML::Graphics ALIAS PkgConfig::SFML_PC)
-    add_library(SFML::Window ALIAS PkgConfig::SFML_PC)
-    add_library(SFML::System ALIAS PkgConfig::SFML_PC)
+    add_library(SFML::Window   ALIAS PkgConfig::SFML_PC)
+    add_library(SFML::System   ALIAS PkgConfig::SFML_PC)
     set(SFML_INCLUDE_DIRS ${SFML_PC_INCLUDE_DIRS})
-    find_package(PkgConfig REQUIRED)
+    find_package(CURL REQUIRED)
 
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Windows")
     set(SFML_DIR "${CMAKE_SOURCE_DIR}/external/windows/SFML-3.0.0-MSVC/lib/cmake/SFML")
-    find_package(SFML COMPONENTS Graphics Window System REQUIRED)
+    find_package(SFML 3.0.1 COMPONENTS Graphics Window System REQUIRED)
+
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
-    set(SFML_DIR "${CMAKE_SOURCE_DIR}/external/mac/SFML-3.0.0-CLANG/lib/cmake/SFML")
-    find_package(SFML COMPONENTS Graphics Window System REQUIRED)
-else()
-    message(FATAL_ERROR "Unsupported platform: ${CMAKE_SYSTEM_NAME}")
+    find_package(SFML 3.0.1 COMPONENTS Graphics Window System REQUIRED)
 endif()
 
-if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    find_package(CURL REQUIRED)
-endif()
-
+# Gather source files
 file(GLOB_RECURSE MULO_SOURCES
     "${CMAKE_SOURCE_DIR}/src/*.cpp"
     "${CMAKE_SOURCE_DIR}/src/frontend/*.cpp"
     "${CMAKE_SOURCE_DIR}/src/audio/*.cpp"
 )
 
+# Define executable
 add_executable(MULO ${MULO_SOURCES})
-
-target_include_directories(MULO PRIVATE
-    "${CMAKE_SOURCE_DIR}/src"
-    "${CMAKE_SOURCE_DIR}/src/frontend"
-    "${CMAKE_SOURCE_DIR}/src/audio"
-    "${CMAKE_SOURCE_DIR}/external"
-    ${SFML_INCLUDE_DIRS}
-)
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     find_package(PkgConfig REQUIRED)
@@ -70,8 +59,18 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_definitions(${GTK3_CFLAGS_OTHER} ${WEBKIT2GTK_CFLAGS_OTHER})
 endif()
 
+# Include directories
+target_include_directories(MULO PRIVATE
+    "${CMAKE_SOURCE_DIR}/src"
+    "${CMAKE_SOURCE_DIR}/src/frontend"
+    "${CMAKE_SOURCE_DIR}/src/audio"
+    "${CMAKE_SOURCE_DIR}/external"
+    ${SFML_INCLUDE_DIRS}
+)
+
+# Link libraries
 target_link_libraries(MULO PRIVATE
-    # JUCE Core GUI Stuff
+    # JUCE Core GUI
     juce::juce_core
     juce::juce_data_structures
     juce::juce_events
@@ -94,22 +93,16 @@ target_link_libraries(MULO PRIVATE
     $<$<STREQUAL:${CMAKE_SYSTEM_NAME},Linux>:curl>
 )
 
-if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    target_compile_definitions(MULO PRIVATE JUCE_LINUX=1)
-elseif (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
-    target_compile_definitions(MULO PRIVATE JUCE_MAC=1)
-elseif (CMAKE_SYSTEM_NAME STREQUAL "Windows")
-    target_compile_definitions(MULO PRIVATE JUCE_WINDOWS=1)
-endif()
-
+# Compiler definitions
 target_compile_definitions(MULO PRIVATE
     JUCE_SHARED_CODE=1
     JUCE_STANDALONE_APPLICATION=1
 )
 
+# Install target
 install(TARGETS MULO DESTINATION bin)
 
-# Copy SFML DLLs on Windows after build
+# Windows: Copy SFML DLLs after build
 if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
     set(SFML_DLLS_RELEASE
         "${CMAKE_SOURCE_DIR}/external/windows/SFML-3.0.0-MSVC/bin/sfml-graphics-3.dll"
@@ -134,7 +127,7 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
     )
 endif()
 
-# Copy assets folder to output directory for all platforms after build
+# Copy assets to output directory
 add_custom_target(copy_assets ALL
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/assets" "$<TARGET_FILE_DIR:MULO>/assets"
