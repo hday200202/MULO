@@ -15,6 +15,15 @@ class Instrument;
 class Track;
 class Effect;
 
+/**
+ * @brief Main audio engine for playback and composition management.
+ * 
+ * Responsibilities:
+ * - Manages audio device input/output.
+ * - Handles playback transport (play, pause, stop).
+ * - Manages the current Composition (project/song).
+ * - Processes and mixes audio from multiple tracks.
+ */
 class Engine : public juce::AudioIODeviceCallback {
 public:
     juce::AudioFormatManager formatManager;
@@ -67,6 +76,15 @@ private:
     void processBlock(juce::AudioBuffer<float>& outputBuffer, int numSamples);
 };
 
+/**
+ * @brief Represents a musical composition/project.
+ * 
+ * Contains:
+ * - Name
+ * - BPM (beats per minute)
+ * - Time signature
+ * - Collection of tracks
+ */
 struct Composition {
     std::string name = "untitled";
     double bpm = 120;
@@ -82,6 +100,14 @@ struct Composition {
     ~Composition();
 };
 
+/**
+ * @brief Represents a single track in a composition.
+ * 
+ * Holds:
+ * - A set of audio clips.
+ * - Volume (in decibels) and pan (-1 left, 0 center, 1 right).
+ * - Mixing logic for this track.
+ */
 class Track {
 public:
     Track(juce::AudioFormatManager& formatManager);
@@ -117,6 +143,16 @@ private:
     juce::AudioFormatManager& formatManager;
 };
 
+/**
+ * @brief Represents a single audio clip on a track.
+ * 
+ * Parameters:
+ * - Source audio file (e.g., WAV, MP3)
+ * - Start time in the composition
+ * - Offset into the audio file
+ * - Duration
+ * - Volume relative to the track
+ */
 struct AudioClip {
     juce::File sourceFile;      // mp3, wav, flac, ... file
     double startTime;           // where it is played in the composition
