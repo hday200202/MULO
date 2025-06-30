@@ -1,12 +1,22 @@
 #pragma once
 
 #include "UILO.hpp"
-#include "Engine.hpp" // Your audio engine
+#include "Engine.hpp"
 
 using namespace uilo;
 
-void loop() {
+void application() {
     Engine engine;
+    engine.newComposition("test");
+
+    // Add one track
+    engine.addTrack("Track 1");
+    auto* track = engine.getTrack(0);
+
+    // Load a clip starting at 0s
+    juce::File sampleFile("assets/test_samples/kick.wav");
+    AudioClip clip(sampleFile, 0.0, 0.0, sampleFile.getSize() / 44100.0);
+    track->addClip(clip);
 
     UILO ui("MULO", {{
         page({
@@ -87,9 +97,9 @@ void loop() {
         }), "base" }
     });
 
-    float sliderVal = sliders["My Slider"]->getValue();
-
     while (ui.isRunning()) {
+        if (buttons["My Button"]->isClicked())
+            engine.play();
         ui.update();
         ui.render();
     }

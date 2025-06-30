@@ -499,10 +499,12 @@ inline Container::Container(std::initializer_list<Element*> elements, const std:
         m_elements.push_back(e);
 
     m_name = name;
-    if (m_name != "" && containers.find(m_name) == containers.end()) {
-        containers[m_name] = this;
-    } else {
-        std::cerr << "Warning: Element name '" << m_name << "' already exists or is empty." << std::endl;
+    if (!m_name.empty()) {
+        if (containers.find(m_name) == containers.end()) {
+            containers[m_name] = this;
+        } else {
+            std::cerr << "Warning: Name '" << m_name << "' already exists." << std::endl;
+        }
     }
 }
 
@@ -808,10 +810,12 @@ inline Text::Text(Modifier modifier, const std::string& str, sf::Font font, cons
 : m_string(str), m_font(font){
     m_modifier = modifier;
     m_name = name;
-    if (m_name != "" && texts.find(m_name) == texts.end()) {
-        texts[m_name] = this;
-    } else {
-        std::cerr << "Warning: Element name '" << m_name << "' already exists or is empty." << std::endl;
+    if (!m_name.empty()) {
+        if (texts.find(m_name) == texts.end()) {
+            texts[m_name] = this;
+        } else {
+            std::cerr << "Warning: Name '" << m_name << "' already exists." << std::endl;
+        }
     }
 }
 
@@ -868,10 +872,12 @@ inline void Text::setString(const std::string& newStr) {
 inline Spacer::Spacer(Modifier& modifier, const std::string& name) { 
     m_modifier = modifier;
     m_name = name;
-    if (m_name != "" && spacers.find(m_name) == spacers.end()) {
-        spacers[m_name] = this;
-    } else {
-        std::cerr << "Warning: Element name '" << m_name << "' already exists or is empty." << std::endl;
+    if (!m_name.empty()) {
+        if (spacers.find(m_name) == spacers.end()) {
+            spacers[m_name] = this;
+        } else {
+            std::cerr << "Warning: Name '" << m_name << "' already exists." << std::endl;
+        }
     }
 }
 
@@ -914,10 +920,12 @@ inline Button::Button(
     }
 
     m_name = name;
-    if (m_name != "" && buttons.find(m_name) == buttons.end()) {
-        buttons[m_name] = this;
-    } else {
-        std::cerr << "Warning: Element name '" << m_name << "' already exists or is empty." << std::endl;
+    if (!m_name.empty()) {
+        if (buttons.find(m_name) == buttons.end()) {
+            buttons[m_name] = this;
+        } else {
+            std::cerr << "Warning: Name '" << m_name << "' already exists." << std::endl;
+        }
     }
 }
 
@@ -1010,10 +1018,12 @@ inline Slider::Slider(
     m_barRect.setFillColor(m_barColor);
 
     m_name = name;
-    if (m_name != "" && sliders.find(m_name) == sliders.end()) {
-        sliders[m_name] = this;
-    } else {
-        std::cerr << "Warning: Element name '" << m_name << "' already exists or is empty." << std::endl;
+    if (!m_name.empty()) {
+        if (sliders.find(m_name) == sliders.end()) {
+            sliders[m_name] = this;
+        } else {
+            std::cerr << "Warning: Name '" << m_name << "' already exists." << std::endl;
+        }
     }
 }
 

@@ -1,4 +1,3 @@
-#include <iostream>
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_audio_basics/juce_audio_basics.h>
@@ -7,8 +6,6 @@
 #include "frontend/ui.hpp"
 
 int main() {
-    juce::String s = "JUCE is working!";
-    std::cout << s << std::endl;
-    loop();
+    application();
     return 0;
 }

@@ -1,79 +1,256 @@
 #include "Engine.hpp"
 
-Engine::Engine()
-{
+//==============================================================================
+// ENGINE 
+//==============================================================================
+
+Engine::Engine() {
+    formatManager.registerBasicFormats();
+    deviceManager.initialise(0, 2, nullptr, true);
+    deviceManager.addAudioCallback(this);
 }
 
-Engine::Engine(std::unique_ptr<Composition> newComposition)
-{
+Engine::~Engine() {
+    deviceManager.removeAudioCallback(this);
 }
 
-Engine::~Engine()
-{
+void Engine::play() {
+    double maxEnd = 0.0;
+
+    if (currentComposition) {
+        for (auto* track : currentComposition->tracks) {
+            for (const auto& clip : track->getClips()) {
+                double end = clip.startTime + clip.duration;
+                if (end > maxEnd)
+                    maxEnd = end;
+            }
+        }
+    }
+
+    if (positionSeconds >= maxEnd)
+        positionSeconds = 0.0;
+
+    playing = true;
 }
 
-void Engine::loadComposition(const std::string &compositionPath)
-{
+void Engine::pause() {
+    playing = false;
 }
 
-void Engine::addTrack(const std::string &trackName)
-{
+void Engine::stop() {
+    playing = false;
+    positionSeconds = 0.0;
 }
 
-void Engine::removeTrack(const std::string &trackName)
-{
+void Engine::setPosition(double s) {
+    positionSeconds = juce::jmax(0.0, s);
 }
 
-std::unique_ptr<Track> Engine::getTrack(const std::string &trackName)
-{
-    return std::unique_ptr<Track>();
+double Engine::getPosition() const {
+    return positionSeconds;
 }
 
-std::vector<std::unique_ptr<Track>> Engine::getAllTracks()
-{
-    return std::vector<std::unique_ptr<Track>>();
+bool Engine::isPlaying() const {
+    return playing;
 }
 
-Composition::Composition()
-{
+void Engine::newComposition(const std::string& name) {
+    currentComposition = std::make_unique<Composition>();
+    currentComposition->name = name;
 }
 
-Composition::Composition(const std::string &compositionPath)
-{
+void Engine::loadComposition(const std::string&) {}
+
+void Engine::saveComposition(const std::string&) {}
+
+void Engine::addTrack(const std::string& name) {
+    auto* t = new Track(formatManager);
+    t->setName(name);
+    currentComposition->tracks.push_back(t);
 }
 
-Composition::~Composition()
-{
+void Engine::removeTrack(int idx) {
+    if (!currentComposition)
+        return;
+
+    if (idx >= 0 && idx < currentComposition->tracks.size()) {
+        delete currentComposition->tracks[idx];
+        currentComposition->tracks.erase(currentComposition->tracks.begin() + idx);
+    }
 }
 
-Track::Track()
-{
+Track* Engine::getTrack(int idx) {
+    if (!currentComposition)
+        return nullptr;
+
+    if (idx >= 0 && idx < currentComposition->tracks.size())
+        return currentComposition->tracks[idx];
+
+    return nullptr;
 }
 
-Track::~Track()
-{
+std::vector<Track*>& Engine::getAllTracks() {
+    return currentComposition->tracks;
 }
 
-void Track::setVolume(const float db)
-{
+void Engine::audioDeviceIOCallbackWithContext(
+    const float* const*,
+    int numInputChannels,
+    float* const* outputChannelData,
+    int numOutputChannels,
+    int numSamples,
+    const juce::AudioIODeviceCallbackContext&
+) {
+    juce::AudioBuffer<float> out(outputChannelData, numOutputChannels, numSamples);
+    out.clear();
+
+    if (playing) {
+        processBlock(out, numSamples);
+        positionSeconds += (double)numSamples / sampleRate;
+    }
+
+    DBG("AudioDeviceIOCallbackWithContext");
 }
 
-void Track::setPan(const float pan)
-{
+void Engine::audioDeviceAboutToStart(juce::AudioIODevice* device) {
+    sampleRate = device->getCurrentSampleRate();
+    tempMixBuffer.setSize(device->getOutputChannelNames().size(), 512);
+    tempMixBuffer.clear();
+    positionSeconds = 0.0;
+
+    DBG("Device about to start with SR: " << sampleRate);
 }
 
-void Track::setTrackIndex(const int newIndex)
-{
+void Engine::audioDeviceStopped() {
+    tempMixBuffer.setSize(0, 0);
 }
 
-void Track::toggleMute()
-{
+void Engine::processBlock(juce::AudioBuffer<float>& output, int numSamples) {
+    if (!currentComposition)
+        return;
+
+    for (auto* track : currentComposition->tracks) {
+        track->process(positionSeconds, output, numSamples, sampleRate);
+    }
 }
 
-void Track::toggleSolo()
-{
+
+//==============================================================================
+// COMPOSITION 
+//==============================================================================
+
+Composition::Composition() {}
+
+Composition::~Composition() {
+    for (auto* t : tracks)
+        delete t;
 }
 
-void Track::addClip(const AudioClip &newClip)
-{
+Composition::Composition(const std::string&) {}
+
+
+//==============================================================================
+// TRACK 
+//==============================================================================
+
+Track::Track(juce::AudioFormatManager& fm) : formatManager(fm) {}
+
+Track::~Track() {}
+
+void Track::setName(const std::string& n) {
+    name = n;
 }
+
+std::string Track::getName() const {
+    return name;
+}
+
+void Track::setVolume(float db) {
+    volumeDb = db;
+}
+
+float Track::getVolume() const {
+    return volumeDb;
+}
+
+void Track::setPan(float p) {
+    pan = juce::jlimit(-1.f, 1.f, p);
+}
+
+float Track::getPan() const {
+    return pan;
+}
+
+void Track::addClip(const AudioClip& c) {
+    clips.push_back(c);
+}
+
+void Track::removeClip(int idx) {
+    if (idx >= 0 && idx < clips.size())
+        clips.erase(clips.begin() + idx);
+}
+
+const std::vector<AudioClip>& Track::getClips() const {
+    return clips;
+}
+
+void Track::process(double playheadSeconds,
+                    juce::AudioBuffer<float>& output,
+                    int numSamples,
+                    double sampleRate) {
+    const AudioClip* active = nullptr;
+
+    for (const auto& c : clips) {
+        if (playheadSeconds >= c.startTime &&
+            playheadSeconds < c.startTime + c.duration) {
+            active = &c;
+            break;
+        }
+    }
+
+    if (!active)
+        return;
+
+    auto reader = std::unique_ptr<juce::AudioFormatReader>(
+        formatManager.createReaderFor(active->sourceFile));
+
+    if (!reader)
+        return;
+
+    double clipTime = playheadSeconds - active->startTime;
+    double filePos = active->offset + clipTime;
+    juce::int64 startSample = static_cast<juce::int64>(filePos * reader->sampleRate);
+
+    juce::AudioBuffer<float> clipBuf((int)reader->numChannels, numSamples);
+    clipBuf.clear();
+
+    reader->read(&clipBuf, 0, numSamples, startSample, true, true);
+
+    float gain = juce::Decibels::decibelsToGain(volumeDb) * active->volume;
+
+    for (int ch = 0; ch < output.getNumChannels(); ++ch) {
+        float panL = (1.0f - juce::jlimit(-1.f, 1.f, pan)) * 0.5f;
+        float panR = (1.0f + juce::jlimit(-1.f, 1.f, pan)) * 0.5f;
+        float panGain = (ch == 0) ? panL : panR;
+
+        output.addFrom(ch, 0,
+                       clipBuf, ch % clipBuf.getNumChannels(),
+                       0, numSamples,
+                       gain * panGain);
+    }
+}
+
+
+//==============================================================================
+// AUDIO CLIP 
+//==============================================================================
+AudioClip::AudioClip()
+: startTime(0.0), offset(0.0), duration(0.0), volume(1.0f) {}
+
+AudioClip::AudioClip(
+    const juce::File& sourceFile, 
+    double startTime, 
+    double offset, 
+    double duration, 
+    float volume
+) : sourceFile(sourceFile), startTime(startTime), offset(offset), duration(duration), volume(volume) {}

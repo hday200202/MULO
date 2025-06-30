@@ -5,6 +5,7 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_audio_basics/juce_audio_basics.h>
 
+#include <memory>
 #include <vector>
 #include <string>
 
@@ -14,24 +15,56 @@ class Instrument;
 class Track;
 class Effect;
 
-class Engine {
+class Engine : public juce::AudioIODeviceCallback {
 public:
+    juce::AudioFormatManager formatManager;
+
     Engine();
-    Engine(std::unique_ptr<Composition> newComposition);
     ~Engine();
 
-    void loadComposition(const std::string& compositionPath);
+    // Playback 
     void play();
     void pause();
-    void addTrack(const std::string& trackName = "");
-    void removeTrack(const std::string& trackName);
-    void setPosition(const double newPosition);
+    void stop();
+    void setPosition(double seconds);
+    double getPosition() const;
+    bool isPlaying() const;
 
-    std::unique_ptr<Track> getTrack(const std::string& trackName = "");
-    std::vector<std::unique_ptr<Track>> getAllTracks();
+    // Composition 
+    void newComposition(const std::string& name = "untitled");
+    void loadComposition(const std::string& path);
+    void saveComposition(const std::string& path);
+
+    // Track Management 
+    void addTrack(const std::string& name = "");
+    void removeTrack(int index);
+    Track* getTrack(int index);
+    std::vector<Track*>& getAllTracks();
+
+    // Audio Callbacks 
+    void audioDeviceIOCallbackWithContext(
+        const float* const* inputChannelData,
+        int numInputChannels,
+        float* const* outputChannelData,
+        int numOutputChannels,
+        int numSamples,
+        const juce::AudioIODeviceCallbackContext& context
+    ) override;
+
+    void audioDeviceAboutToStart(juce::AudioIODevice* device) override;
+    void audioDeviceStopped() override;
 
 private:
-    std::unique_ptr<Composition> m_currentComposition;
+    juce::AudioDeviceManager deviceManager;
+    std::unique_ptr<Composition> currentComposition;
+
+    bool playing = false;
+    double sampleRate = 44100.0;
+    double positionSeconds = 0.0;
+
+    juce::AudioBuffer<float> tempMixBuffer;
+
+    void processBlock(juce::AudioBuffer<float>& outputBuffer, int numSamples);
 };
 
 struct Composition {
@@ -42,7 +75,7 @@ struct Composition {
     int timeSigNumerator = 4;
     int timeSigDenominator = 4;
 
-    std::vector<std::unique_ptr<Track>> tracks;
+    std::vector<Track*> tracks;
 
     Composition();
     Composition(const std::string& compositionPath);
@@ -51,41 +84,37 @@ struct Composition {
 
 class Track {
 public:
-    Track();
+    Track(juce::AudioFormatManager& formatManager);
     ~Track();
 
-    void setVolume(const float db);
-    float getVolume() const { return m_volume; }
-    
-    void setPan(const float pan);
-    float getPan() const { return m_pan; }
+    void setName(const std::string& name);
+    std::string getName() const;
 
-    void setTrackIndex(const int newIndex);
-    int getTrackIndex() const { return m_trackIndex; }
+    void setVolume(float db);
+    float getVolume() const;
 
-    void toggleMute();
-    bool isMuted() const { return m_mute; }
+    void setPan(float pan);
+    float getPan() const;
 
-    void toggleSolo();
-    bool isSolod() const { return m_solo; }
+    void addClip(const AudioClip& clip);
+    void removeClip(int index);
+    const std::vector<AudioClip>& getClips() const;
 
-    void addClip(const AudioClip& newClip);
-
-    const std::vector<AudioClip>& getClips() const { return m_clips; }
+    void process(
+        double playheadSeconds,
+        juce::AudioBuffer<float>& outputBuffer,
+        int numSamples,
+        double sampleRate
+    );
 
 private:
-    std::string m_name = "";
+    std::string name;
+    float volumeDb = 0.0f;
+    float pan = 0.0f;
 
-    float m_volume = 0.f;           // Always use db value
-    float m_pan = 0.f;              // -1.0f for left pan, 1.0f for right pan
+    std::vector<AudioClip> clips;
 
-    int m_trackIndex = 0;           // position in arrangement
-
-    bool m_mute = false;
-    bool m_solo = false;
-
-    std::vector<AudioClip> m_clips; // Sample clips
-    std::vector<Effect> m_effects;
+    juce::AudioFormatManager& formatManager;
 };
 
 struct AudioClip {
@@ -95,11 +124,7 @@ struct AudioClip {
     double duration;
     float volume;               // percentage of track volume
 
-    AudioClip() : 
-    startTime(0.0), 
-    offset(0.0), 
-    duration(0.0), 
-    volume(1.0f) {}
+    AudioClip();
 
     AudioClip(
         const juce::File& sourceFile, 
@@ -107,12 +132,7 @@ struct AudioClip {
         double offset, 
         double duration, 
         float volume = 1.f
-    ) : 
-    sourceFile(sourceFile), 
-    startTime(startTime), 
-    offset(offset), 
-    duration(duration), 
-    volume(volume) {}
+    );
 };
 
 class Effect {
