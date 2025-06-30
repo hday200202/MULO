@@ -1274,7 +1274,7 @@ inline void UILO::update() {
     sf::Vector2u currentSize = m_window.getSize();
     if (currentSize != m_lastWindowSize || m_clickPosition) {
         m_shouldUpdate = true;
-        m_pollCount = 5;
+        m_pollCount = uilo_owned_elements.size();
     }
 
     if (m_shouldUpdate) {

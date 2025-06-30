@@ -29,11 +29,16 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_library(SFML::Window ALIAS PkgConfig::SFML_PC)
     add_library(SFML::System ALIAS PkgConfig::SFML_PC)
     set(SFML_INCLUDE_DIRS ${SFML_PC_INCLUDE_DIRS})
+    find_package(PkgConfig REQUIRED)
 
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Windows")
     set(SFML_DIR "${CMAKE_SOURCE_DIR}/external/windows/SFML-3.0.0-MSVC/lib/cmake/SFML")
     find_package(SFML COMPONENTS Graphics Window System REQUIRED)
-
+elseif (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    set(SFML_DIR "${CMAKE_SOURCE_DIR}/external/mac/SFML-3.0.0/lib/cmake/SFML")
+    find_package(SFML COMPONENTS Graphics Window System REQUIRED)
+else()
+    message(FATAL_ERROR "Unsupported platform: ${CMAKE_SYSTEM_NAME}")
 endif()
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -55,6 +60,15 @@ target_include_directories(MULO PRIVATE
     "${CMAKE_SOURCE_DIR}/external"
     ${SFML_INCLUDE_DIRS}
 )
+
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(GTK3 REQUIRED gtk+-3.0)
+    pkg_check_modules(WEBKIT2GTK REQUIRED webkit2gtk-4.0)
+    target_include_directories(MULO PRIVATE ${GTK3_INCLUDE_DIRS} ${WEBKIT2GTK_INCLUDE_DIRS})
+    target_link_libraries(MULO PRIVATE ${GTK3_LIBRARIES} ${WEBKIT2GTK_LIBRARIES})
+    add_definitions(${GTK3_CFLAGS_OTHER} ${WEBKIT2GTK_CFLAGS_OTHER})
+endif()
 
 target_link_libraries(MULO PRIVATE
     # JUCE Core GUI Stuff

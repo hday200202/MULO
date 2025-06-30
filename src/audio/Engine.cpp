@@ -15,21 +15,6 @@ Engine::~Engine() {
 }
 
 void Engine::play() {
-    double maxEnd = 0.0;
-
-    if (currentComposition) {
-        for (auto* track : currentComposition->tracks) {
-            for (const auto& clip : track->getClips()) {
-                double end = clip.startTime + clip.duration;
-                if (end > maxEnd)
-                    maxEnd = end;
-            }
-        }
-    }
-
-    if (positionSeconds >= maxEnd)
-        positionSeconds = 0.0;
-
     playing = true;
 }
 
@@ -108,8 +93,6 @@ void Engine::audioDeviceIOCallbackWithContext(
         processBlock(out, numSamples);
         positionSeconds += (double)numSamples / sampleRate;
     }
-
-    DBG("AudioDeviceIOCallbackWithContext");
 }
 
 void Engine::audioDeviceAboutToStart(juce::AudioIODevice* device) {

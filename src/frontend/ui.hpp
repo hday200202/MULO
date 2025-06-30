@@ -9,97 +9,169 @@ void application() {
     Engine engine;
     engine.newComposition("test");
 
-    // Add one track
+    // Add tracks
     engine.addTrack("Track 1");
-    auto* track = engine.getTrack(0);
+    engine.addTrack("Track 2");
 
-    // Load a clip starting at 0s
-    juce::File sampleFile("assets/test_samples/kick.wav");
-    AudioClip clip(sampleFile, 0.0, 0.0, sampleFile.getSize() / 44100.0);
-    track->addClip(clip);
+    auto* kick = engine.getTrack(0);
+    auto* snare = engine.getTrack(1);
+
+    // Load sample clips into tracks
+    juce::File kickSample("assets/test_samples/kick.wav");
+    juce::File snareSample("assets/test_samples/snare.wav");
+
+    AudioClip kickClip(
+        kickSample,                     // Sample file
+        0.0,                            // Start Time  (relative to whole composition)
+        0.0,                            // Start Time  (relative to sample)
+        kickSample.getSize() / 44100.0  // Sample Rate (don't worry about this)
+    );
+
+    AudioClip snareClip1(
+        snareSample, 
+        25.0, 
+        0.0, 
+        snareSample.getSize() / 44100.0
+    );
+
+    kick->addClip(kickClip);
+    snare->addClip(snareClip1);
 
     UILO ui("MULO", {{
         page({
             column(
-                Modifier()
-                    .setColor(sf::Color(25, 25, 25))
-                    .setHeight(1.f)
-                    .setWidth(1.f),
+                Modifier(),
             contains{
                 row(
                     Modifier()
-                        .setColor(sf::Color(210, 210, 210))
                         .setWidth(1.f)
-                        .setfixedHeight(64),
-                contains{}),
-
-                column(
-                    Modifier()
-                        .setColor(sf::Color(200, 200, 200))
-                        .setfixedWidth(256)
-                        .setHeight(1.f)
-                        .align(Align::LEFT),
+                        .setfixedHeight(64)
+                        .setColor(sf::Color(200, 200, 200)),
                 contains{
-                    spacer(Modifier().setfixedHeight(16)),
 
-                    text(
+                }),
+
+                row(
+                    Modifier().setWidth(1.f).setHeight(1.f),
+                contains{
+                    column(
                         Modifier()
-                            .setColor(sf::Color::Black)
-                            .setfixedHeight(16)
-                            .align(Align::TOP | Align::CENTER_X),
-                        "FILES",
-                        "assets/fonts/SpaceMono-Regular.ttf"
-                    ),
+                            .align(Align::LEFT)
+                            .setfixedWidth(256)
+                            .setColor(sf::Color(155, 155, 155)),
+                    contains{
+                        
+                    }),
 
-                    spacer(Modifier().setfixedHeight(16)),
+                    row(
+                        Modifier()
+                            .setWidth(1.f)
+                            .setHeight(1.f)
+                            .setColor(sf::Color(100, 100, 100)),
+                    contains{
+                        column(
+                            Modifier(),
+                        contains{
+                            row(
+                                Modifier()
+                                    .setColor(sf::Color(120, 120, 120))
+                                    .setfixedHeight(96)
+                                    .align(Align::BOTTOM),
+                            contains{
+                                row(
+                                    Modifier()
+                                        .align(Align::RIGHT)
+                                        .setfixedWidth(150)
+                                        .setColor(sf::Color(155, 155, 155)),
+                                contains{
+                                    spacer(Modifier().setfixedWidth(16).align(Align::LEFT)),
+
+                                    text(
+                                        Modifier().setColor(sf::Color(25, 25, 25)).setfixedWidth(0.5).setHeight(0.25).align(Align::CENTER_Y),
+                                        "Master",
+                                        "assets/fonts/OpenSans-Regular.ttf"
+                                    ),
+
+                                    slider(
+                                        Modifier().setfixedWidth(16).setHeight(0.75).align(Align::RIGHT | Align::CENTER_Y),
+                                        sf::Color::White,
+                                        sf::Color::Black,
+                                        "master_slider"
+                                    ),
+
+                                    spacer(Modifier().setfixedWidth(16).align(Align::RIGHT)),
+                                }),
+                            })
+                        })
+                    }),
                 }),
 
                 row(
                     Modifier()
-                        .setColor(sf::Color(210, 210, 210))
                         .setWidth(1.f)
-                        .setfixedHeight(256),
+                        .setfixedHeight(256)
+                        .setColor(sf::Color(200, 200, 200))
+                        .align(Align::BOTTOM),
                 contains{
-                    column(
-                        Modifier().setfixedWidth(100).setHeight(1.f).align(Align::CENTER_X | Align::CENTER_Y),
-                    contains{
-                        spacer(Modifier().setfixedHeight(16)),
-                        slider(
-                            Modifier()
-                                .setfixedHeight(180)
-                                .setfixedWidth(25)
-                                .align(Align::TOP | Align::CENTER_X),
-                            sf::Color::White,
-                            sf::Color::Black,
-                            "My Slider"
-                        ),
-
-                        spacer(Modifier().setfixedHeight(16)),
-
-                    }),
-
                     button(
                         Modifier()
-                            .setfixedHeight(64)
-                            .setfixedWidth(64)
-                            .align(Align::RIGHT | Align::CENTER_Y)
+                            .align(Align::CENTER_X | Align::CENTER_Y)
+                            .setfixedWidth(256)
+                            .setfixedHeight(128)
                             .setColor(sf::Color::Red),
-                        ButtonStyle::Pill,
-                        "OK",
-                        "assets/fonts/SpaceMono-Regular.ttf",
-                        sf::Color::White,
-                        "My Button"
+                        ButtonStyle::Pill, 
+                        "KICK", 
+                        "assets/fonts/OpenSans-Regular.ttf", 
+                        sf::Color(230, 230, 230),
+                        "KICK"
                     ),
-
-                    spacer(Modifier().setfixedWidth(16).align(Align::RIGHT)),
-                })
+                    spacer(Modifier().setfixedWidth(16).align(Align::CENTER_X)),
+                    button(
+                        Modifier()
+                            .align(Align::CENTER_X | Align::CENTER_Y)
+                            .setfixedWidth(256)
+                            .setfixedHeight(128)
+                            .setColor(sf::Color::Red),
+                        ButtonStyle::Pill, 
+                        "SNARE", 
+                        "assets/fonts/OpenSans-Regular.ttf", 
+                        sf::Color(230, 230, 230),
+                        "SNARE"
+                    ),
+                }),
             })
         }), "base" }
     });
 
+    bool prevNumpad1 = false;
+    bool prevNumpad3 = false;
+
     while (ui.isRunning()) {
-        if (buttons["My Button"]->isClicked())
+        if (buttons["KICK"]->isClicked()) {
+            engine.setPosition(0.0);
             engine.play();
+        }
+
+        if (buttons["SNARE"]->isClicked()) {
+            engine.setPosition(25.0);
+            engine.play();
+        }
+
+        bool currNumpad1 = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Numpad1);
+        bool currNumpad3 = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Numpad3);
+
+        if (currNumpad1 && !prevNumpad1) {
+            engine.setPosition(0.0);
+            engine.play();
+        }
+        if (currNumpad3 && !prevNumpad3) {
+            engine.setPosition(25.0);
+            engine.play();
+        }
+
+        prevNumpad1 = currNumpad1;
+        prevNumpad3 = currNumpad3;
+
         ui.update();
         ui.render();
     }
