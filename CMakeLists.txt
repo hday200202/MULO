@@ -56,32 +56,29 @@ target_include_directories(MULO PRIVATE
     ${SFML_INCLUDE_DIRS}
 )
 
-if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    target_link_libraries(MULO PRIVATE
-        juce::juce_core
-        juce::juce_data_structures
-        juce::juce_events
-        juce::juce_graphics
-        juce::juce_gui_basics
-        SFML::Graphics
-        SFML::Window
-        SFML::System
-        curl
-    )
+target_link_libraries(MULO PRIVATE
+    # JUCE Core GUI Stuff
+    juce::juce_core
+    juce::juce_data_structures
+    juce::juce_events
+    juce::juce_graphics
+    juce::juce_gui_basics
 
-elseif(CMAKE_SYSTEM_NAME STREQUAL "Windows")
-    target_link_libraries(MULO PRIVATE
-        juce::juce_core
-        juce::juce_data_structures
-        juce::juce_events
-        juce::juce_graphics
-        juce::juce_gui_basics
-        SFML::Graphics
-        SFML::Window
-        SFML::System
-    )
+    # JUCE Audio
+    juce::juce_audio_basics
+    juce::juce_audio_devices
+    juce::juce_audio_formats
+    juce::juce_audio_utils
+    juce::juce_dsp
 
-endif()
+    # SFML
+    SFML::Graphics
+    SFML::Window
+    SFML::System
+
+    # Curl (Linux only)
+    $<$<STREQUAL:${CMAKE_SYSTEM_NAME},Linux>:curl>
+)
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_compile_definitions(MULO PRIVATE JUCE_LINUX=1)
