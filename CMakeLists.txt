@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
 project(MULO)
 
+# Export compile_commands.json for IDEs
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 # Output directories per build type and platform
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG         ${CMAKE_SOURCE_DIR}/bin/${CMAKE_SYSTEM_NAME}/Debug)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE       ${CMAKE_SOURCE_DIR}/bin/${CMAKE_SYSTEM_NAME}/Release)
@@ -10,15 +13,20 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL    ${CMAKE_SOURCE_DIR}/bin/${CMAKE
 # Platform-specific JUCE
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_subdirectory(external/linux/JUCE)
+    set(JUCE_MODULE_DIR "${CMAKE_SOURCE_DIR}/external/linux/JUCE/modules")
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
     add_subdirectory(external/mac/JUCE)
+    set(JUCE_MODULE_DIR "${CMAKE_SOURCE_DIR}/external/mac/JUCE/modules")
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Windows")
     add_subdirectory(external/windows/JUCE)
+    set(JUCE_MODULE_DIR "${CMAKE_SOURCE_DIR}/external/windows/JUCE/modules")
 endif()
+
+# Enable JUCE modal loops so FileChooser::browseForFileToOpen() is available
+add_compile_definitions(JUCE_MODAL_LOOPS_PERMITTED=1)
 
 # SFML Setup
 set(SFML_INCLUDE_DIRS "")
-
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(SFML_PC REQUIRED IMPORTED_TARGET
@@ -31,11 +39,9 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_library(SFML::System   ALIAS PkgConfig::SFML_PC)
     set(SFML_INCLUDE_DIRS ${SFML_PC_INCLUDE_DIRS})
     find_package(CURL REQUIRED)
-
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Windows")
     set(SFML_DIR "${CMAKE_SOURCE_DIR}/external/windows/SFML-3.0.0-MSVC/lib/cmake/SFML")
     find_package(SFML 3.0.1 COMPONENTS Graphics Window System REQUIRED)
-
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
     find_package(SFML 3.0.1 COMPONENTS Graphics Window System REQUIRED)
 endif()
@@ -50,6 +56,31 @@ file(GLOB_RECURSE MULO_SOURCES
 # Define executable
 add_executable(MULO ${MULO_SOURCES})
 
+# Add JUCE module headers to includes
+target_include_directories(MULO PRIVATE
+    "${CMAKE_SOURCE_DIR}/src"
+    "${CMAKE_SOURCE_DIR}/src/frontend"
+    "${CMAKE_SOURCE_DIR}/src/audio"
+    "${CMAKE_SOURCE_DIR}/external"
+    ${SFML_INCLUDE_DIRS}
+
+    # JUCE modules
+    ${JUCE_MODULE_DIR}
+    ${JUCE_MODULE_DIR}/juce_core/include
+    ${JUCE_MODULE_DIR}/juce_events/include
+    ${JUCE_MODULE_DIR}/juce_data_structures/include
+    ${JUCE_MODULE_DIR}/juce_graphics/include
+    ${JUCE_MODULE_DIR}/juce_gui_basics/include
+    ${JUCE_MODULE_DIR}/juce_gui_extra/include
+    ${JUCE_MODULE_DIR}/juce_audio_basics/include
+    ${JUCE_MODULE_DIR}/juce_audio_devices/include
+    ${JUCE_MODULE_DIR}/juce_audio_formats/include
+    ${JUCE_MODULE_DIR}/juce_audio_utils/include
+    ${JUCE_MODULE_DIR}/juce_dsp/include
+    ${JUCE_MODULE_DIR}/juce_gui_extra/gui_extra
+)
+
+# Linux-only GTK/WebKit (if needed)
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(GTK3 REQUIRED gtk+-3.0)
@@ -59,15 +90,6 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_definitions(${GTK3_CFLAGS_OTHER} ${WEBKIT2GTK_CFLAGS_OTHER})
 endif()
 
-# Include directories
-target_include_directories(MULO PRIVATE
-    "${CMAKE_SOURCE_DIR}/src"
-    "${CMAKE_SOURCE_DIR}/src/frontend"
-    "${CMAKE_SOURCE_DIR}/src/audio"
-    "${CMAKE_SOURCE_DIR}/external"
-    ${SFML_INCLUDE_DIRS}
-)
-
 # Link libraries
 target_link_libraries(MULO PRIVATE
     # JUCE Core GUI
@@ -76,6 +98,9 @@ target_link_libraries(MULO PRIVATE
     juce::juce_events
     juce::juce_graphics
     juce::juce_gui_basics
+
+    # JUCE GUI Extras (FileChooser etc.)
+    juce::juce_gui_extra
 
     # JUCE Audio
     juce::juce_audio_basics
@@ -91,6 +116,11 @@ target_link_libraries(MULO PRIVATE
 
     # Curl (Linux only)
     $<$<STREQUAL:${CMAKE_SYSTEM_NAME},Linux>:curl>
+)
+
+# Pass modal-loops define to MULO too
+target_compile_definitions(MULO PRIVATE
+    JUCE_MODAL_LOOPS_PERMITTED=1
 )
 
 # Compiler definitions

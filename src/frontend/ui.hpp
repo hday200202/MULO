@@ -3,6 +3,8 @@
 #include "UILO.hpp"
 #include "Engine.hpp"
 
+#include <juce_gui_extra/juce_gui_extra.h>
+
 using namespace uilo;
 
 void application() {
@@ -48,14 +50,29 @@ void application() {
                         .setfixedHeight(64)
                         .setColor(sf::Color(200, 200, 200)),
                 contains{
+                    spacer(Modifier().setfixedWidth(16).align(Align::LEFT)),
+
                     button(
-                        Modifier().align(Align::CENTER_Y | Align::CENTER_X).setHeight(.75f).setfixedWidth(96).setColor(sf::Color::Red),
-                        ButtonStyle::Rect,
+                        Modifier().align(Align::LEFT | Align::CENTER_Y).setHeight(.75f).setfixedWidth(96).setColor(sf::Color::Red),
+                        ButtonStyle::Pill, 
+                        "Load", 
+                        "assets/fonts/OpenSans-Regular.ttf", 
+                        sf::Color(230, 230, 230),
+                        "LOAD"
+                    ),
+
+                    spacer(Modifier().setfixedWidth(16).align(Align::CENTER_X)),
+
+                    button(
+                        Modifier().align(Align::RIGHT | Align::CENTER_Y).setHeight(.75f).setfixedWidth(96).setColor(sf::Color::Red),
+                        ButtonStyle::Pill,
                         "Save",
                         "assets/fonts/OpenSans-Regular.ttf",
                         sf::Color::White,
                         "SAVE"
-                    )
+                    ),
+
+                    spacer(Modifier().setfixedWidth(16).align(Align::RIGHT)),
                 }),
 
                 row(
@@ -153,6 +170,10 @@ void application() {
     bool prevNumpad1 = false;
     bool prevNumpad3 = false;
 
+    bool fileLoaded = false;
+    juce::FileChooser chooser("Select audio file", juce::File(), "*.wav;*.mp3;*.flac");
+    std::unique_ptr<juce::AudioFormatReader> reader;
+
     while (ui.isRunning()) {
         if (buttons["KICK"]->isClicked()) {
             engine.setPosition(0.0);
@@ -166,6 +187,24 @@ void application() {
 
         if (buttons["SAVE"]->isClicked()) {
             std::cout << "Save button clicked!\n";
+        }
+
+        if (buttons["LOAD"]->isClicked()) {
+            chooser.launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                [&](const juce::FileChooser& fc) {
+                    auto f = fc.getResult();
+                    if (f.existsAsFile()) {
+                        reader.reset(engine.formatManager.createReaderFor(f));
+                        if (reader) {
+                            engine.newComposition(f.getFileNameWithoutExtension().toStdString());
+                            engine.addTrack("Track 1");
+                            double dur = reader->lengthInSamples / reader->sampleRate;
+                            engine.getTrack(0)->addClip(AudioClip(f, 0.0, 0.0, dur));
+                            fileLoaded = true;
+                        }
+                    }
+                }
+            );
         }
 
         bool currNumpad1 = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Numpad1);
@@ -185,5 +224,7 @@ void application() {
 
         ui.update();
         ui.render();
+
     }
 }
+

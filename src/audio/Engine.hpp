@@ -29,7 +29,7 @@ public:
     juce::AudioFormatManager formatManager;
 
     Engine();
-    ~Engine();
+    // ~Engine();
 
     // Playback 
     void play();
