@@ -14,7 +14,7 @@ struct UIState {
 };
 
 struct UIResources {
-    std::string openSansFont = "assets/fonts/OpenSans-Regular.ttf";
+    std::string openSansFont;
     // Add more resources as needed
 };
 
@@ -26,8 +26,19 @@ std::string selectDirectory();
 std::string selectFile(std::initializer_list<std::string> filters = {"*.wav", "*.mp3", "*.flac"});
 void newTrack(Engine& engine, UIState& uiState);
 
+
 UIState uiState;
 UIResources resources;
+
+inline void initUIResources() {
+    juce::File fontFile = juce::File::getCurrentWorkingDirectory().getChildFile("assets/fonts/OpenSans-Regular.ttf");
+    if (!fontFile.existsAsFile()) {
+        // Try relative to executable
+        fontFile = juce::File::getSpecialLocation(juce::File::currentExecutableFile)
+            .getParentDirectory().getChildFile("assets/fonts/OpenSans-Regular.ttf");
+    }
+    resources.openSansFont = fontFile.getFullPathName().toStdString();
+}
 
 Row* topRow() {
     return row(
@@ -36,29 +47,38 @@ Row* topRow() {
             .setfixedHeight(64)
             .setColor(sf::Color(200, 200, 200)),
     contains{
-        spacer(Modifier().setfixedWidth(16).align(Align::LEFT)),
+        // spacer(Modifier().setfixedWidth(16).align(Align::LEFT)),
+
+        // button(
+        //     Modifier().align(Align::LEFT | Align::CENTER_Y).setHeight(.75f).setfixedWidth(96).setColor(sf::Color::Red),
+        //     ButtonStyle::Pill, 
+        //     "Load", 
+        //     resources.openSansFont, 
+        //     sf::Color(230, 230, 230),
+        //     "LOAD"
+        // ),
+
+        // spacer(Modifier().setfixedWidth(16).align(Align::LEFT)),
+
+        // button(
+        //     Modifier().align(Align::LEFT | Align::CENTER_Y).setHeight(.75f).setfixedWidth(96).setColor(sf::Color::Red),
+        //     ButtonStyle::Pill,
+        //     "Save",
+        //     resources.openSansFont,
+        //     sf::Color::White,
+        //     "SAVE"
+        // ),
 
         button(
-            Modifier().align(Align::LEFT | Align::CENTER_Y).setHeight(.75f).setfixedWidth(96).setColor(sf::Color::Red),
-            ButtonStyle::Pill, 
-            "Load", 
-            resources.openSansFont, 
-            sf::Color(230, 230, 230),
-            "LOAD"
-        ),
-
-        spacer(Modifier().setfixedWidth(16).align(Align::LEFT)),
-
-        button(
-            Modifier().align(Align::LEFT | Align::CENTER_Y).setHeight(.75f).setfixedWidth(96).setColor(sf::Color::Red),
+            Modifier().align(Align::RIGHT | Align::CENTER_Y).setHeight(.75f).setfixedWidth(128).setColor(sf::Color::Red),
             ButtonStyle::Pill,
-            "Save",
+            "new track",
             resources.openSansFont,
             sf::Color::White,
-            "SAVE"
+            "new_track"
         ),
 
-        spacer(Modifier().setfixedWidth(16).align(Align::RIGHT)),
+        spacer(Modifier().setfixedWidth(12).align(Align::RIGHT)),
     });
 }
 
@@ -97,8 +117,8 @@ Row* browserAndTimeline() {
             column(
                 Modifier(),
             contains{
-                track("Master", Align::BOTTOM | Align::LEFT),
-            })
+                track("Master", Align::BOTTOM | Align::LEFT)
+            }, "timeline" ),
         }),
     });
 }
@@ -116,6 +136,7 @@ Row* fxRack() {
 }
 
 Row* track(const std::string& trackName, Align alignment) {
+    std::cout << "Creating track: " << trackName << std::endl;
     return row(
         Modifier()
             .setColor(sf::Color(120, 120, 120))
@@ -128,10 +149,10 @@ Row* track(const std::string& trackName, Align alignment) {
                 .setfixedWidth(150)
                 .setColor(sf::Color(155, 155, 155)),
         contains{
-            spacer(Modifier().setfixedWidth(16).align(Align::LEFT)),
+            spacer(Modifier().setfixedWidth(8).align(Align::LEFT)),
 
             text(
-                Modifier().setColor(sf::Color(25, 25, 25)).setfixedWidth(0.5).setHeight(0.25).align(Align::CENTER_Y),
+                Modifier().setColor(sf::Color(25, 25, 25)).setfixedHeight(24).align(Align::LEFT | Align::CENTER_Y),
                 trackName,
                 resources.openSansFont
             ),
@@ -174,12 +195,23 @@ std::string selectFile(std::initializer_list<std::string> filters) {
 }
 
 void newTrack(Engine& engine, UIState& uiState) {
-    engine.addTrack("Track_" + std::to_string(uiState.track_count++));
     std::string samplePath = selectFile({"*.wav", "*.mp3", "*.flac"});
+    std::string trackName;
     if (!samplePath.empty()) {
-        engine.getTrack(uiState.track_count - 1)->addClip(AudioClip(juce::File(samplePath), 0.0, 0.0, 0.0, 1.0f));
-        std::cout << "Loaded sample: " << samplePath << " into Track " << (uiState.track_count - 1) << std::endl;
+        juce::File sampleFile(samplePath);
+        trackName = sampleFile.getFileNameWithoutExtension().toStdString();
+        engine.addTrack(trackName);
+        engine.getTrack(uiState.track_count++)->addClip(AudioClip(sampleFile, 0.0, 0.0, 0.0, 1.0f));
+        std::cout << "Loaded sample: " << samplePath << " into Track '" << trackName << "' (" << uiState.track_count << ")" << std::endl;
     } else {
-        std::cout << "No sample selected for Track " << (uiState.track_count - 1) << std::endl;
+        uiState.track_count++;
+        trackName = "Track_" + std::to_string(uiState.track_count);
+        engine.addTrack(trackName);
+        std::cout << "No sample selected for Track '" << trackName << "' (" << uiState.track_count << ")" << std::endl;
     }
+
+    containers["timeline"]->addElements({
+        spacer(Modifier().setfixedHeight(2).align(Align::TOP)),
+        track(trackName, Align::TOP | Align::LEFT),
+    });
 }

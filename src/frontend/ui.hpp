@@ -14,6 +14,8 @@ void application() {
     Engine engine;
     engine.newComposition("untitled");
 
+    initUIResources();
+
     UILO ui("MULO", {{
         page({
             column(
@@ -35,6 +37,11 @@ void application() {
                 uiState.file_browser_directory = dir;
                 std::cout << "Selected directory: " << dir << std::endl;
             }
+        }
+
+        if (buttons["new_track"]->isClicked()) {
+            newTrack(engine, uiState);
+            std::cout << "New track added. Total tracks: " << uiState.track_count << std::endl;
         }
 
         if (sliders["Master_volume_slider"]->getValue() != masterVolume) {
