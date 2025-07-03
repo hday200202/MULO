@@ -1065,7 +1065,10 @@ inline void Slider::checkClick(const sf::Vector2f& pos) {
     if (m_bounds.getGlobalBounds().contains(pos)) {
         float relY = pos.y - m_bounds.getPosition().y;
         float t = 1.f - (relY / m_bounds.getSize().y); // 1 at top, 0 at bottom
-        m_curVal = std::clamp(m_minVal + t * (m_maxVal - m_minVal), m_minVal, m_maxVal);
+        float v = m_minVal + t * (m_maxVal - m_minVal);
+        if (v < m_minVal) v = m_minVal;
+        if (v > m_maxVal) v = m_maxVal;
+        m_curVal = v;
     }
 }
 

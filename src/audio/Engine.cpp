@@ -10,9 +10,9 @@ Engine::Engine() {
     deviceManager.addAudioCallback(this);
 }
 
-//Engine::~Engine() {
-//    deviceManager.removeAudioCallback(this);
-//}
+Engine::~Engine() {
+   deviceManager.removeAudioCallback(this);
+}
 
 void Engine::play() {
     playing = true;

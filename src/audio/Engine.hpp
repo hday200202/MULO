@@ -29,7 +29,7 @@ public:
     juce::AudioFormatManager formatManager;
 
     Engine();
-    // ~Engine();
+    ~Engine();
 
     // Playback 
     void play();
@@ -177,3 +177,10 @@ public:
 private:
 
 };
+
+inline float floatToDecibels(float linear, float minusInfinityDb = -100.0f) {
+    constexpr float reference = 0.75f; // 0.75f maps to 0 dB
+    if (linear <= 0.0f)
+        return minusInfinityDb;
+    return 20.0f * std::log10(linear / reference);
+}
