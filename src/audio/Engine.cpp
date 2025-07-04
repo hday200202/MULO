@@ -176,6 +176,64 @@ void Engine::processBlock(juce::AudioBuffer<float>& output, int numSamples) {
         track->process(positionSeconds, output, numSamples, sampleRate);
     }
 }
+bool Engine::loadState(const std::string& filePath) {
+    juce::File file(filePath);
+    if (!file.existsAsFile())
+        return false;
+
+    juce::var jsonVar = juce::JSON::parse(file);
+    if (jsonVar.isVoid() || !jsonVar.isObject())
+        return false;
+
+    auto* root = jsonVar.getDynamicObject();
+    if (!root)
+        return false;
+
+    std::string name = root->getProperty("name").toString().toStdString();
+    newComposition(name);
+
+    auto tracksVar = root->getProperty("tracks");
+    if (!tracksVar.isArray())
+        return false;
+
+    for (const auto& t : *tracksVar.getArray()) {
+        auto* trackObj = t.getDynamicObject();
+        if (!trackObj)
+            continue;
+
+        std::string trackName = trackObj->getProperty("name").toString().toStdString();
+        float volume = static_cast<float>(trackObj->getProperty("volume"));
+        float pan = static_cast<float>(trackObj->getProperty("pan"));
+
+        addTrack(trackName);
+        Track* track = getTrack(currentComposition->tracks.size() - 1);
+        if (track) {
+            track->setVolume(volume);
+            track->setPan(pan);
+        }
+
+        auto clipsVar = trackObj->getProperty("clips");
+        if (clipsVar.isArray()) {
+            for (const auto& c : *clipsVar.getArray()) {
+                auto* clipObj = c.getDynamicObject();
+                if (!clipObj)
+                    continue;
+
+                juce::File clipFile(clipObj->getProperty("sourceFile").toString());
+                double start = static_cast<double>(clipObj->getProperty("startTime"));
+                double offset = static_cast<double>(clipObj->getProperty("offset"));
+                double duration = static_cast<double>(clipObj->getProperty("duration"));
+                float clipVolume = static_cast<float>(clipObj->getProperty("volume"));
+
+                AudioClip clip(clipFile, start, offset, duration, clipVolume);
+                track->addClip(clip);
+            }
+        }
+    }
+
+    return true;
+}
+
 
 
 //==============================================================================

@@ -47,18 +47,18 @@ Row* topRow() {
             .setfixedHeight(64)
             .setColor(sf::Color(200, 200, 200)),
     contains{
-        // spacer(Modifier().setfixedWidth(16).align(Align::LEFT)),
+        spacer(Modifier().setfixedWidth(16).align(Align::LEFT)),
 
-        // button(
-        //     Modifier().align(Align::LEFT | Align::CENTER_Y).setHeight(.75f).setfixedWidth(96).setColor(sf::Color::Red),
-        //     ButtonStyle::Pill, 
-        //     "Load", 
-        //     resources.openSansFont, 
-        //     sf::Color(230, 230, 230),
-        //     "LOAD"
-        // ),
+        button(
+            Modifier().align(Align::LEFT | Align::CENTER_Y).setHeight(.75f).setfixedWidth(96).setColor(sf::Color::Red),
+            ButtonStyle::Pill, 
+            "Load", 
+            resources.openSansFont, 
+            sf::Color(230, 230, 230),
+            "load"
+        ),
 
-        // spacer(Modifier().setfixedWidth(16).align(Align::LEFT)),
+        spacer(Modifier().setfixedWidth(16).align(Align::LEFT)),
 
         button(
             Modifier().align(Align::RIGHT | Align::CENTER_Y).setHeight(.75f).setfixedWidth(128).setColor(sf::Color::Red),

@@ -56,6 +56,10 @@ void application() {
                 std::cerr << "Failed to save project." << std::endl;
             }
         }
+        if (buttons["load"]->isClicked()) {
+            engine.loadComposition(selectFile({"*.mpf"}));
+            
+        }
 
         ui.update();
         ui.render();

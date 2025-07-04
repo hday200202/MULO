@@ -38,6 +38,8 @@ public:
     void setPosition(double seconds);
     double getPosition() const;
     bool isPlaying() const;
+    bool loadState(const std::string& filePath);
+
 
     // Composition 
     void newComposition(const std::string& name = "untitled");
