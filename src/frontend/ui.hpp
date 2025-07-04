@@ -13,6 +13,7 @@ using namespace uilo;
 void application() {
     Engine engine;
     engine.newComposition("untitled");
+    engine.addTrack("Master");
 
     initUIResources();
 
@@ -54,6 +55,16 @@ void application() {
                 std::cout << "Project saved successfully." << std::endl;
             } else {
                 std::cerr << "Failed to save project." << std::endl;
+            }
+        }
+
+        for (auto& track : engine.getAllTracks()) {
+            if (buttons["mute_" + track->getName()]->isClicked()) {
+                track->toggleMute();
+
+                buttons["mute_" + track->getName()]->m_modifier.setColor((track->isMuted() ? sf::Color(50, 50, 50) : sf::Color::Red));
+
+                std::cout << "Track '" << track->getName() << "' mute state toggled to " << ((track->isMuted()) ? "true" : "false") << std::endl;
             }
         }
 

@@ -137,10 +137,14 @@ public:
         double sampleRate
     );
 
+    void toggleMute() { muted = !muted; }
+    bool isMuted() const { return muted; }
+
 private:
     std::string name;
     float volumeDb = 0.0f;
     float pan = 0.0f;
+    bool muted = false;
 
     std::vector<AudioClip> clips;
 
