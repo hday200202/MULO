@@ -103,6 +103,8 @@ void application()
     snare->addClip(snareClip);
 
     // Build the actual UILO layout
+    initUIResources();
+
     UILO ui("MULO", {{
         page({
             column(Modifier(), contains{
@@ -300,12 +302,27 @@ void application()
             }
         }
 
+        if (buttons["new_track"]->isClicked()) {
+            newTrack(engine, uiState);
+            std::cout << "New track added. Total tracks: " << uiState.track_count << std::endl;
+        }
+
         if (sliders["Master_volume_slider"]->getValue() != masterVolume) {
             masterVolume = sliders["Master_volume_slider"]->getValue();
             std::cout << "Master volume changed to: " << floatToDecibels(masterVolume) << " db" << std::endl;
         }
 
+        if (buttons["save"]->isClicked()) {
+            if (engine.saveState(selectDirectory() + "/" + engine.getCurrentCompositionName() + ".mpf")) {
+                std::cout << "Project saved successfully." << std::endl;
+            } else {
+                std::cerr << "Failed to save project." << std::endl;
+            }
+        }
+
         ui.update();
         ui.render();
     }
+
+    std::cout << "Exiting application..." << std::endl;
 }
