@@ -291,62 +291,19 @@ void application()
     std::unique_ptr<juce::AudioFormatReader> reader;
     juce::FileChooser chooser("Select audio file", juce::File(), "*.wav;*.mp3;*.flac");
 
-    while (ui.isRunning())
-    {
-        // File Load Handler
-        if (buttons["LOAD"]->isClicked())
-        {
-            chooser.launchAsync(
-                juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
-                [&](const juce::FileChooser& fc) {
-                    auto f = fc.getResult();
-                    if (f.existsAsFile())
-                    {
-                        reader.reset(engine.formatManager.createReaderFor(f));
-                        if (reader)
-                        {
-                            engine.newComposition(f.getFileNameWithoutExtension().toStdString());
-                            kick->addClip(AudioClip(
-                                f, 0.0, 0.0,
-                                reader->lengthInSamples / reader->sampleRate
-                            ));
-                        }
-                    }
-                }
-            );
+    while (ui.isRunning()) {
+        if (buttons["select_directory"]->isClicked()) {
+            std::string dir = selectDirectory();
+            if (!dir.empty()) {
+                uiState.file_browser_directory = dir;
+                std::cout << "Selected directory: " << dir << std::endl;
+            }
         }
 
-        // Transport Controls
-        if (buttons["PLAY"]->isClicked()) engine.play();
-        if (buttons["PAUSE"]->isClicked()) engine.pause();
-
-        // Mixer Handlers
-        if (sliders.count("TRACK_1_VOLUME"))
-        {
-            engine.getTrack(0)->setVolume(sliders["TRACK_1_VOLUME"]->getValue());
+        if (sliders["Master_volume_slider"]->getValue() != masterVolume) {
+            masterVolume = sliders["Master_volume_slider"]->getValue();
+            std::cout << "Master volume changed to: " << floatToDecibels(masterVolume) << " db" << std::endl;
         }
-        if (buttons["TRACK_1_MUTE"]->isClicked())
-        {
-            auto* t = engine.getTrack(0);
-            float v = t->getVolume();
-            t->setVolume(v > 0.0f ? 0.0f : previousVolume[0]);
-        }
-
-        if (sliders.count("TRACK_2_VOLUME"))
-        {
-            engine.getTrack(1)->setVolume(sliders["TRACK_2_VOLUME"]->getValue());
-        }
-        if (buttons["TRACK_2_MUTE"]->isClicked())
-        {
-            auto* t = engine.getTrack(1);
-            float v = t->getVolume();
-            t->setVolume(v > 0.0f ? 0.0f : previousVolume[1]);
-        }
-
-        // Transport Slider Update
-        double pos = engine.getPosition();
-        double dur = reader ? reader->lengthInSamples / reader->sampleRate : 1.0;
-        sliders["TRANSPORT_SLIDER"]->setValue(static_cast<float>(pos / dur));
 
         ui.update();
         ui.render();

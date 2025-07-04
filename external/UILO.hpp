@@ -172,8 +172,8 @@ protected:
 
 class Container : public Element {
 public:
-    Container(std::initializer_list<Element*> elements, const std::string& name = "");
-    Container(Modifier modifier, std::initializer_list<Element*> elements);
+    Container(std::initializer_list<Element*> elements = {}, const std::string& name = "");
+    Container(Modifier modifier, std::initializer_list<Element*> elements = {}, const std::string& name = "");
     ~Container();
 
     void addElement(Element* element);
@@ -508,11 +508,20 @@ inline Container::Container(std::initializer_list<Element*> elements, const std:
     }
 }
 
-inline Container::Container(Modifier modifier, std::initializer_list<Element*> elements) {
+inline Container::Container(Modifier modifier, std::initializer_list<Element*> elements, const std::string& name) {
     m_modifier = modifier;
 
     for (auto& e : elements)
-        m_elements.push_back(e);   
+        m_elements.push_back(e);
+
+    m_name = name;
+    if (!m_name.empty()) {
+        if (containers.find(m_name) == containers.end()) {
+            containers[m_name] = this;
+        } else {
+            std::cerr << "Warning: Name '" << m_name << "' already exists." << std::endl;
+        }
+    }
 }
 
 inline Container::~Container() {}
