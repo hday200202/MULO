@@ -1,4 +1,6 @@
 #include "Engine.hpp"
+#include <fstream>
+#include <iomanip>
 
 //==============================================================================
 // ENGINE 
@@ -64,6 +66,10 @@ void Engine::removeTrack(int idx) {
     }
 }
 
+std::string Engine::getCurrentCompositionName() const {
+    return currentComposition->name;
+}
+
 Track* Engine::getTrack(int idx) {
     if (!currentComposition)
         return nullptr;
@@ -93,6 +99,60 @@ void Engine::audioDeviceIOCallbackWithContext(
         processBlock(out, numSamples);
         positionSeconds += (double)numSamples / sampleRate;
     }
+}
+
+// Helper for escaping strings for .mpf format
+std::string escapeMpfString(const std::string& s) {
+    std::string out;
+    for (char c : s) {
+        if (c == '\\' || c == '"') out += '\\';
+        out += c;
+    }
+    return out;
+}
+
+// Save the current engine state to a .mpf project file
+bool Engine::saveState(const std::string& path) const {
+    if (!currentComposition) return false;
+    std::ofstream out(path);
+    if (!out.is_open()) return false;
+
+    out << "{\n";
+    out << "  \"composition\": {\n";
+    out << "    \"name\": \"" << escapeMpfString(currentComposition->name) << "\",\n";
+    out << "    \"bpm\": " << currentComposition->bpm << ",\n";
+    out << "    \"timeSignature\": {\n";
+    out << "      \"numerator\": " << currentComposition->timeSigNumerator << ",\n";
+    out << "      \"denominator\": " << currentComposition->timeSigDenominator << "\n";
+    out << "    },\n";
+    out << "    \"tracks\": [\n";
+    for (size_t i = 0; i < currentComposition->tracks.size(); ++i) {
+        const auto* track = currentComposition->tracks[i];
+        out << "      {\n";
+        out << "        \"name\": \"" << escapeMpfString(track->getName()) << "\",\n";
+        out << "        \"volume\": " << track->getVolume() << ",\n";
+        out << "        \"pan\": " << track->getPan() << ",\n";
+        out << "        \"clips\": [\n";
+        const auto& clips = track->getClips();
+        for (size_t j = 0; j < clips.size(); ++j) {
+            const auto& clip = clips[j];
+            out << "          {\n";
+            out << "            \"file\": \"" << escapeMpfString(clip.sourceFile.getFullPathName().toStdString()) << "\",\n";
+            out << "            \"start\": " << clip.startTime << ",\n";
+            out << "            \"offset\": " << clip.offset << ",\n";
+            out << "            \"duration\": " << clip.duration << ",\n";
+            out << "            \"volume\": " << clip.volume << "\n";
+            out << "          }" << (j + 1 < clips.size() ? "," : "") << "\n";
+        }
+        out << "        ]\n";
+        out << "      }" << (i + 1 < currentComposition->tracks.size() ? "," : "") << "\n";
+    }
+    out << "    ]\n";
+    out << "  }\n";
+    out << "}\n";
+
+    out.close();
+    return true;
 }
 
 void Engine::audioDeviceAboutToStart(juce::AudioIODevice* device) {

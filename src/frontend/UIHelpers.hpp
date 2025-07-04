@@ -60,14 +60,16 @@ Row* topRow() {
 
         // spacer(Modifier().setfixedWidth(16).align(Align::LEFT)),
 
-        // button(
-        //     Modifier().align(Align::LEFT | Align::CENTER_Y).setHeight(.75f).setfixedWidth(96).setColor(sf::Color::Red),
-        //     ButtonStyle::Pill,
-        //     "Save",
-        //     resources.openSansFont,
-        //     sf::Color::White,
-        //     "SAVE"
-        // ),
+        button(
+            Modifier().align(Align::RIGHT | Align::CENTER_Y).setHeight(.75f).setfixedWidth(128).setColor(sf::Color::Red),
+            ButtonStyle::Pill,
+            "save",
+            resources.openSansFont,
+            sf::Color::White,
+            "save"
+        ),
+
+        spacer(Modifier().setfixedWidth(12).align(Align::RIGHT)),
 
         button(
             Modifier().align(Align::RIGHT | Align::CENTER_Y).setHeight(.75f).setfixedWidth(128).setColor(sf::Color::Red),

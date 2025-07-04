@@ -49,7 +49,17 @@ void application() {
             std::cout << "Master volume changed to: " << floatToDecibels(masterVolume) << " db" << std::endl;
         }
 
+        if (buttons["save"]->isClicked()) {
+            if (engine.saveState(selectDirectory() + "/" + engine.getCurrentCompositionName() + ".mpf")) {
+                std::cout << "Project saved successfully." << std::endl;
+            } else {
+                std::cerr << "Failed to save project." << std::endl;
+            }
+        }
+
         ui.update();
         ui.render();
     }
+
+    std::cout << "Exiting application..." << std::endl;
 }
