@@ -11,6 +11,7 @@ Application::Application() {
     masterTrackElement          = masterTrack();
     timelineElement             = timeline();
     mixerElement                = mixer();
+    masterMixerTrackElement     = mixerTrack("Master");
     browserAndTimelineElement   = browserAndTimeline();
     browserAndMixerElement      = browserAndMixer();
     fxRackElement               = fxRack();
@@ -94,24 +95,22 @@ void Application::update() {
                 std::cout << "No file selected." << std::endl;
         }
 
-        if (buttons["play"]->isClicked()) {
+        if (buttons["play"]->isClicked() && !playing) {
             std::cout << "Playing audio..." << std::endl;
             engine.play();
+            buttons["play"]->setText("pause");
+            playing = true;
         }
 
-        for (auto& track : engine.getAllTracks()) {
-            if (buttons["mute_" + track->getName()]->isClicked()) {
-                track->toggleMute();
-                buttons["mute_" + track->getName()]->m_modifier.setColor((track->isMuted() ? sf::Color::Red : sf::Color(50, 50, 50)));
-                std::cout << "Track '" << track->getName() << "' mute state toggled to " << ((track->isMuted()) ? "true" : "false") << std::endl;
-            }
-
-            if (floatToDecibels(sliders[track->getName() + "_volume_slider"]->getValue()) != track->getVolume()) {
-                float newVolume = floatToDecibels(sliders[track->getName() + "_volume_slider"]->getValue());
-                track->setVolume(newVolume);
-                std::cout << "Track '" << track->getName() << "' volume changed to: " << newVolume << " db" << std::endl;
-            }
+        else if (buttons["play"]->isClicked() && playing) {
+            std::cout << "Pausing audio..." << std::endl;
+            engine.pause();
+            engine.setPosition(0.0);
+            buttons["play"]->setText("play");
+            playing = false;
         }
+
+        handleTrackEvents();
 
         ui->update();
     }
@@ -126,11 +125,11 @@ bool Application::isRunning() const {
 }
 
 void Application::initUIResources() {
-    juce::File fontFile = juce::File::getCurrentWorkingDirectory().getChildFile("assets/fonts/OpenSans-Regular.ttf");
+    juce::File fontFile = juce::File::getCurrentWorkingDirectory().getChildFile("assets/fonts/DejaVuSans.ttf");
     if (!fontFile.existsAsFile()) {
         // Try relative to executable
         fontFile = juce::File::getSpecialLocation(juce::File::currentExecutableFile)
-            .getParentDirectory().getChildFile("assets/fonts/OpenSans-Regular.ttf");
+            .getParentDirectory().getChildFile("assets/fonts/DejaVuSans.ttf");
     }
     resources.openSansFont = fontFile.getFullPathName().toStdString();
 }
@@ -282,18 +281,37 @@ Row* Application::track(const std::string& trackName, Align alignment, float vol
                 .setfixedWidth(150)
                 .setColor(sf::Color(155, 155, 155)),
         contains{
-            spacer(Modifier().setfixedHeight(8).align(Align::TOP)),
+            spacer(Modifier().setfixedHeight(12).align(Align::TOP)),
 
             row(
                 Modifier(),
             contains{
                 spacer(Modifier().setfixedWidth(8).align(Align::LEFT)),
 
-                text(
-                    Modifier().setColor(sf::Color(25, 25, 25)).setfixedHeight(24).align(Align::LEFT | Align::CENTER_Y),
-                    trackName,
-                    resources.openSansFont
-                ),
+                column(
+                    Modifier(),
+                contains{
+                    text(
+                        Modifier().setColor(sf::Color(25, 25, 25)).setfixedHeight(24).align(Align::LEFT | Align::TOP),
+                        trackName,
+                        resources.openSansFont
+                    ),
+
+                    row(
+                        Modifier(),
+                    contains{
+                        spacer(Modifier().setfixedWidth(16).align(Align::LEFT)),
+
+                        button(
+                            Modifier().align(Align::LEFT | Align::BOTTOM).setfixedWidth(64).setfixedHeight(32).setColor(sf::Color(50, 50, 50)),
+                            ButtonStyle::Rect,
+                            "mute",
+                            resources.openSansFont,
+                            sf::Color::White,
+                            "mute_" + trackName
+                        ),
+                    }),
+                }),
 
                 slider(
                     Modifier().setfixedWidth(16).setHeight(1.f).align(Align::RIGHT | Align::CENTER_Y),
@@ -307,23 +325,34 @@ Row* Application::track(const std::string& trackName, Align alignment, float vol
 
             // spacer(Modifier().setfixedWidth(16).align(Align::CENTER_Y)),
 
-            row(
-                Modifier(),
-            contains{
-                spacer(Modifier().setfixedWidth(16).align(Align::LEFT)),
-
-                button(
-                    Modifier().align(Align::LEFT | Align::CENTER_Y).setfixedWidth(64).setfixedHeight(32).setColor(sf::Color(50, 50, 50)),
-                    ButtonStyle::Rect,
-                    "mute",
-                    resources.openSansFont,
-                    sf::Color::White,
-                    "mute_" + trackName
-                ),
-            }),
-
             spacer(Modifier().setfixedHeight(8).align(Align::BOTTOM)),
         })
+    });
+}
+
+Column* Application::mixerTrack(const std::string& trackName, Align alignment, float volume, float pan) {
+    return column(
+        Modifier()
+            .setColor(sf::Color(120, 120, 120))
+            .setfixedWidth(96)
+            .align(alignment),
+    contains{
+        spacer(Modifier().setfixedHeight(12).align(Align::TOP | Align::CENTER_X)),
+        text(
+            Modifier().setColor(sf::Color(25, 25, 25)).setfixedHeight(18).align(Align::CENTER_X | Align::TOP),
+            trackName,
+            resources.openSansFont
+        ),
+
+        spacer(Modifier().setfixedHeight(12).align(Align::TOP)),
+
+        slider(
+            Modifier().setfixedWidth(32).setHeight(1.f).align(Align::BOTTOM | Align::CENTER_X),
+            sf::Color::White,
+            sf::Color::Black,
+            trackName + "_mixer_volume_slider"
+        ),
+        spacer(Modifier().setfixedHeight(12).align(Align::BOTTOM)),
     });
 }
 
@@ -340,18 +369,37 @@ Row* Application::masterTrack() {
                 .setfixedWidth(150)
                 .setColor(sf::Color(155, 155, 155)),
         contains{
-            spacer(Modifier().setfixedHeight(8).align(Align::TOP)),
+            spacer(Modifier().setfixedHeight(12).align(Align::TOP)),
 
             row(
                 Modifier(),
             contains{
                 spacer(Modifier().setfixedWidth(8).align(Align::LEFT)),
 
-                text(
-                    Modifier().setColor(sf::Color(25, 25, 25)).setfixedHeight(24).align(Align::LEFT | Align::CENTER_Y),
-                    "Master",
-                    resources.openSansFont
-                ),
+                column(
+                    Modifier(),
+                contains{
+                    text(
+                        Modifier().setColor(sf::Color(25, 25, 25)).setfixedHeight(24).align(Align::LEFT | Align::TOP),
+                        "Master",
+                        resources.openSansFont
+                    ),
+
+                    row(
+                        Modifier(),
+                    contains{
+                        spacer(Modifier().setfixedWidth(16).align(Align::LEFT)),
+
+                        button(
+                            Modifier().align(Align::LEFT | Align::BOTTOM).setfixedWidth(64).setfixedHeight(32).setColor(sf::Color(50, 50, 50)),
+                            ButtonStyle::Rect,
+                            "mute",
+                            resources.openSansFont,
+                            sf::Color::White,
+                            "mute_Master"
+                        ),
+                    }),
+                }),
 
                 slider(
                     Modifier().setfixedWidth(16).setHeight(1.f).align(Align::RIGHT | Align::CENTER_Y),
@@ -365,21 +413,6 @@ Row* Application::masterTrack() {
 
             // spacer(Modifier().setfixedWidth(16).align(Align::CENTER_Y)),
 
-            row(
-                Modifier(),
-            contains{
-                spacer(Modifier().setfixedWidth(16).align(Align::LEFT)),
-
-                button(
-                    Modifier().align(Align::LEFT | Align::CENTER_Y).setfixedWidth(64).setfixedHeight(32).setColor(sf::Color(50, 50, 50)),
-                    ButtonStyle::Rect,
-                    "mute",
-                    resources.openSansFont,
-                    sf::Color::White,
-                    "mute_Master"
-                ),
-            }),
-
             spacer(Modifier().setfixedHeight(8).align(Align::BOTTOM)),
         })
     });
@@ -387,14 +420,10 @@ Row* Application::masterTrack() {
 
 Row* Application::mixer() {
     return row(
-        Modifier().setWidth(1.f).setHeight(1.f),
+        Modifier().setWidth(1.f).setHeight(1.f).setColor(sf::Color(100, 100, 100)),
     contains{
-        column(
-            Modifier(),
-        contains{
-            
-        }, "mixer" ),
-    });
+       
+    }, "mixer");
 }
 
 std::string Application::selectDirectory() {
@@ -425,22 +454,39 @@ std::string Application::selectFile(std::initializer_list<std::string> filters) 
 void Application::newTrack() {
     std::string samplePath = selectFile({"*.wav", "*.mp3", "*.flac"});
     std::string trackName;
+    int trackIndex = uiState.trackCount;
+
     if (!samplePath.empty()) {
         juce::File sampleFile(samplePath);
         trackName = sampleFile.getFileNameWithoutExtension().toStdString();
         engine.addTrack(trackName);
-        engine.getTrack(uiState.trackCount++)->addClip(AudioClip(sampleFile, 0.0, 0.0, 0.0, 1.0f));
-        std::cout << "Loaded sample: " << samplePath << " into Track '" << trackName << "' (" << uiState.trackCount << ")" << std::endl;
-    } else {
-        uiState.trackCount++;
-        trackName = "Track_" + std::to_string(uiState.trackCount);
+
+        // Use AudioFormatReader for accurate length in seconds
+        double lengthSeconds = 0.0;
+        if (auto* reader = engine.formatManager.createReaderFor(sampleFile)) {
+            lengthSeconds = reader->lengthInSamples / reader->sampleRate;
+            delete reader;
+        }
+
+        engine.getTrack(trackIndex)->addClip(AudioClip(sampleFile, 0.0, 0.0, lengthSeconds, 1.0f));
+        std::cout << "Loaded sample: " << samplePath << " into Track '" << trackName << "' (" << (trackIndex + 1) << ")" << std::endl;
+    } 
+    else {
+        trackName = "Track_" + std::to_string(trackIndex + 1);
         engine.addTrack(trackName);
-        std::cout << "No sample selected for Track '" << trackName << "' (" << uiState.trackCount << ")" << std::endl;
+        std::cout << "No sample selected for Track '" << trackName << "' (" << (trackIndex + 1) << ")" << std::endl;
     }
 
-    containers["timeline"]->addElements({
+    uiState.trackCount++;
+
+    timelineElement->addElements({
         spacer(Modifier().setfixedHeight(2).align(Align::TOP)),
         track(trackName, Align::TOP | Align::LEFT),
+    });
+
+    mixerElement->addElements({
+        spacer(Modifier().setfixedWidth(2).align(Align::LEFT)),
+        mixerTrack(trackName, Align::TOP | Align::LEFT),
     });
 }
 
@@ -452,6 +498,10 @@ void Application::loadComposition(const std::string& path) {
 
     timelineElement->addElement(
         masterTrackElement
+    );
+
+    mixerElement->addElement(
+        masterMixerTrackElement
     );
 
     uiState.trackCount = engine.getAllTracks().size();
@@ -476,7 +526,37 @@ void Application::loadComposition(const std::string& path) {
                 track(t->getName(), Align::TOP | Align::LEFT),
             });
 
+            mixerElement->addElements({
+                spacer(Modifier().setfixedWidth(2).align(Align::LEFT)),
+                mixerTrack(t->getName(), Align::TOP | Align::LEFT, decibelsToFloat(t->getVolume()), t->getPan()),
+            });
+
             sliders[t->getName() + "_volume_slider"]->setValue(decibelsToFloat(t->getVolume()));
+            sliders[t->getName() + "_mixer_volume_slider"]->setValue(decibelsToFloat(t->getVolume()));
+        }
+    }
+}
+
+void Application::handleTrackEvents() {
+    for (auto& track : engine.getAllTracks()) {
+        if (buttons["mute_" + track->getName()]->isClicked()) {
+            track->toggleMute();
+            buttons["mute_" + track->getName()]->m_modifier.setColor((track->isMuted() ? sf::Color::Red : sf::Color(50, 50, 50)));
+            std::cout << "Track '" << track->getName() << "' mute state toggled to " << ((track->isMuted()) ? "true" : "false") << std::endl;
+        }
+
+        if (floatToDecibels(sliders[track->getName() + "_volume_slider"]->getValue()) != track->getVolume()) {
+            float newVolume = floatToDecibels(sliders[track->getName() + "_volume_slider"]->getValue());
+            track->setVolume(newVolume);
+            sliders[track->getName() + "_mixer_volume_slider"]->setValue(sliders[track->getName() + "_volume_slider"]->getValue());
+            std::cout << "Track '" << track->getName() << "' volume changed to: " << newVolume << " db" << std::endl;
+        }
+
+        if (floatToDecibels(sliders[track->getName() + "_mixer_volume_slider"]->getValue()) != track->getVolume()) {
+            float newVolume = floatToDecibels(sliders[track->getName() + "_mixer_volume_slider"]->getValue());
+            track->setVolume(newVolume);
+            sliders[track->getName() + "_volume_slider"]->setValue(sliders[track->getName() + "_mixer_volume_slider"]->getValue());
+            std::cout << "Track '" << track->getName() << "' volume changed to: " << newVolume << " db" << std::endl;
         }
     }
 }

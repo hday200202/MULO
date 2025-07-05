@@ -8,6 +8,9 @@ Engine::Engine() {
     formatManager.registerBasicFormats();
     deviceManager.initialise(0, 2, nullptr, true);
     deviceManager.addAudioCallback(this);
+
+    masterTrack = std::make_unique<Track>(formatManager);
+    masterTrack->setName("Master");
 }
 
 Engine::~Engine() {
@@ -199,6 +202,10 @@ std::vector<Track*>& Engine::getAllTracks() {
     return currentComposition->tracks;
 }
 
+Track* Engine::getMasterTrack() {
+    return masterTrack.get();
+}
+
 void Engine::audioDeviceIOCallbackWithContext(
     const float* const*,
     int numInputChannels,
@@ -328,13 +335,25 @@ void Engine::audioDeviceStopped() {
     tempMixBuffer.setSize(0, 0);
 }
 
-void Engine::processBlock(juce::AudioBuffer<float>& output, int numSamples) {
-    if (!currentComposition)
-        return;
+void Engine::processBlock(juce::AudioBuffer<float>& outputBuffer, int numSamples) {
+    // Clear output
+    outputBuffer.clear();
+
+    // Mix all tracks into tempMixBuffer
+    tempMixBuffer.setSize(outputBuffer.getNumChannels(), numSamples, false, false, true);
+    tempMixBuffer.clear();
 
     for (auto* track : currentComposition->tracks) {
-        track->process(positionSeconds, output, numSamples, sampleRate);
+        if (track && !track->isMuted())
+            track->process(positionSeconds, tempMixBuffer, numSamples, sampleRate);
     }
+
+    // Now process the master track (for effects, volume, etc.)
+    if (masterTrack)
+        masterTrack->process(0.0, tempMixBuffer, numSamples, sampleRate);
+
+    // Copy to output
+    outputBuffer.makeCopyOf(tempMixBuffer);
 }
 
 

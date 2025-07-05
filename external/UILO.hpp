@@ -236,6 +236,7 @@ public:
     void render(sf::RenderTarget& target) override;
 
     void setString(const std::string& newStr);
+    std::string getString() const { return m_text->getString(); }
 
 private:
     std::string m_string = "";
@@ -275,6 +276,7 @@ public:
     void checkClick(const sf::Vector2f& pos) override;
 
     void setText(const std::string& newStr);
+    std::string getText() const;
 
     bool isClicked() const { return m_isClicked; }
     bool isHovered() const { return m_isHovered; }
@@ -879,7 +881,9 @@ inline void Text::render(sf::RenderTarget& target) {
 }
 
 inline void Text::setString(const std::string& newStr) {
-    m_text->setString(newStr);
+    m_string = newStr;
+    if (m_text)
+        m_text->setString(newStr);
 }
 
 
@@ -1018,6 +1022,12 @@ inline void Button::checkClick(const sf::Vector2f& pos) {
 inline void Button::setText(const std::string& newStr) {
     if (m_text)
         m_text->setString(newStr);
+}
+
+inline std::string Button::getText() const {
+    if (m_text)
+        return m_text->getString();
+    return "";
 }
 
 

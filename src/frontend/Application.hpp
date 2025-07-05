@@ -27,6 +27,7 @@ private:
 
     bool running = false;
     bool showMixer = false;
+    bool playing = false;
 
     // UI Components
     Row* topRowElement;
@@ -34,6 +35,7 @@ private:
     Row* masterTrackElement;
     Column* timelineElement;
     Row* mixerElement;
+    Column* masterMixerTrackElement;
     Row* browserAndTimelineElement;
     Row* browserAndMixerElement;
     Row* fxRackElement;
@@ -48,6 +50,7 @@ private:
     Row* fxRack();
     Row* track(const std::string& trackName = "", Align alignment = Align::LEFT | Align::TOP, float volume = 0.75f, float pan = 0.0f);
     Row* mixer();
+    Column* mixerTrack(const std::string& trackName = "", Align alignment = Align::LEFT | Align::TOP, float volume = 0.75f, float pan = 0.0f);
 
     // UI Helpers
     std::string selectDirectory();
@@ -55,6 +58,9 @@ private:
     void newTrack();
     void loadComposition(const std::string& path);
     void initUIResources();
+
+    void handleTrackEvents();
+
     void undo();
     void redo();
 };

@@ -54,6 +54,7 @@ public:
     void removeTrack(int index);
     Track* getTrack(int index);
     std::vector<Track*>& getAllTracks();
+    Track* getMasterTrack();
     
     // Project State
     bool saveState(const std::string& path = "untitled.mpf") const;
@@ -86,6 +87,8 @@ private:
     double positionSeconds = 0.0;
 
     juce::AudioBuffer<float> tempMixBuffer;
+
+    std::unique_ptr<Track> masterTrack;
 
     void processBlock(juce::AudioBuffer<float>& outputBuffer, int numSamples);
 
