@@ -4,10 +4,15 @@
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_audio_basics/juce_audio_basics.h>
+#include <juce_gui_extra/juce_gui_extra.h>
 
 #include <memory>
 #include <vector>
 #include <string>
+#include <sstream>
+#include <stack>
+#include <fstream>
+#include <iomanip>
 
 class Composition;
 class AudioClip;
@@ -27,10 +32,10 @@ class Effect;
 class Engine : public juce::AudioIODeviceCallback {
 public:
     juce::AudioFormatManager formatManager;
-
+    
     Engine();
     ~Engine();
-
+    
     // Playback 
     void play();
     void pause();
@@ -38,22 +43,24 @@ public:
     void setPosition(double seconds);
     double getPosition() const;
     bool isPlaying() const;
-
+    
     // Composition 
     void newComposition(const std::string& name = "untitled");
     void loadComposition(const std::string& path);
     void saveComposition(const std::string& path);
-
+    
     // Track Management 
     void addTrack(const std::string& name = "");
     void removeTrack(int index);
     Track* getTrack(int index);
     std::vector<Track*>& getAllTracks();
-
-    // Audio Callbacks 
+    
     // Project State
-    // Save engine state to .mpf file (returns true on success)
     bool saveState(const std::string& path = "untitled.mpf") const;
+    std::string getStateString() const;
+    void loadCompositionFromState(const std::string& state);
+    
+    // Audio Callbacks 
     void audioDeviceIOCallbackWithContext(
         const float* const* inputChannelData,
         int numInputChannels,
@@ -67,6 +74,9 @@ public:
     void audioDeviceStopped() override;
     std::string getCurrentCompositionName() const;
 
+    void undo();
+    void redo();
+
 private:
     juce::AudioDeviceManager deviceManager;
     std::unique_ptr<Composition> currentComposition;
@@ -78,6 +88,9 @@ private:
     juce::AudioBuffer<float> tempMixBuffer;
 
     void processBlock(juce::AudioBuffer<float>& outputBuffer, int numSamples);
+
+    std::stack<std::string> undoStack;
+    std::stack<std::string> redoStack;
 };
 
 /**
@@ -191,4 +204,11 @@ inline float floatToDecibels(float linear, float minusInfinityDb = -100.0f) {
     if (linear <= 0.0f)
         return minusInfinityDb;
     return 20.0f * std::log10(linear / reference);
+}
+
+inline float decibelsToFloat(float db, float minusInfinityDb = -100.0f) {
+    constexpr float reference = 0.75f; // 0.75f maps to 0 dB
+    if (db <= minusInfinityDb)
+        return 0.0f;
+    return reference * std::pow(10.0f, db / 20.0f);
 }

@@ -1,0 +1,26 @@
+{
+  "composition": {
+    "name": "untitled",
+    "bpm": 120,
+    "timeSignature": {
+      "numerator": 4,
+      "denominator": 4
+    },
+    "tracks": [
+      {
+        "name": "Master",
+        "volume": 0,
+        "pan": 0,
+        "clips": [
+          {
+            "file": "/home/harrison/Dev/C++/MDAW/assets/test_samples/kick.wav\"",
+            "start": 0,
+            "offset": 0,
+            "duration": 0,
+            "volume": 1
+          }
+        ]
+      }
+    ]
+  }
+}

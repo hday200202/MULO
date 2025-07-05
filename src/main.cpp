@@ -1,6 +1,12 @@
-#include "frontend/ui.hpp"
+#include "frontend/Application.hpp"
 
 int main() {
-    application();
+    Application app;
+
+    while (app.isRunning()) {
+        app.update();
+        app.render();
+    }
+    
     return 0;
 }

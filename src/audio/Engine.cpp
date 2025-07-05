@@ -1,6 +1,4 @@
 #include "Engine.hpp"
-#include <fstream>
-#include <iomanip>
 
 //==============================================================================
 // ENGINE 
@@ -46,7 +44,124 @@ void Engine::newComposition(const std::string& name) {
     currentComposition->name = name;
 }
 
-void Engine::loadComposition(const std::string&) {}
+void Engine::loadComposition(const std::string& path) {
+    std::ifstream in(path);
+    if (!in.is_open()) return;
+
+    // Simple JSON parsing (not robust, but works for our format)
+    std::string line;
+    std::string compName;
+    double bpm = 120;
+    int tsNum = 4, tsDen = 4;
+    std::vector<Track*> loadedTracks;
+
+    auto trim = [](std::string s) {
+        size_t start = s.find_first_not_of(" \t\n\r");
+        size_t end = s.find_last_not_of(" \t\n\r");
+        return (start == std::string::npos) ? "" : s.substr(start, end - start + 1);
+    };
+
+    Track* currentTrack = nullptr;
+    while (std::getline(in, line)) {
+        line = trim(line);
+        if (line.find("\"name\":") != std::string::npos && compName.empty()) {
+            // Composition name
+            auto pos = line.find(":");
+            compName = trim(line.substr(pos + 1));
+            // Remove leading/trailing quotes and trailing comma
+            if (!compName.empty() && compName.front() == '"') compName = compName.substr(1);
+            if (!compName.empty() && (compName.back() == '"' || compName.back() == ',')) compName.pop_back();
+            if (!compName.empty() && compName.back() == '"') compName.pop_back(); // In case both
+        } else if (line.find("\"bpm\":") != std::string::npos) {
+            auto pos = line.find(":");
+            bpm = std::stod(trim(line.substr(pos + 1)));
+        } else if (line.find("\"numerator\":") != std::string::npos) {
+            auto pos = line.find(":");
+            tsNum = std::stoi(trim(line.substr(pos + 1)));
+        } else if (line.find("\"denominator\":") != std::string::npos) {
+            auto pos = line.find(":");
+            tsDen = std::stoi(trim(line.substr(pos + 1)));
+        } else if (line.find("\"name\":") != std::string::npos && !compName.empty()) {
+            // Track name
+            auto pos = line.find(":");
+            std::string tname = trim(line.substr(pos + 1));
+            // Remove leading/trailing quotes and trailing comma
+            if (!tname.empty() && tname.front() == '"') tname = tname.substr(1);
+            if (!tname.empty() && (tname.back() == '"' || tname.back() == ',')) tname.pop_back();
+            if (!tname.empty() && tname.back() == '"') tname.pop_back(); // In case both
+            currentTrack = new Track(formatManager);
+            currentTrack->setName(tname);
+            loadedTracks.push_back(currentTrack);
+        } else if (line.find("\"volume\":") != std::string::npos && currentTrack) {
+            auto pos = line.find(":");
+            currentTrack->setVolume(std::stof(trim(line.substr(pos + 1)).c_str()));
+        } else if (line.find("\"pan\":") != std::string::npos && currentTrack) {
+            auto pos = line.find(":");
+            currentTrack->setPan(std::stof(trim(line.substr(pos + 1)).c_str()));
+        } else if (line.find("\"file\":") != std::string::npos && currentTrack) {
+            // Start of a clip
+            juce::File file;
+            double start = 0, offset = 0, duration = 0;
+            float vol = 1.0f;
+            // File
+            auto pos = line.find(":");
+            std::string fpath = trim(line.substr(pos + 1));
+            if (!fpath.empty() && fpath.front() == '"') fpath = fpath.substr(1, fpath.size() - 2);
+            file = juce::File(fpath);
+            // Next lines: start, offset, duration, volume
+            std::getline(in, line); line = trim(line);
+            if (line.find("\"start\":") != std::string::npos) {
+                pos = line.find(":");
+                start = std::stod(trim(line.substr(pos + 1)));
+            }
+            std::getline(in, line); line = trim(line);
+            if (line.find("\"offset\":") != std::string::npos) {
+                pos = line.find(":");
+                offset = std::stod(trim(line.substr(pos + 1)));
+            }
+            std::getline(in, line); line = trim(line);
+            if (line.find("\"duration\":") != std::string::npos) {
+                pos = line.find(":");
+                duration = std::stod(trim(line.substr(pos + 1)));
+            }
+            std::getline(in, line); line = trim(line);
+            if (line.find("\"volume\":") != std::string::npos) {
+                pos = line.find(":");
+                vol = std::stof(trim(line.substr(pos + 1)));
+            }
+            currentTrack->addClip(AudioClip(file, start, offset, duration, vol));
+        }
+    }
+
+    // Clean up old tracks before replacing composition
+    if (currentComposition) {
+        for (auto* t : currentComposition->tracks) delete t;
+        currentComposition->tracks.clear();
+    }
+
+    // Replace current composition
+    currentComposition = std::make_unique<Composition>();
+    currentComposition->name = compName;
+    currentComposition->bpm = bpm;
+    currentComposition->timeSigNumerator = tsNum;
+    currentComposition->timeSigDenominator = tsDen;
+
+    // Only add Master if not present in loaded tracks
+    bool hasMaster = false;
+    for (auto* t : loadedTracks) {
+        if (t && t->getName() == "Master") {
+            hasMaster = true;
+            break;
+        }
+    }
+    if (!hasMaster) {
+        addTrack("Master");
+    }
+    for (auto& t : loadedTracks) {
+        currentComposition->tracks.push_back(t);
+    }
+    loadedTracks.clear();
+}
 
 void Engine::saveComposition(const std::string&) {}
 
@@ -114,45 +229,90 @@ std::string escapeMpfString(const std::string& s) {
 // Save the current engine state to a .mpf project file
 bool Engine::saveState(const std::string& path) const {
     if (!currentComposition) return false;
-    std::ofstream out(path);
-    if (!out.is_open()) return false;
-
-    out << "{\n";
-    out << "  \"composition\": {\n";
-    out << "    \"name\": \"" << escapeMpfString(currentComposition->name) << "\",\n";
-    out << "    \"bpm\": " << currentComposition->bpm << ",\n";
-    out << "    \"timeSignature\": {\n";
-    out << "      \"numerator\": " << currentComposition->timeSigNumerator << ",\n";
-    out << "      \"denominator\": " << currentComposition->timeSigDenominator << "\n";
-    out << "    },\n";
-    out << "    \"tracks\": [\n";
+    std::ostringstream ss;
+    ss << "{\n";
+    ss << "  \"composition\": {\n";
+    ss << "    \"name\": \"" << escapeMpfString(currentComposition->name) << "\",\n";
+    ss << "    \"bpm\": " << currentComposition->bpm << ",\n";
+    ss << "    \"timeSignature\": {\n";
+    ss << "      \"numerator\": " << currentComposition->timeSigNumerator << ",\n";
+    ss << "      \"denominator\": " << currentComposition->timeSigDenominator << "\n";
+    ss << "    },\n";
+    ss << "    \"tracks\": [\n";
     for (size_t i = 0; i < currentComposition->tracks.size(); ++i) {
         const auto* track = currentComposition->tracks[i];
-        out << "      {\n";
-        out << "        \"name\": \"" << escapeMpfString(track->getName()) << "\",\n";
-        out << "        \"volume\": " << track->getVolume() << ",\n";
-        out << "        \"pan\": " << track->getPan() << ",\n";
-        out << "        \"clips\": [\n";
+        ss << "      {\n";
+        ss << "        \"name\": \"" << escapeMpfString(track->getName()) << "\",\n";
+        ss << "        \"volume\": " << track->getVolume() << ",\n";
+        ss << "        \"pan\": " << track->getPan() << ",\n";
+        ss << "        \"clips\": [\n";
         const auto& clips = track->getClips();
         for (size_t j = 0; j < clips.size(); ++j) {
             const auto& clip = clips[j];
-            out << "          {\n";
-            out << "            \"file\": \"" << escapeMpfString(clip.sourceFile.getFullPathName().toStdString()) << "\",\n";
-            out << "            \"start\": " << clip.startTime << ",\n";
-            out << "            \"offset\": " << clip.offset << ",\n";
-            out << "            \"duration\": " << clip.duration << ",\n";
-            out << "            \"volume\": " << clip.volume << "\n";
-            out << "          }" << (j + 1 < clips.size() ? "," : "") << "\n";
+            ss << "          {\n";
+            ss << "            \"file\": \"" << escapeMpfString(clip.sourceFile.getFullPathName().toStdString()) << "\",\n";
+            ss << "            \"start\": " << clip.startTime << ",\n";
+            ss << "            \"offset\": " << clip.offset << ",\n";
+            ss << "            \"duration\": " << clip.duration << ",\n";
+            ss << "            \"volume\": " << clip.volume << "\n";
+            ss << "          }" << (j + 1 < clips.size() ? "," : "") << "\n";
         }
-        out << "        ]\n";
-        out << "      }" << (i + 1 < currentComposition->tracks.size() ? "," : "") << "\n";
+        ss << "        ]\n";
+        ss << "      }" << (i + 1 < currentComposition->tracks.size() ? "," : "") << "\n";
     }
-    out << "    ]\n";
-    out << "  }\n";
-    out << "}\n";
+    ss << "    ]\n";
+    ss << "  }\n";
+    ss << "}\n";
 
+    std::ofstream out(path);
+    if (!out.is_open()) return false;
+    out << ss.str();
     out.close();
+    
     return true;
+}
+
+std::string Engine::getStateString() const {
+    if (!currentComposition) return "";
+    std::ostringstream ss;
+    ss << "{\n";
+    ss << "  \"composition\": {\n";
+    ss << "    \"name\": \"" << escapeMpfString(currentComposition->name) << "\",\n";
+    ss << "    \"bpm\": " << currentComposition->bpm << ",\n";
+    ss << "    \"timeSignature\": {\n";
+    ss << "      \"numerator\": " << currentComposition->timeSigNumerator << ",\n";
+    ss << "      \"denominator\": " << currentComposition->timeSigDenominator << "\n";
+    ss << "    },\n";
+    ss << "    \"tracks\": [\n";
+    for (size_t i = 0; i < currentComposition->tracks.size(); ++i) {
+        const auto* track = currentComposition->tracks[i];
+        ss << "      {\n";
+        ss << "        \"name\": \"" << escapeMpfString(track->getName()) << "\",\n";
+        ss << "        \"volume\": " << track->getVolume() << ",\n";
+        ss << "        \"pan\": " << track->getPan() << ",\n";
+        ss << "        \"clips\": [\n";
+        const auto& clips = track->getClips();
+        for (size_t j = 0; j < clips.size(); ++j) {
+            const auto& clip = clips[j];
+            ss << "          {\n";
+            ss << "            \"file\": \"" << escapeMpfString(clip.sourceFile.getFullPathName().toStdString()) << "\",\n";
+            ss << "            \"start\": " << clip.startTime << ",\n";
+            ss << "            \"offset\": " << clip.offset << ",\n";
+            ss << "            \"duration\": " << clip.duration << ",\n";
+            ss << "            \"volume\": " << clip.volume << "\n";
+            ss << "          }" << (j + 1 < clips.size() ? "," : "") << "\n";
+        }
+        ss << "        ]\n";
+        ss << "      }" << (i + 1 < currentComposition->tracks.size() ? "," : "") << "\n";
+    }
+    ss << "    ]\n";
+    ss << "  }\n";
+    ss << "}\n";
+    return ss.str();
+}
+
+void Engine::loadCompositionFromState(const std::string& state) {
+    std::cout << "Loaded state: " << state << std::endl;
 }
 
 void Engine::audioDeviceAboutToStart(juce::AudioIODevice* device) {

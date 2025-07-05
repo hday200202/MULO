@@ -180,6 +180,7 @@ public:
     void addElements(std::initializer_list<Element*> elements);
     virtual void handleEvent(const sf::Event& event) override;
     const std::vector<Element*>& getElements() const;
+    void clear();
 
 protected:
     std::vector<Element*> m_elements;
@@ -365,8 +366,8 @@ public:
     void render();
     void setTitle(const std::string& newTitle);
     bool isRunning() const;
-    void addPage(std::pair<Page*&, std::string> newPage);
-    void addPages(std::initializer_list<std::pair<Page*&, std::string>> pages);
+    void addPage(std::pair<Page*, std::string> newPage);
+    void addPages(std::initializer_list<std::pair<Page*, std::string>> pages);
     void switchToPage(const std::string& pageName);
 
 private:
@@ -545,6 +546,10 @@ inline const std::vector<Element*>& Container::getElements() const {
     return m_elements;
 }
 
+inline void Container::clear() {
+    this->m_elements.clear();
+}
+
 
 
 // ---------------------------------------------------------------------------- //
@@ -556,10 +561,12 @@ inline void Row::update(sf::RectangleShape& parentBounds) {
 
     std::vector<Element*> left, center, right;
     for (auto& e : m_elements) {
-        Align a = e->m_modifier.getAlignment();
-        if (hasAlign(a, Align::RIGHT)) right.push_back(e);
-        else if (hasAlign(a, Align::CENTER_X)) center.push_back(e);
-        else left.push_back(e); // default is LEFT
+        if (e->m_modifier.isVisible()) {
+            Align a = e->m_modifier.getAlignment();
+            if (hasAlign(a, Align::RIGHT)) right.push_back(e);
+            else if (hasAlign(a, Align::CENTER_X)) center.push_back(e);
+            else left.push_back(e); // default is LEFT
+        }
     }
 
     float totalFixed = 0.f;
@@ -688,10 +695,12 @@ inline void Column::update(sf::RectangleShape& parentBounds) {
 
     std::vector<Element*> top, center, bottom;
     for (auto& e : m_elements) {
-        Align a = e->m_modifier.getAlignment();
-        if (hasAlign(a, Align::BOTTOM)) bottom.push_back(e);
-        else if (hasAlign(a, Align::CENTER_Y)) center.push_back(e);
-        else top.push_back(e); // default is TOP
+        if (e->m_modifier.isVisible()) {
+            Align a = e->m_modifier.getAlignment();
+            if (hasAlign(a, Align::BOTTOM)) bottom.push_back(e);
+            else if (hasAlign(a, Align::CENTER_Y)) center.push_back(e);
+            else top.push_back(e); // default is TOP
+        }
     }
 
     float totalFixed = 0.f;
@@ -1160,8 +1169,10 @@ inline void Page::update(const sf::RectangleShape& parentBounds) {
     std::vector<std::future<void>> futures;
 
     for (auto& c : m_containers) {
-        c->m_bounds.setPosition(m_bounds.getPosition());
-        c->update(m_bounds);
+        if (c->m_modifier.isVisible()) {
+            c->m_bounds.setPosition(m_bounds.getPosition());
+            c->update(m_bounds);
+        }
     }
 }
  
@@ -1365,7 +1376,7 @@ inline bool UILO::isRunning() const {
     return m_running;
 }
 
-inline void UILO::addPage(std::pair<Page*&, std::string> newPage) {
+inline void UILO::addPage(std::pair<Page*, std::string> newPage) {
     Page*& page = newPage.first;
     const std::string& name = newPage.second;
 
@@ -1377,7 +1388,7 @@ inline void UILO::addPage(std::pair<Page*&, std::string> newPage) {
     if (!m_currentPage) m_currentPage = page;
 }
 
-inline void UILO::addPages(std::initializer_list<std::pair<Page*&, std::string>> pages) {
+inline void UILO::addPages(std::initializer_list<std::pair<Page*, std::string>> pages) {
     for (const auto& [page, name] : pages) {
         if (uilo_owned_pages.find(page) == uilo_owned_pages.end()) {
             uilo_owned_pages.insert(page);
