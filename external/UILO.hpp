@@ -374,12 +374,14 @@ public:
     void addPages(std::initializer_list<std::pair<Page*, std::string>> pages);
     void switchToPage(const std::string& pageName);
     void forceUpdate();
+    void setScale(float scale = 1.5f);
 
 private:
     sf::RenderWindow m_window;
     sf::RenderWindow* m_userWindow = nullptr;
     bool m_windowOwned = true;
     int m_pollCount = 10;
+    float m_renderScale = 1.5f;
     sf::VideoMode m_defScreenRes;
     sf::View m_defaultView;
     sf::RectangleShape m_bounds;
@@ -1418,6 +1420,16 @@ inline void UILO::forceUpdate() {
     m_pollCount = uilo_owned_elements.size();
 }
 
+inline void UILO::setScale(float scale) {
+    m_renderScale = scale;
+    initDefaultView();
+    if (m_windowOwned) {
+        m_window.setView(m_defaultView);
+    } else if (m_userWindow) {
+        m_userWindow->setView(m_defaultView);
+    }
+}
+
 inline void UILO::pollEvents() {
     while (const auto event = (m_windowOwned) ?  m_window.pollEvent() : m_userWindow->pollEvent()) {
         if (!m_windowOwned && !m_userWindow)
@@ -1453,8 +1465,8 @@ inline void UILO::pollEvents() {
 
 inline void UILO::initDefaultView() {
     m_defScreenRes = sf::VideoMode::getDesktopMode();
-    m_defScreenRes.size.x /= 2;
-    m_defScreenRes.size.y /= 2;
+    m_defScreenRes.size.x /= m_renderScale;
+    m_defScreenRes.size.y /= m_renderScale;
 
     m_defaultView.setSize({
         (float)m_defScreenRes.size.x,
