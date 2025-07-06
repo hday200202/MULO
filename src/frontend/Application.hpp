@@ -22,12 +22,13 @@ private:
     UIState uiState;
     UIResources resources;
 
-    std::stack<UIState> undoStack;
-    std::stack<UIState> redoStack;
+    std::stack<std::string> undoStack;
+    std::stack<std::string> redoStack;
 
     bool running = false;
     bool showMixer = false;
     bool playing = false;
+    bool uiChanged = false;
 
     // UI Components
     Row* topRowElement;
@@ -58,6 +59,7 @@ private:
     void newTrack();
     void loadComposition(const std::string& path);
     void initUIResources();
+    void rebuildUIFromEngine();
 
     void handleTrackEvents();
 

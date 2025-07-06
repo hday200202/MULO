@@ -144,8 +144,10 @@ inline Modifier default_mod;
 class Element {
 public:
     sf::RectangleShape m_bounds;
+    sf::RectangleShape m_pastBounds;
     Modifier m_modifier;
     bool m_uiloOwned = false;
+    bool m_isDirty = false;
 
     std::string m_name = "";
 
@@ -371,6 +373,7 @@ public:
     void addPage(std::pair<Page*, std::string> newPage);
     void addPages(std::initializer_list<std::pair<Page*, std::string>> pages);
     void switchToPage(const std::string& pageName);
+    void forceUpdate();
 
 private:
     sf::RenderWindow m_window;
@@ -430,7 +433,12 @@ inline bool Modifier::isVisible() const                 { return m_isVisible; }
 inline Element::Element() {}
 inline Element::~Element() {}
 
-inline void Element::update(sf::RectangleShape& parentBounds) {}
+inline void Element::update(sf::RectangleShape& parentBounds) {
+    // Base: just check dirty
+    m_isDirty = (m_bounds.getPosition() != m_pastBounds.getPosition() || m_bounds.getSize() != m_pastBounds.getSize());
+    m_pastBounds.setPosition(m_bounds.getPosition());
+    m_pastBounds.setSize(m_bounds.getSize());
+}
 inline void Element::render(sf::RenderTarget& target) {}
 
 inline void Element::handleEvent(const sf::Event& event) {
@@ -503,11 +511,7 @@ inline Container::Container(std::initializer_list<Element*> elements, const std:
 
     m_name = name;
     if (!m_name.empty()) {
-        if (containers.find(m_name) == containers.end()) {
-            containers[m_name] = this;
-        } else {
-            std::cerr << "Warning: Name '" << m_name << "' already exists." << std::endl;
-        }
+        containers[m_name] = this;
     }
 }
 
@@ -519,11 +523,7 @@ inline Container::Container(Modifier modifier, std::initializer_list<Element*> e
 
     m_name = name;
     if (!m_name.empty()) {
-        if (containers.find(m_name) == containers.end()) {
-            containers[m_name] = this;
-        } else {
-            std::cerr << "Warning: Name '" << m_name << "' already exists." << std::endl;
-        }
+        containers[m_name] = this;
     }
 }
 
@@ -646,14 +646,16 @@ inline void Row::update(sf::RectangleShape& parentBounds) {
     for (auto& e : m_elements) {
         auto a = e->m_modifier.getAlignment();
         auto pos = e->m_bounds.getPosition();
-
         if (hasAlign(a, Align::CENTER_Y))
             pos.y = m_bounds.getPosition().y + (m_bounds.getSize().y - e->m_bounds.getSize().y) / 2.f;
         else if (hasAlign(a, Align::BOTTOM))
             pos.y = m_bounds.getPosition().y + m_bounds.getSize().y - e->m_bounds.getSize().y;
-
         e->m_bounds.setPosition(pos);
     }
+    // Dirty check for Row itself
+    m_isDirty = (m_bounds.getPosition() != m_pastBounds.getPosition() || m_bounds.getSize() != m_pastBounds.getSize());
+    m_pastBounds.setPosition(m_bounds.getPosition());
+    m_pastBounds.setSize(m_bounds.getSize());
 }    
 
 inline void Row::render(sf::RenderTarget& target) {
@@ -789,6 +791,10 @@ inline void Column::update(sf::RectangleShape& parentBounds) {
 
         e->m_bounds.setPosition(pos);
     }
+    // Dirty check for Column itself
+    m_isDirty = (m_bounds.getPosition() != m_pastBounds.getPosition() || m_bounds.getSize() != m_pastBounds.getSize());
+    m_pastBounds.setPosition(m_bounds.getPosition());
+    m_pastBounds.setSize(m_bounds.getSize());
 }    
 
 inline void Column::render(sf::RenderTarget& target) {
@@ -831,11 +837,7 @@ inline Text::Text(Modifier modifier, const std::string& str, sf::Font font, cons
     m_modifier = modifier;
     m_name = name;
     if (!m_name.empty()) {
-        if (texts.find(m_name) == texts.end()) {
-            texts[m_name] = this;
-        } else {
-            std::cerr << "Warning: Name '" << m_name << "' already exists." << std::endl;
-        }
+        texts[m_name] = this;
     }
 }
 
@@ -850,20 +852,19 @@ inline Text::Text(Modifier modifier, const std::string& str, const std::string& 
 
 inline void Text::update(sf::RectangleShape& parentBounds) {
     resize(parentBounds);
-    m_bounds.setPosition(parentBounds.getPosition());  // ← 🔧 This is the key fix
-
+    m_bounds.setPosition(parentBounds.getPosition());
     float fontSize = m_modifier.getFixedHeight() > 0
         ? m_modifier.getFixedHeight()
         : m_bounds.getSize().y;
-
     m_text.emplace(m_font, m_string);
     m_text->setCharacterSize(static_cast<unsigned>(fontSize));
     m_text->setFillColor(m_modifier.getColor());
-
     sf::FloatRect textBounds = m_text->getLocalBounds();
-
-    // Resize m_bounds width based on text
     m_bounds.setSize({ textBounds.size.x + textBounds.position.x, m_bounds.getSize().y });
+    // Dirty check for Text
+    m_isDirty = (m_bounds.getPosition() != m_pastBounds.getPosition() || m_bounds.getSize() != m_pastBounds.getSize());
+    m_pastBounds.setPosition(m_bounds.getPosition());
+    m_pastBounds.setSize(m_bounds.getSize());
 }
 
 inline void Text::render(sf::RenderTarget& target) {
@@ -895,11 +896,7 @@ inline Spacer::Spacer(Modifier& modifier, const std::string& name) {
     m_modifier = modifier;
     m_name = name;
     if (!m_name.empty()) {
-        if (spacers.find(m_name) == spacers.end()) {
-            spacers[m_name] = this;
-        } else {
-            std::cerr << "Warning: Name '" << m_name << "' already exists." << std::endl;
-        }
+        spacers[m_name] = this;
     }
 }
 
@@ -943,11 +940,7 @@ inline Button::Button(
 
     m_name = name;
     if (!m_name.empty()) {
-        if (buttons.find(m_name) == buttons.end()) {
-            buttons[m_name] = this;
-        } else {
-            std::cerr << "Warning: Name '" << m_name << "' already exists." << std::endl;
-        }
+        buttons[m_name] = this;
     }
 }
 
@@ -958,8 +951,6 @@ inline void Button::update(sf::RectangleShape& parentBounds) {
         m_modifier.getFixedHeight() ? m_modifier.getFixedHeight() : parentBounds.getSize().y * m_modifier.getHeight()
     });
 
-    // m_bounds.setPosition(parentBounds.getPosition());
-
     if (m_text) {
         m_text->update(m_bounds);
         m_text->m_bounds.setPosition({
@@ -967,6 +958,10 @@ inline void Button::update(sf::RectangleShape& parentBounds) {
             m_bounds.getPosition().y + (m_bounds.getSize().y / 2.f) - (m_text->m_bounds.getSize().y / 2.f)
         });
     }
+    // Dirty check for Button
+    m_isDirty = (m_bounds.getPosition() != m_pastBounds.getPosition() || m_bounds.getSize() != m_pastBounds.getSize());
+    m_pastBounds.setPosition(m_bounds.getPosition());
+    m_pastBounds.setSize(m_bounds.getSize());
 }
 
 inline void Button::render (sf::RenderTarget& target) {
@@ -1047,18 +1042,13 @@ inline Slider::Slider(
 
     m_name = name;
     if (!m_name.empty()) {
-        if (sliders.find(m_name) == sliders.end()) {
-            sliders[m_name] = this;
-        } else {
-            std::cerr << "Warning: Name '" << m_name << "' already exists." << std::endl;
-        }
+        sliders[m_name] = this;
     }
 }
 
 inline void Slider::update(sf::RectangleShape& parentBounds) {
     resize(parentBounds);
     applyModifiers();
-
     m_knobRect.setSize
     ({
         m_bounds.getSize().x, 
@@ -1082,6 +1072,10 @@ inline void Slider::update(sf::RectangleShape& parentBounds) {
         m_bounds.getPosition().x, 
         m_bounds.getPosition().y + m_bounds.getSize().y - (m_bounds.getSize().y * m_curVal)
     });
+    // Dirty check for Slider
+    m_isDirty = (m_bounds.getPosition() != m_pastBounds.getPosition() || m_bounds.getSize() != m_pastBounds.getSize());
+    m_pastBounds.setPosition(m_bounds.getPosition());
+    m_pastBounds.setSize(m_bounds.getSize());
 }
 
 inline void Slider::render(sf::RenderTarget& target) {
@@ -1417,6 +1411,11 @@ inline void UILO::switchToPage(const std::string& pageName) {
     } else {
         std::cerr << "[UILO] Page \"" << pageName << "\" not found.\n";
     }
+}
+
+inline void UILO::forceUpdate() {
+    m_shouldUpdate = true;
+    m_pollCount = uilo_owned_elements.size();
 }
 
 inline void UILO::pollEvents() {

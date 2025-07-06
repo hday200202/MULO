@@ -40,7 +40,6 @@ Application::Application() {
                 fxRackElement,
             }),
         }), "mixer" }
-        
     );
 
     if (ui) running = ui->isRunning();
@@ -76,6 +75,7 @@ void Application::update() {
         }
 
         if (buttons["new_track"]->isClicked()) {
+            uiChanged = true;
             newTrack();
             std::cout << "New track added. Total tracks: " << uiState.trackCount << std::endl;
         }
@@ -89,8 +89,9 @@ void Application::update() {
 
         if (buttons["load"]->isClicked()) {
             std::string path = selectFile({"*.mpf"});
-            if (!path.empty())
+            if (!path.empty()) {
                 loadComposition(path);
+            }
             else
                 std::cout << "No file selected." << std::endl;
         }
@@ -111,6 +112,31 @@ void Application::update() {
         }
 
         handleTrackEvents();
+
+        if (engine.getStateString() != undoStack.top()) {
+            undoStack.push(engine.getStateString());
+            std::cout << "UI Changed undoStack size: " << undoStack.size() << std::endl;
+        }
+
+        static bool prevCtrl = false, prevZ = false, prevY = false;
+        bool ctrl = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl);
+        bool z = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Z);
+        bool y = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Y);
+
+        if (ctrl && !prevCtrl) prevZ = prevY = false;
+
+        if (ctrl && z && !prevZ) {
+            undo();
+            std::cout << "Undo, undoStack size: " << undoStack.size() << std::endl;
+        }
+        if (ctrl && y && !prevY) {
+            redo();
+            std::cout << "Redo, redoStack size: " << redoStack.size() << std::endl;
+        }
+
+        prevCtrl = ctrl;
+        prevZ = z;
+        prevY = y;
 
         ui->update();
     }
@@ -513,6 +539,8 @@ void Application::loadComposition(const std::string& path) {
             uiState.masterTrack.pan = t->getPan();
             uiState.masterTrack.volume = t->getVolume();
             uiState.masterTrack.name = t->getName();
+
+            continue;
         }
 
         else {
@@ -535,9 +563,32 @@ void Application::loadComposition(const std::string& path) {
             sliders[t->getName() + "_mixer_volume_slider"]->setValue(decibelsToFloat(t->getVolume()));
         }
     }
+
+    undoStack.push(engine.getStateString());
+    // redoStack = std::stack<std::string>();
 }
 
 void Application::handleTrackEvents() {
+    if (buttons["mute_Master"]->isClicked()) {
+        engine.getMasterTrack()->toggleMute();
+        buttons["mute_Master"]->m_modifier.setColor((engine.getMasterTrack()->isMuted() ? sf::Color::Red : sf::Color(50, 50, 50)));
+        std::cout << "Master track mute state toggled to " << ((engine.getMasterTrack()->isMuted()) ? "true" : "false") << std::endl;
+    }
+
+    if (sliders["Master_volume_slider"]->getValue() != decibelsToFloat(engine.getMasterTrack()->getVolume())) {
+        float newVolume = floatToDecibels(sliders["Master_volume_slider"]->getValue());
+        engine.getMasterTrack()->setVolume(newVolume);
+        sliders["Master_mixer_volume_slider"]->setValue(sliders["Master_volume_slider"]->getValue());
+        std::cout << "Master track volume changed to: " << newVolume << " db" << std::endl;
+    }
+
+    if (sliders["Master_mixer_volume_slider"]->getValue() != decibelsToFloat(engine.getMasterTrack()->getVolume())) {
+        float newVolume = floatToDecibels(sliders["Master_mixer_volume_slider"]->getValue());
+        engine.getMasterTrack()->setVolume(newVolume);
+        sliders["Master_volume_slider"]->setValue(sliders["Master_mixer_volume_slider"]->getValue());
+        std::cout << "Master track volume changed to: " << newVolume << " db" << std::endl;
+    }
+
     for (auto& track : engine.getAllTracks()) {
         if (buttons["mute_" + track->getName()]->isClicked()) {
             track->toggleMute();
@@ -561,10 +612,63 @@ void Application::handleTrackEvents() {
     }
 }
 
+void Application::rebuildUIFromEngine() {
+    uiState = UIState();
+    timelineElement->clear();
+    mixerElement->clear();
+    timelineElement->addElement(masterTrackElement);
+    mixerElement->addElement(masterMixerTrackElement);
+    uiState.trackCount = engine.getAllTracks().size();
+    for (auto& t : engine.getAllTracks()) {
+        if (t->getName() == "Master") {
+            uiState.masterTrack.pan = t->getPan();
+            uiState.masterTrack.volume = t->getVolume();
+            uiState.masterTrack.name = t->getName();
+            continue;
+        }
+        uiState.tracks[t->getName()].clips = t->getClips();
+        uiState.tracks[t->getName()].name = t->getName();
+        uiState.tracks[t->getName()].volume = t->getVolume();
+        uiState.tracks[t->getName()].pan = t->getPan();
+        timelineElement->addElements({
+            spacer(Modifier().setfixedHeight(2).align(Align::TOP)),
+            track(t->getName(), Align::TOP | Align::LEFT),
+        });
+        mixerElement->addElements({
+            spacer(Modifier().setfixedWidth(2).align(Align::LEFT)),
+            mixerTrack(t->getName(), Align::TOP | Align::LEFT, decibelsToFloat(t->getVolume()), t->getPan()),
+        });
+        sliders[t->getName() + "_volume_slider"]->setValue(decibelsToFloat(t->getVolume()));
+        sliders[t->getName() + "_mixer_volume_slider"]->setValue(decibelsToFloat(t->getVolume()));
+    }
+
+    ui->forceUpdate();
+}
+
 void Application::undo() {
-    
+    if (undoStack.size() > 1) {
+        redoStack.push(undoStack.top());
+        undoStack.pop();
+        if (!undoStack.empty()) {
+            std::string previousState = undoStack.top();
+            engine.loadState(previousState);
+            rebuildUIFromEngine();
+        } 
+        else
+            std::cout << "No more states to undo." << std::endl;
+    } 
+    else
+        std::cout << "Nothing to undo." << std::endl;
 }
 
 void Application::redo() {
-    
+    if (!redoStack.empty()) {
+        std::string nextState = redoStack.top();
+        redoStack.pop();
+        engine.loadState(nextState);
+        rebuildUIFromEngine();
+        undoStack.push(nextState);
+    } 
+    else
+        std::cout << "Nothing to redo." << std::endl;
 }

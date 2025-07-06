@@ -59,7 +59,7 @@ public:
     // Project State
     bool saveState(const std::string& path = "untitled.mpf") const;
     std::string getStateString() const;
-    void loadCompositionFromState(const std::string& state);
+    void loadState(const std::string& state);
     
     // Audio Callbacks 
     void audioDeviceIOCallbackWithContext(
@@ -202,16 +202,16 @@ private:
 
 };
 
-inline float floatToDecibels(float linear, float minusInfinityDb = -100.0f) {
+inline float floatToDecibels(float linear, float minusInfinityDb = -1000.0f) {
     constexpr float reference = 0.75f; // 0.75f maps to 0 dB
     if (linear <= 0.0f)
         return minusInfinityDb;
-    return 20.0f * std::log10(linear / reference);
+    return 100.f * std::log10(linear / reference);
 }
 
-inline float decibelsToFloat(float db, float minusInfinityDb = -100.0f) {
+inline float decibelsToFloat(float db, float minusInfinityDb = -1000.0f) {
     constexpr float reference = 0.75f; // 0.75f maps to 0 dB
     if (db <= minusInfinityDb)
         return 0.0f;
-    return reference * std::pow(10.0f, db / 20.0f);
+    return reference * std::pow(10.0f, db / 100.f);
 }
