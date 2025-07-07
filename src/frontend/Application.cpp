@@ -453,14 +453,29 @@ Row* Application::mixer() {
 }
 
 std::string Application::selectDirectory() {
-    juce::FileChooser chooser("Select directory", juce::File(), "*");
-    if (chooser.browseForDirectory()) {
-        return chooser.getResult().getFullPathName().toStdString();
+    if (!juce::MessageManager::getInstance()->isThisTheMessageThread()) {
+        std::cerr << "FileChooser must be called from the message thread" << std::endl;
+        return "";
     }
+    
+    juce::FileChooser chooser("Select directory", juce::File::getSpecialLocation(juce::File::userHomeDirectory), "*");
+    
+    if (chooser.browseForDirectory()) {
+        juce::File result = chooser.getResult();
+        if (result.exists()) {
+            return result.getFullPathName().toStdString();
+        }
+    }
+    
     return "";
 }
 
 std::string Application::selectFile(std::initializer_list<std::string> filters) {
+    if (!juce::MessageManager::getInstance()->isThisTheMessageThread()) {
+        std::cerr << "FileChooser must be called from the message thread" << std::endl;
+        return "";
+    }
+    
     juce::String filterString;
     for (auto it = filters.begin(); it != filters.end(); ++it) {
         if (it != filters.begin())

@@ -3,6 +3,7 @@
 #include "UILO.hpp"
 #include "Engine.hpp"
 #include "UIData.hpp"
+#include <juce_gui_basics/juce_gui_basics.h>
 
 using namespace uilo;
 
