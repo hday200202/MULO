@@ -7,6 +7,18 @@
 
 using namespace uilo;
 
+/**
+ * @brief Main application class for the audio workstation.
+ * 
+ * Handles:
+ * - UI initialization and management using UILO.
+ * - Audio engine state and project management.
+ * - Undo/redo stack for project state.
+ * - User input, event handling, and UI updates.
+ * - File operations (load/save/select).
+ * 
+ * Owns all top-level UI elements and coordinates their updates with the engine.
+ */
 class Application {
 public:
     Application();
@@ -61,9 +73,7 @@ private:
     void loadComposition(const std::string& path);
     void initUIResources();
     void rebuildUIFromEngine();
-
     void handleTrackEvents();
-
     void undo();
     void redo();
 };

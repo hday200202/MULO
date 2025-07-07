@@ -91,9 +91,6 @@ private:
     std::unique_ptr<Track> masterTrack;
 
     void processBlock(juce::AudioBuffer<float>& outputBuffer, int numSamples);
-
-    std::stack<std::string> undoStack;
-    std::stack<std::string> redoStack;
 };
 
 /**

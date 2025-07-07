@@ -563,8 +563,10 @@ void Track::process(double playheadSeconds,
     auto reader = std::unique_ptr<juce::AudioFormatReader>(
         formatManager.createReaderFor(active->sourceFile));
 
-    if (!reader)
+    if (!reader) {
+        DBG("Failed to create reader for: " << active->sourceFile.getFullPathName());
         return;
+    }
 
     // Calculate block times within global timeline
     double blockStartTimeSeconds = playheadSeconds;

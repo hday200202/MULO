@@ -57,6 +57,9 @@ void Application::update() {
     running = ui->isRunning();
 
     if (ui->isRunning() && running) {
+        static bool prevSpace = false;
+        bool space = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Space);
+
         if (buttons["select_directory"]->isClicked()) {
             std::string dir = selectDirectory();
             if (!dir.empty()) {
@@ -96,19 +99,21 @@ void Application::update() {
                 std::cout << "No file selected." << std::endl;
         }
 
-        if (buttons["play"]->isClicked() && !playing) {
+        if ((buttons["play"]->isClicked() || (space && !prevSpace)) && !playing) {
             std::cout << "Playing audio..." << std::endl;
             engine.play();
             buttons["play"]->setText("pause");
             playing = true;
+            ui->forceUpdate(); // Use sparingly, only when necessary
         }
 
-        else if (buttons["play"]->isClicked() && playing) {
+        else if ((buttons["play"]->isClicked() || (space && !prevSpace)) && playing) {
             std::cout << "Pausing audio..." << std::endl;
             engine.pause();
             engine.setPosition(0.0);
             buttons["play"]->setText("play");
             playing = false;
+            ui->forceUpdate(); // Use sparingly, only when necessary
         }
 
         handleTrackEvents();
@@ -137,6 +142,7 @@ void Application::update() {
         prevCtrl = ctrl;
         prevZ = z;
         prevY = y;
+        prevSpace = space;
 
         ui->update();
     }
@@ -153,7 +159,6 @@ bool Application::isRunning() const {
 void Application::initUIResources() {
     juce::File fontFile = juce::File::getCurrentWorkingDirectory().getChildFile("assets/fonts/DejaVuSans.ttf");
     if (!fontFile.existsAsFile()) {
-        // Try relative to executable
         fontFile = juce::File::getSpecialLocation(juce::File::currentExecutableFile)
             .getParentDirectory().getChildFile("assets/fonts/DejaVuSans.ttf");
     }
@@ -277,7 +282,6 @@ Column* Application::timeline() {
     return column(
         Modifier(),
     contains{
-        // track("Master", Align::LEFT | Align::BOTTOM)
     }, "timeline" );
 }
 
@@ -348,8 +352,6 @@ Row* Application::track(const std::string& trackName, Align alignment, float vol
 
                 spacer(Modifier().setfixedWidth(16).align(Align::RIGHT)),
             }),
-
-            // spacer(Modifier().setfixedWidth(16).align(Align::CENTER_Y)),
 
             spacer(Modifier().setfixedHeight(8).align(Align::BOTTOM)),
         })
@@ -436,8 +438,6 @@ Row* Application::masterTrack() {
 
                 spacer(Modifier().setfixedWidth(16).align(Align::RIGHT)),
             }),
-
-            // spacer(Modifier().setfixedWidth(16).align(Align::CENTER_Y)),
 
             spacer(Modifier().setfixedHeight(8).align(Align::BOTTOM)),
         })
@@ -657,7 +657,7 @@ void Application::rebuildUIFromEngine() {
         sliders[t->getName() + "_mixer_volume_slider"]->setValue(decibelsToFloat(t->getVolume()));
     }
 
-    ui->forceUpdate();
+    ui->forceUpdate(); // Use sparingly, only when necessary
 }
 
 void Application::undo() {
