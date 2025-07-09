@@ -19,6 +19,7 @@
 #include <chrono>
 #include <thread>
 #include <future>
+#include <algorithm>
 
 namespace uilo {
 
@@ -50,6 +51,8 @@ static std::unordered_map<std::string, Container*> containers;
 static std::unordered_map<std::string, Text*> texts;
 static std::unordered_map<std::string, Spacer*> spacers;
 static std::unordered_map<std::string, Button*> buttons;
+
+void cleanupMarkedElements();
 
 
 
@@ -148,6 +151,7 @@ public:
     Modifier m_modifier;
     bool m_uiloOwned = false;
     bool m_isDirty = false;
+    bool m_markedForDeletion = false;
 
     std::string m_name = "";
 
@@ -551,7 +555,73 @@ inline const std::vector<Element*>& Container::getElements() const {
 }
 
 inline void Container::clear() {
-    this->m_elements.clear();
+    for (auto& e : m_elements) {
+        if (e->m_name.find("Master") != std::string::npos) {
+            std::cout << "Skipping Master element: " << e->m_name << std::endl;
+            continue;
+        }
+
+        if (Container* childContainer = dynamic_cast<Container*>(e)) {
+            std::cout << "Clearing child container: " << childContainer->m_name << std::endl;
+            childContainer->clear();
+        }
+
+        // if (e->m_uiloOwned)
+            e->m_markedForDeletion = true;
+    }
+    m_elements.clear();
+
+    cleanupMarkedElements();
+}
+
+inline void cleanupMarkedElements() {
+    std::cout << "Cleaning up marked elements, uilo_owned_elements size: " << uilo_owned_elements.size() << std::endl;
+    
+    auto it = uilo_owned_elements.begin();
+    size_t deletedCount = 0;
+    
+    while (it != uilo_owned_elements.end()) {
+        Element* element = it->get();
+        
+        if (element->m_markedForDeletion) {
+            std::cout << "  Deleting marked element: " << element->m_name << std::endl;
+            
+            if (!element->m_name.empty()) {
+                auto buttonIt = buttons.find(element->m_name);
+                if (buttonIt != buttons.end() && buttonIt->second == element) {
+                    buttons.erase(buttonIt);
+                }
+                
+                auto sliderIt = sliders.find(element->m_name);
+                if (sliderIt != sliders.end() && sliderIt->second == element) {
+                    sliders.erase(sliderIt);
+                }
+                
+                auto textIt = texts.find(element->m_name);
+                if (textIt != texts.end() && textIt->second == element) {
+                    texts.erase(textIt);
+                }
+                
+                auto spacerIt = spacers.find(element->m_name);
+                if (spacerIt != spacers.end() && spacerIt->second == element) {
+                    spacers.erase(spacerIt);
+                }
+                
+                auto containerIt = containers.find(element->m_name);
+                if (containerIt != containers.end() && containerIt->second == element) {
+                    containers.erase(containerIt);
+                }
+            }
+            
+            it = uilo_owned_elements.erase(it);
+            deletedCount++;
+        } else {
+            ++it;
+        }
+    }
+    
+    std::cout << "Cleaned up " << deletedCount << " marked elements" << std::endl;
+    std::cout << "uilo_owned_elements size after: " << uilo_owned_elements.size() << std::endl;
 }
 
 

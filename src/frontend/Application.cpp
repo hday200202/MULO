@@ -240,7 +240,15 @@ Row* Application::browserAndTimeline() {
                 .setHeight(1.f)
                 .setColor(sf::Color(100, 100, 100)),
         contains{
-            timelineElement
+            column(
+                Modifier()
+                    .setWidth(1.f)
+                    .setHeight(1.f)
+                    .align(Align::LEFT | Align::TOP),
+            contains{
+                timelineElement,
+                masterTrackElement,
+            }),
         })
     });
 }
@@ -250,6 +258,7 @@ Row* Application::browserAndMixer() {
         Modifier().setWidth(1.f).setHeight(1.f),
     contains{
         fileBrowserElement,
+        masterMixerTrackElement,
         mixerElement
     });
 }
@@ -437,11 +446,11 @@ Row* Application::masterTrack() {
                 ),
 
                 spacer(Modifier().setfixedWidth(16).align(Align::RIGHT)),
-            }),
+            }, "Master_Track_Label"),
 
             spacer(Modifier().setfixedHeight(8).align(Align::BOTTOM)),
-        })
-    });
+        }, "Master_Track_Column")
+    }, "Master_Track");
 }
 
 Row* Application::mixer() {
@@ -537,13 +546,13 @@ void Application::loadComposition(const std::string& path) {
     mixerElement->clear();
     engine.loadComposition(path);
 
-    timelineElement->addElement(
-        masterTrackElement
-    );
+    // timelineElement->addElement(
+    //     masterTrackElement
+    // );
 
-    mixerElement->addElement(
-        masterMixerTrackElement
-    );
+    // mixerElement->addElement(
+    //     masterMixerTrackElement
+    // );
 
     uiState.trackCount = engine.getAllTracks().size();
     
@@ -631,8 +640,7 @@ void Application::rebuildUIFromEngine() {
     uiState = UIState();
     timelineElement->clear();
     mixerElement->clear();
-    timelineElement->addElement(masterTrackElement);
-    mixerElement->addElement(masterMixerTrackElement);
+    
     uiState.trackCount = engine.getAllTracks().size();
     for (auto& t : engine.getAllTracks()) {
         if (t->getName() == "Master") {

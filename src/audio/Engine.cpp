@@ -194,6 +194,24 @@ Track* Engine::getTrack(int idx) {
     return nullptr;
 }
 
+Track* Engine::getTrackByName(const std::string& name) {
+    // Check master track first (it's separate from composition tracks)
+    if (masterTrack && masterTrack->getName() == name) {
+        return masterTrack.get();
+    }
+    
+    // Check composition tracks (master is NOT in this vector)
+    if (currentComposition) {
+        for (auto* track : currentComposition->tracks) {
+            if (track && track->getName() == name) {
+                return track;
+            }
+        }
+    }
+    
+    return nullptr; // Track not found
+}
+
 std::vector<Track*>& Engine::getAllTracks() {
     return currentComposition->tracks;
 }

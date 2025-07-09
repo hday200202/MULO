@@ -53,6 +53,7 @@ public:
     void addTrack(const std::string& name = "");
     void removeTrack(int index);
     Track* getTrack(int index);
+    Track* getTrackByName(const std::string& name);
     std::vector<Track*>& getAllTracks();
     Track* getMasterTrack();
     
