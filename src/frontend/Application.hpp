@@ -1,6 +1,6 @@
 #pragma once
 
-#include "UILO.hpp"
+#include "UILO/UILO.hpp"
 #include "Engine.hpp"
 #include "UIData.hpp"
 #include <juce_gui_basics/juce_gui_basics.h>

@@ -175,7 +175,7 @@ Row* Application::topRow() {
         spacer(Modifier().setfixedWidth(16).align(Align::LEFT)),
 
         button(
-            Modifier().align(Align::LEFT | Align::CENTER_Y).setHeight(.75f).setfixedWidth(96).setColor(sf::Color::Red),
+            Modifier().align(Align::LEFT | Align::CENTER_Y).setHeight(.75f).setfixedWidth(96).setColor(button_color),
             ButtonStyle::Pill, 
             "load", 
             resources.openSansFont, 
@@ -186,7 +186,7 @@ Row* Application::topRow() {
         spacer(Modifier().setfixedWidth(16).align(Align::LEFT)),
 
         button(
-            Modifier().align(Align::LEFT | Align::CENTER_Y).setHeight(.75f).setfixedWidth(96).setColor(sf::Color::Red),
+            Modifier().align(Align::LEFT | Align::CENTER_Y).setHeight(.75f).setfixedWidth(96).setColor(button_color),
             ButtonStyle::Pill,
             "save",
             resources.openSansFont,
@@ -195,7 +195,7 @@ Row* Application::topRow() {
         ),
 
         button(
-            Modifier().align(Align::CENTER_X | Align::CENTER_Y).setHeight(.75f).setfixedWidth(96).setColor(sf::Color::Red),
+            Modifier().align(Align::CENTER_X | Align::CENTER_Y).setHeight(.75f).setfixedWidth(96).setColor(button_color),
             ButtonStyle::Pill,
             "play",
             resources.openSansFont,
@@ -206,7 +206,7 @@ Row* Application::topRow() {
         spacer(Modifier().setfixedWidth(12).align(Align::RIGHT)),
 
         button(
-            Modifier().align(Align::RIGHT | Align::CENTER_Y).setHeight(.75f).setfixedWidth(96).setColor(sf::Color::Red),
+            Modifier().align(Align::RIGHT | Align::CENTER_Y).setHeight(.75f).setfixedWidth(96).setColor(button_color),
             ButtonStyle::Pill,
             "mixer",
             resources.openSansFont,
@@ -217,7 +217,7 @@ Row* Application::topRow() {
         spacer(Modifier().setfixedWidth(12).align(Align::RIGHT)),
 
         button(
-            Modifier().align(Align::RIGHT | Align::CENTER_Y).setHeight(.75f).setfixedWidth(96).setColor(sf::Color::Red),
+            Modifier().align(Align::RIGHT | Align::CENTER_Y).setHeight(.75f).setfixedWidth(96).setColor(button_color),
             ButtonStyle::Pill,
             "+ track",
             resources.openSansFont,
@@ -281,7 +281,7 @@ Column* Application::fileBrowser() {
             ButtonStyle::Pill,
             "Select Directory",
             resources.openSansFont,
-            sf::Color(230, 230, 230),
+            sf::Color::White,
             "select_directory"
         ),
     });
@@ -318,7 +318,7 @@ Row* Application::track(const std::string& trackName, Align alignment, float vol
             Modifier()
                 .align(Align::RIGHT)
                 .setfixedWidth(150)
-                .setColor(sf::Color(155, 155, 155)),
+                .setColor(track_color),
         contains{
             spacer(Modifier().setfixedHeight(12).align(Align::TOP)),
 
@@ -370,7 +370,7 @@ Row* Application::track(const std::string& trackName, Align alignment, float vol
 Column* Application::mixerTrack(const std::string& trackName, Align alignment, float volume, float pan) {
     return column(
         Modifier()
-            .setColor(sf::Color(120, 120, 120))
+            .setColor(mixer_track_color)
             .setfixedWidth(96)
             .align(alignment),
     contains{
@@ -583,8 +583,8 @@ void Application::loadComposition(const std::string& path) {
                 mixerTrack(t->getName(), Align::TOP | Align::LEFT, decibelsToFloat(t->getVolume()), t->getPan()),
             });
 
-            sliders[t->getName() + "_volume_slider"]->setValue(decibelsToFloat(t->getVolume()));
-            sliders[t->getName() + "_mixer_volume_slider"]->setValue(decibelsToFloat(t->getVolume()));
+            getSlider(t->getName() + "_volume_slider")->setValue(decibelsToFloat(t->getVolume()));
+            getSlider(t->getName() + "_mixer_volume_slider")->setValue(decibelsToFloat(t->getVolume()));
         }
     }
 
@@ -593,44 +593,44 @@ void Application::loadComposition(const std::string& path) {
 }
 
 void Application::handleTrackEvents() {
-    if (buttons["mute_Master"]->isClicked()) {
+    if (getButton("mute_Master")->isClicked()) {
         engine.getMasterTrack()->toggleMute();
-        buttons["mute_Master"]->m_modifier.setColor((engine.getMasterTrack()->isMuted() ? sf::Color::Red : sf::Color(50, 50, 50)));
+        getButton("mute_Master")->m_modifier.setColor((engine.getMasterTrack()->isMuted() ? mute_color : sf::Color(50, 50, 50)));
         std::cout << "Master track mute state toggled to " << ((engine.getMasterTrack()->isMuted()) ? "true" : "false") << std::endl;
     }
 
-    if (sliders["Master_volume_slider"]->getValue() != decibelsToFloat(engine.getMasterTrack()->getVolume())) {
-        float newVolume = floatToDecibels(sliders["Master_volume_slider"]->getValue());
+    if (getSlider("Master_volume_slider")->getValue() != decibelsToFloat(engine.getMasterTrack()->getVolume())) {
+        float newVolume = floatToDecibels(getSlider("Master_volume_slider")->getValue());
         engine.getMasterTrack()->setVolume(newVolume);
-        sliders["Master_mixer_volume_slider"]->setValue(sliders["Master_volume_slider"]->getValue());
+        getSlider("Master_mixer_volume_slider")->setValue(getSlider("Master_volume_slider")->getValue());
         std::cout << "Master track volume changed to: " << newVolume << " db" << std::endl;
     }
 
-    if (sliders["Master_mixer_volume_slider"]->getValue() != decibelsToFloat(engine.getMasterTrack()->getVolume())) {
-        float newVolume = floatToDecibels(sliders["Master_mixer_volume_slider"]->getValue());
+    if (getSlider("Master_mixer_volume_slider")->getValue() != decibelsToFloat(engine.getMasterTrack()->getVolume())) {
+        float newVolume = floatToDecibels(getSlider("Master_mixer_volume_slider")->getValue());
         engine.getMasterTrack()->setVolume(newVolume);
-        sliders["Master_volume_slider"]->setValue(sliders["Master_mixer_volume_slider"]->getValue());
+        getSlider("Master_volume_slider")->setValue(getSlider("Master_mixer_volume_slider")->getValue());
         std::cout << "Master track volume changed to: " << newVolume << " db" << std::endl;
     }
 
     for (auto& track : engine.getAllTracks()) {
-        if (buttons["mute_" + track->getName()]->isClicked()) {
+        if (getButton("mute_" + track->getName())->isClicked()) {
             track->toggleMute();
-            buttons["mute_" + track->getName()]->m_modifier.setColor((track->isMuted() ? sf::Color::Red : sf::Color(50, 50, 50)));
+            getButton("mute_" + track->getName())->m_modifier.setColor((track->isMuted() ? mute_color : sf::Color(50, 50, 50)));
             std::cout << "Track '" << track->getName() << "' mute state toggled to " << ((track->isMuted()) ? "true" : "false") << std::endl;
         }
 
-        if (floatToDecibels(sliders[track->getName() + "_volume_slider"]->getValue()) != track->getVolume()) {
-            float newVolume = floatToDecibels(sliders[track->getName() + "_volume_slider"]->getValue());
+        if (floatToDecibels(getSlider(track->getName() + "_volume_slider")->getValue()) != track->getVolume()) {
+            float newVolume = floatToDecibels(getSlider(track->getName() + "_volume_slider")->getValue());
             track->setVolume(newVolume);
-            sliders[track->getName() + "_mixer_volume_slider"]->setValue(sliders[track->getName() + "_volume_slider"]->getValue());
+            getSlider(track->getName() + "_mixer_volume_slider")->setValue(getSlider(track->getName() + "_volume_slider")->getValue());
             std::cout << "Track '" << track->getName() << "' volume changed to: " << newVolume << " db" << std::endl;
         }
 
-        if (floatToDecibels(sliders[track->getName() + "_mixer_volume_slider"]->getValue()) != track->getVolume()) {
-            float newVolume = floatToDecibels(sliders[track->getName() + "_mixer_volume_slider"]->getValue());
+        if (floatToDecibels(getSlider(track->getName() + "_mixer_volume_slider")->getValue()) != track->getVolume()) {
+            float newVolume = floatToDecibels(getSlider(track->getName() + "_mixer_volume_slider")->getValue());
             track->setVolume(newVolume);
-            sliders[track->getName() + "_volume_slider"]->setValue(sliders[track->getName() + "_mixer_volume_slider"]->getValue());
+            getSlider(track->getName() + "_volume_slider")->setValue(getSlider(track->getName() + "_mixer_volume_slider")->getValue());
             std::cout << "Track '" << track->getName() << "' volume changed to: " << newVolume << " db" << std::endl;
         }
     }
@@ -661,8 +661,8 @@ void Application::rebuildUIFromEngine() {
             spacer(Modifier().setfixedWidth(2).align(Align::LEFT)),
             mixerTrack(t->getName(), Align::TOP | Align::LEFT, decibelsToFloat(t->getVolume()), t->getPan()),
         });
-        sliders[t->getName() + "_volume_slider"]->setValue(decibelsToFloat(t->getVolume()));
-        sliders[t->getName() + "_mixer_volume_slider"]->setValue(decibelsToFloat(t->getVolume()));
+        getSlider(t->getName() + "_volume_slider")->setValue(decibelsToFloat(t->getVolume()));
+        getSlider(t->getName() + "_mixer_volume_slider")->setValue(decibelsToFloat(t->getVolume()));
     }
 
     ui->forceUpdate(); // Use sparingly, only when necessary

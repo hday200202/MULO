@@ -30,3 +30,12 @@ struct UIResources {
     std::string openSansFont;
     // Add more resources as needed
 };
+
+
+// Colors
+const static sf::Color pastel_red(255, 179, 186);
+const static sf::Color pastel_green(186, 255, 201);
+const static sf::Color button_color(230, 0, 0);
+const static sf::Color track_color(200, 200, 200);
+const static sf::Color mixer_track_color(180, 180, 180);
+const static sf::Color mute_color(230, 0, 0);
