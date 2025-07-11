@@ -58,6 +58,7 @@ void Application::update() {
 
     if (ui->isRunning() && running) {
         static bool prevSpace = false;
+        static bool prevRClick = false;
         bool space = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Space);
 
         if (buttons["select_directory"]->isClicked()) {
@@ -115,6 +116,13 @@ void Application::update() {
             playing = false;
             ui->forceUpdate(); // Use sparingly, only when necessary
         }
+
+        bool rClick = sf::Mouse::isButtonPressed(sf::Mouse::Button::Right);
+        if(rClick && !prevRClick)
+        {
+             std::cout << "Clicked";
+        }
+        prevRClick = rClick;
 
         handleTrackEvents();
 
