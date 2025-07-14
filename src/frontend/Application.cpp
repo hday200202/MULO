@@ -59,6 +59,7 @@ void Application::update() {
     if (ui->isRunning() && running) {
         static bool prevSpace = false;
         static bool prevRClick = false;
+        static bool hovering = false;
         bool space = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Space);
 
         if (buttons["select_directory"]->isClicked()) {
@@ -123,6 +124,12 @@ void Application::update() {
              std::cout << "Clicked";
         }
         prevRClick = rClick;
+
+        if(buttons["play"]->isHovered())
+        {
+            std::cout << "This is used to play music. Click while playing to stop!";
+        }
+        hovering = buttons["play"]->isHovered();
 
         handleTrackEvents();
 
