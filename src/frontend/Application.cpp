@@ -26,7 +26,6 @@ Application::Application() {
                 browserAndTimelineElement,
                 fxRackElement,
             }),
-            testContextMenu,
         }), "timeline" }
     });
 
@@ -40,7 +39,6 @@ Application::Application() {
                 browserAndMixerElement,
                 fxRackElement,
             }),
-            testContextMenu,
         }), "mixer" }
     );
 
