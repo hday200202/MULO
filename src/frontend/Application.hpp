@@ -47,8 +47,8 @@ private:
     Row* topRowElement;
     Column* fileBrowserElement;
     Row* masterTrackElement;
-    Column* timelineElement;
-    Row* mixerElement;
+    ScrollableColumn* timelineElement;
+    ScrollableRow* mixerElement;
     Column* masterMixerTrackElement;
     Row* browserAndTimelineElement;
     Row* browserAndMixerElement;
@@ -60,10 +60,10 @@ private:
     Row* browserAndMixer();
     Row* masterTrack();
     Column* fileBrowser();
-    Column* timeline();
+    ScrollableColumn* timeline();
     Row* fxRack();
     Row* track(const std::string& trackName = "", Align alignment = Align::LEFT | Align::TOP, float volume = 0.75f, float pan = 0.0f);
-    Row* mixer();
+    ScrollableRow* mixer();
     Column* mixerTrack(const std::string& trackName = "", Align alignment = Align::LEFT | Align::TOP, float volume = 0.75f, float pan = 0.0f);
 
     // UI Helpers

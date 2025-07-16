@@ -26,6 +26,7 @@ Application::Application() {
                 browserAndTimelineElement,
                 fxRackElement,
             }),
+            testContextMenu,
         }), "timeline" }
     });
 
@@ -39,6 +40,7 @@ Application::Application() {
                 browserAndMixerElement,
                 fxRackElement,
             }),
+            testContextMenu,
         }), "mixer" }
     );
 
@@ -287,8 +289,8 @@ Column* Application::fileBrowser() {
     });
 }
 
-Column* Application::timeline() {
-    return column(
+ScrollableColumn* Application::timeline() {
+    return scrollableColumn(
         Modifier(),
     contains{
     }, "timeline" );
@@ -390,7 +392,7 @@ Column* Application::mixerTrack(const std::string& trackName, Align alignment, f
             trackName + "_mixer_volume_slider"
         ),
         spacer(Modifier().setfixedHeight(12).align(Align::BOTTOM)),
-        // Was working here 
+
         button(
             Modifier()
                 .setfixedHeight(32)
@@ -398,13 +400,11 @@ Column* Application::mixerTrack(const std::string& trackName, Align alignment, f
                 .align(Align::CENTER_X | Align::BOTTOM)
                 .setColor(sf::Color::Red),
             ButtonStyle::Rect,
-            "solo",
+            trackName + "_mixer_solo",
             resources.openSansFont,
             sf::Color::White,
             "solo_" + trackName
         ),
-
-
     });
 }
 
@@ -468,8 +468,8 @@ Row* Application::masterTrack() {
     }, "Master_Track");
 }
 
-Row* Application::mixer() {
-    return row(
+ScrollableRow* Application::mixer() {
+    return scrollableRow(
         Modifier().setWidth(1.f).setHeight(1.f).setColor(sf::Color(100, 100, 100)),
     contains{
        
