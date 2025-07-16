@@ -53,6 +53,7 @@ private:
     Row* browserAndTimelineElement;
     Row* browserAndMixerElement;
     Row* fxRackElement;
+    FreeColumn* contextMenu;
 
     // UI Component Definitions
     Row* topRow();
@@ -76,4 +77,5 @@ private:
     void handleTrackEvents();
     void undo();
     void redo();
+    float getDistance(sf::Vector2f point1, sf::Vector2f point2);
 };

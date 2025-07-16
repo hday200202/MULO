@@ -15,6 +15,26 @@ Application::Application() {
     browserAndTimelineElement   = browserAndTimeline();
     browserAndMixerElement      = browserAndMixer();
     fxRackElement               = fxRack();
+    timelineElement->setScrollSpeed(20.f);
+    mixerElement->setScrollSpeed(20.f);
+
+    contextMenu = freeColumn(
+        Modifier().setfixedHeight(400).setfixedWidth(200).setColor(sf::Color(50, 50, 50)),
+        contains {
+            button(Modifier().setfixedHeight(32).setColor(sf::Color::White).onClick([&](){std::cout << "options" << std::endl;}), 
+                ButtonStyle::Rect, "Options", resources.openSansFont, sf::Color::Black, "cm_options"),
+            spacer(Modifier().setfixedHeight(1)),
+
+            button(Modifier().setfixedHeight(32).setColor(sf::Color::White).onClick([&](){std::cout << "rename" << std::endl;}), 
+                ButtonStyle::Rect, "Rename", resources.openSansFont, sf::Color::Black, "cm_rename"),
+            spacer(Modifier().setfixedHeight(1)),
+
+            button(Modifier().setfixedHeight(32).setColor(sf::Color::White).onClick([&](){std::cout << "change color" << std::endl;}), 
+                ButtonStyle::Rect, "Change Color", resources.openSansFont, sf::Color::Black, "cm_change_color"),
+            spacer(Modifier().setfixedHeight(1)),
+        }
+    );
+    contextMenu->hide();
 
     // Base UI
     ui = new UILO("MULO", {{
@@ -26,6 +46,7 @@ Application::Application() {
                 browserAndTimelineElement,
                 fxRackElement,
             }),
+            contextMenu
         }), "timeline" }
     });
 
@@ -39,6 +60,7 @@ Application::Application() {
                 browserAndMixerElement,
                 fxRackElement,
             }),
+            contextMenu
         }), "mixer" }
     );
 
@@ -58,7 +80,14 @@ void Application::update() {
 
     if (ui->isRunning() && running) {
         static bool prevSpace = false;
+        static bool prevRightClick = false;
         bool space = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Space);
+        bool rightClick = sf::Mouse::isButtonPressed(sf::Mouse::Button::Right);
+
+        if (rightClick && !prevRightClick) {
+            contextMenu->setPosition(ui->getMousePosition());
+            contextMenu->show();
+        }
 
         if (buttons["select_directory"]->isClicked()) {
             std::string dir = selectDirectory();
@@ -104,7 +133,6 @@ void Application::update() {
             engine.play();
             buttons["play"]->setText("pause");
             playing = true;
-            ui->forceUpdate(); // Use sparingly, only when necessary
         }
 
         else if ((buttons["play"]->isClicked() || (space && !prevSpace)) && playing) {
@@ -113,7 +141,6 @@ void Application::update() {
             engine.setPosition(0.0);
             buttons["play"]->setText("play");
             playing = false;
-            ui->forceUpdate(); // Use sparingly, only when necessary
         }
 
         handleTrackEvents();
@@ -143,13 +170,22 @@ void Application::update() {
         prevZ = z;
         prevY = y;
         prevSpace = space;
+        prevRightClick = rightClick;
 
-        ui->update();
+        ui->forceUpdate();
+
+        if (contextMenu->m_modifier.isVisible()) {
+            const auto intersection = contextMenu->getBounds().findIntersection(sf::FloatRect(ui->getMousePosition(), {20, 20}));
+            if (!intersection) {
+                std::cout << "hide" << std::endl;
+                contextMenu->hide();
+            }
+        }
     }
 }
 
 void Application::render() {
-    ui->render();
+    
 }
 
 bool Application::isRunning() const {
@@ -677,8 +713,6 @@ void Application::rebuildUIFromEngine() {
         getSlider(t->getName() + "_volume_slider")->setValue(decibelsToFloat(t->getVolume()));
         getSlider(t->getName() + "_mixer_volume_slider")->setValue(decibelsToFloat(t->getVolume()));
     }
-
-    ui->forceUpdate(); // Use sparingly, only when necessary
 }
 
 void Application::undo() {
@@ -707,4 +741,8 @@ void Application::redo() {
     } 
     else
         std::cout << "Nothing to redo." << std::endl;
+}
+
+float Application::getDistance(sf::Vector2f point1, sf::Vector2f point2) {
+    return sqrt(pow(point2.x - point1.x, 2) + pow(point2.y - point1.y, 2));
 }
