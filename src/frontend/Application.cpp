@@ -11,7 +11,7 @@ Application::Application() {
     masterTrackElement          = masterTrack();
     timelineElement             = timeline();
     mixerElement                = mixer();
-    masterMixerTrackElement     = mixerTrack("Master");
+    masterMixerTrackElement     = masterMixerTrack();
     browserAndTimelineElement   = browserAndTimeline();
     browserAndMixerElement      = browserAndMixer();
     fxRackElement               = fxRack();
@@ -64,7 +64,7 @@ Application::Application() {
         }), "mixer" }
     );
 
-    if (ui) running = ui->isRunning();
+    running = ui->isRunning();
     ui->switchToPage("timeline");
 
     loadComposition("assets/empty_project.mpf");
@@ -79,113 +79,153 @@ void Application::update() {
     running = ui->isRunning();
 
     if (ui->isRunning() && running) {
-        static bool prevSpace = false;
-        static bool prevRightClick = false;
-        bool space = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Space);
-        bool rightClick = sf::Mouse::isButtonPressed(sf::Mouse::Button::Right);
+        bool shouldForceUpdate = false;
+        
+        shouldForceUpdate |= handleContextMenu();
+        shouldForceUpdate |= handleUIButtons();
+        shouldForceUpdate |= handlePlaybackControls();
+        shouldForceUpdate |= handleTrackEvents();
+        shouldForceUpdate |= handleKeyboardShortcuts();
 
-        if (rightClick && !prevRightClick) {
-            contextMenu->setPosition(ui->getMousePosition());
-            contextMenu->show();
-        }
-
-        if (buttons["select_directory"]->isClicked()) {
-            std::string dir = selectDirectory();
-            if (!dir.empty()) {
-                uiState.fileBrowserDirectory = dir;
-                std::cout << "Selected directory: " << dir << std::endl;
-            }
-        }
-
-        if (buttons["mixer"]->isClicked()) {
-            showMixer = !showMixer;
-
-            if (showMixer)
-                ui->switchToPage("mixer");
-            else
-                ui->switchToPage("timeline");
-        }
-
-        if (buttons["new_track"]->isClicked()) {
-            uiChanged = true;
-            newTrack();
-            std::cout << "New track added. Total tracks: " << uiState.trackCount << std::endl;
-        }
-
-        if (buttons["save"]->isClicked()) {
-            if (engine.saveState(selectDirectory() + "/" + engine.getCurrentCompositionName() + ".mpf"))
-                std::cout << "Project saved successfully." << std::endl;
-            else
-                std::cerr << "Failed to save project." << std::endl;
-        }
-
-        if (buttons["load"]->isClicked()) {
-            std::string path = selectFile({"*.mpf"});
-            if (!path.empty()) {
-                loadComposition(path);
-            }
-            else
-                std::cout << "No file selected." << std::endl;
-        }
-
-        if ((buttons["play"]->isClicked() || (space && !prevSpace)) && !playing) {
-            std::cout << "Playing audio..." << std::endl;
-            engine.play();
-            buttons["play"]->setText("pause");
-            playing = true;
-        }
-
-        else if ((buttons["play"]->isClicked() || (space && !prevSpace)) && playing) {
-            std::cout << "Pausing audio..." << std::endl;
-            engine.pause();
-            engine.setPosition(0.0);
-            buttons["play"]->setText("play");
-            playing = false;
-        }
-
-        handleTrackEvents();
-
-        if (engine.getStateString() != undoStack.top()) {
-            undoStack.push(engine.getStateString());
-            std::cout << "UI Changed undoStack size: " << undoStack.size() << std::endl;
-        }
-
-        static bool prevCtrl = false, prevZ = false, prevY = false;
-        bool ctrl = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl);
-        bool z = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Z);
-        bool y = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Y);
-
-        if (ctrl && !prevCtrl) prevZ = prevY = false;
-
-        if (ctrl && z && !prevZ) {
-            undo();
-            std::cout << "Undo, undoStack size: " << undoStack.size() << std::endl;
-        }
-        if (ctrl && y && !prevY) {
-            redo();
-            std::cout << "Redo, redoStack size: " << redoStack.size() << std::endl;
-        }
-
-        prevCtrl = ctrl;
-        prevZ = z;
-        prevY = y;
-        prevSpace = space;
-        prevRightClick = rightClick;
-
-        ui->forceUpdate();
-
-        if (contextMenu->m_modifier.isVisible()) {
-            const auto intersection = contextMenu->getBounds().findIntersection(sf::FloatRect(ui->getMousePosition(), {20, 20}));
-            if (!intersection) {
-                std::cout << "hide" << std::endl;
-                contextMenu->hide();
-            }
-        }
+        if (shouldForceUpdate) ui->forceUpdate();
+        else ui->update();
     }
 }
 
-void Application::render() {
+bool Application::handleContextMenu() {
+    static bool prevRightClick = false;
+    static bool contextMenuJustShown = false;
+    bool rightClick = sf::Mouse::isButtonPressed(sf::Mouse::Button::Right);
+    bool shouldForceUpdate = false;
+
+    if (rightClick && !prevRightClick) {
+        contextMenu->setPosition(ui->getMousePosition());
+        contextMenu->show();
+        contextMenuJustShown = true;
+        shouldForceUpdate = true;
+    }
+
+    if (contextMenu->m_modifier.isVisible() && !contextMenuJustShown) {
+        const auto intersection = contextMenu->getBounds().findIntersection(sf::FloatRect(ui->getMousePosition(), {20, 20}));
+        if (!intersection) {
+            std::cout << "hide" << std::endl;
+            contextMenu->hide();
+            shouldForceUpdate = true;
+        }
+    }
     
+    if (contextMenuJustShown && !rightClick) {
+        contextMenuJustShown = false;
+    }
+    
+    prevRightClick = rightClick;
+    return shouldForceUpdate;
+}
+
+bool Application::handleUIButtons() {
+    bool shouldForceUpdate = false;
+
+    if (buttons["select_directory"]->isClicked()) {
+        std::string dir = selectDirectory();
+        if (!dir.empty()) {
+            uiState.fileBrowserDirectory = dir;
+            std::cout << "Selected directory: " << dir << std::endl;
+        }
+        shouldForceUpdate = true;
+    }
+
+    if (buttons["mixer"]->isClicked()) {
+        showMixer = !showMixer;
+
+        if (showMixer)
+            ui->switchToPage("mixer");
+        else
+            ui->switchToPage("timeline");
+
+        shouldForceUpdate = true;
+    }
+
+    if (buttons["new_track"]->isClicked()) {
+        uiChanged = true;
+        newTrack();
+        std::cout << "New track added. Total tracks: " << uiState.trackCount << std::endl;
+        shouldForceUpdate = true;
+    }
+
+    if (buttons["save"]->isClicked()) {
+        if (engine.saveState(selectDirectory() + "/" + engine.getCurrentCompositionName() + ".mpf"))
+            std::cout << "Project saved successfully." << std::endl;
+        else
+            std::cerr << "Failed to save project." << std::endl;
+        shouldForceUpdate = true;
+    }
+
+    if (buttons["load"]->isClicked()) {
+        std::string path = selectFile({"*.mpf"});
+        if (!path.empty()) {
+            loadComposition(path);
+        }
+        else
+            std::cout << "No file selected." << std::endl;
+        shouldForceUpdate = true;
+    }
+
+    return shouldForceUpdate;
+}
+
+bool Application::handlePlaybackControls() {
+    static bool prevSpace = false;
+    bool space = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Space);
+    bool shouldForceUpdate = false;
+
+    if ((buttons["play"]->isClicked() || (space && !prevSpace)) && !playing) {
+        std::cout << "Playing audio..." << std::endl;
+        engine.play();
+        buttons["play"]->setText("pause");
+        playing = true;
+        shouldForceUpdate = true;
+    }
+    else if ((buttons["play"]->isClicked() || (space && !prevSpace)) && playing) {
+        std::cout << "Pausing audio..." << std::endl;
+        engine.pause();
+        engine.setPosition(0.0);
+        buttons["play"]->setText("play");
+        playing = false;
+        shouldForceUpdate = true;
+    }
+
+    prevSpace = space;
+    return shouldForceUpdate;
+}
+
+bool Application::handleKeyboardShortcuts() {
+    static bool prevCtrl = false, prevZ = false, prevY = false;
+    bool ctrl = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl);
+    bool z = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Z);
+    bool y = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Y);
+    bool shouldForceUpdate = false;
+
+    if (ctrl && !prevCtrl) prevZ = prevY = false;
+
+    if (ctrl && z && !prevZ) {
+        undo();
+        std::cout << "Undo, undoStack size: " << undoStack.size() << std::endl;
+        shouldForceUpdate = true;
+    }
+    if (ctrl && y && !prevY) {
+        redo();
+        std::cout << "Redo, redoStack size: " << redoStack.size() << std::endl;
+        shouldForceUpdate = true;
+    }
+
+    prevCtrl = ctrl;
+    prevZ = z;
+    prevY = y;
+    return shouldForceUpdate;
+}
+
+void Application::render() {
+    ui->render();
 }
 
 bool Application::isRunning() const {
@@ -406,7 +446,7 @@ Row* Application::track(const std::string& trackName, Align alignment, float vol
 Column* Application::mixerTrack(const std::string& trackName, Align alignment, float volume, float pan) {
     return column(
         Modifier()
-            .setColor(mixer_track_color)
+            .setColor(track_color)
             .setfixedWidth(96)
             .align(alignment),
     contains{
@@ -434,10 +474,49 @@ Column* Application::mixerTrack(const std::string& trackName, Align alignment, f
                 .align(Align::CENTER_X | Align::BOTTOM)
                 .setColor(sf::Color::Red),
             ButtonStyle::Rect,
-            trackName + "_mixer_solo",
+            "solo",
             resources.openSansFont,
             sf::Color::White,
             "solo_" + trackName
+        ),
+    });
+}
+
+Column* Application::masterMixerTrack(const std::string& trackName, Align alignment, float volume, float pan) {
+    return column(
+        Modifier()
+            .setColor(master_track_color)
+            .setfixedWidth(96)
+            .align(alignment),
+    contains{
+        spacer(Modifier().setfixedHeight(12).align(Align::TOP | Align::CENTER_X)),
+        text(
+            Modifier().setColor(sf::Color(25, 25, 25)).setfixedHeight(18).align(Align::CENTER_X | Align::TOP),
+            trackName,
+            resources.openSansFont
+        ),
+
+        spacer(Modifier().setfixedHeight(12).align(Align::TOP)),
+
+        slider(
+            Modifier().setfixedWidth(32).setHeight(1.f).align(Align::BOTTOM | Align::CENTER_X),
+            sf::Color::White,
+            sf::Color::Black,
+            "Master_mixer_volume_slider"
+        ),
+        spacer(Modifier().setfixedHeight(12).align(Align::BOTTOM)),
+
+        button(
+            Modifier()
+                .setfixedHeight(32)
+                .setfixedWidth(64)
+                .align(Align::CENTER_X | Align::BOTTOM)
+                .setColor(sf::Color::Red),
+            ButtonStyle::Rect,
+            "solo",
+            resources.openSansFont,
+            sf::Color::White,
+            "solo_Master"
         ),
     });
 }
@@ -641,11 +720,15 @@ void Application::loadComposition(const std::string& path) {
     // redoStack = std::stack<std::string>();
 }
 
-void Application::handleTrackEvents() {
+bool Application::handleTrackEvents() {
+    bool shouldForceUpdate = false;
+
     if (getButton("mute_Master")->isClicked()) {
         engine.getMasterTrack()->toggleMute();
         getButton("mute_Master")->m_modifier.setColor((engine.getMasterTrack()->isMuted() ? mute_color : sf::Color(50, 50, 50)));
         std::cout << "Master track mute state toggled to " << ((engine.getMasterTrack()->isMuted()) ? "true" : "false") << std::endl;
+
+        shouldForceUpdate = true;
     }
 
     if (getSlider("Master_volume_slider")->getValue() != decibelsToFloat(engine.getMasterTrack()->getVolume())) {
@@ -653,6 +736,8 @@ void Application::handleTrackEvents() {
         engine.getMasterTrack()->setVolume(newVolume);
         getSlider("Master_mixer_volume_slider")->setValue(getSlider("Master_volume_slider")->getValue());
         std::cout << "Master track volume changed to: " << newVolume << " db" << std::endl;
+
+        shouldForceUpdate = true;
     }
 
     if (getSlider("Master_mixer_volume_slider")->getValue() != decibelsToFloat(engine.getMasterTrack()->getVolume())) {
@@ -660,6 +745,8 @@ void Application::handleTrackEvents() {
         engine.getMasterTrack()->setVolume(newVolume);
         getSlider("Master_volume_slider")->setValue(getSlider("Master_mixer_volume_slider")->getValue());
         std::cout << "Master track volume changed to: " << newVolume << " db" << std::endl;
+
+        shouldForceUpdate = true;
     }
 
     for (auto& track : engine.getAllTracks()) {
@@ -667,6 +754,8 @@ void Application::handleTrackEvents() {
             track->toggleMute();
             getButton("mute_" + track->getName())->m_modifier.setColor((track->isMuted() ? mute_color : sf::Color(50, 50, 50)));
             std::cout << "Track '" << track->getName() << "' mute state toggled to " << ((track->isMuted()) ? "true" : "false") << std::endl;
+
+            shouldForceUpdate = true;
         }
 
         if (floatToDecibels(getSlider(track->getName() + "_volume_slider")->getValue()) != track->getVolume()) {
@@ -674,6 +763,8 @@ void Application::handleTrackEvents() {
             track->setVolume(newVolume);
             getSlider(track->getName() + "_mixer_volume_slider")->setValue(getSlider(track->getName() + "_volume_slider")->getValue());
             std::cout << "Track '" << track->getName() << "' volume changed to: " << newVolume << " db" << std::endl;
+
+            shouldForceUpdate = true;
         }
 
         if (floatToDecibels(getSlider(track->getName() + "_mixer_volume_slider")->getValue()) != track->getVolume()) {
@@ -681,8 +772,11 @@ void Application::handleTrackEvents() {
             track->setVolume(newVolume);
             getSlider(track->getName() + "_volume_slider")->setValue(getSlider(track->getName() + "_mixer_volume_slider")->getValue());
             std::cout << "Track '" << track->getName() << "' volume changed to: " << newVolume << " db" << std::endl;
+
+            shouldForceUpdate = true;
         }
     }
+    return shouldForceUpdate;
 }
 
 void Application::rebuildUIFromEngine() {
