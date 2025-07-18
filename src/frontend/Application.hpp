@@ -30,6 +30,9 @@ public:
     bool isRunning() const;
 
 private:
+    sf::RenderWindow window;
+    sf::View windowView;
+    sf::VideoMode screenResolution;
     Engine engine;
     UILO* ui = nullptr;
     UIState uiState;

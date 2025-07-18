@@ -1,6 +1,28 @@
 #include "Application.hpp"
 
 Application::Application() {
+    // Initialize the window and engine
+    screenResolution = sf::VideoMode::getDesktopMode();
+
+    screenResolution.size.x = screenResolution.size.x / 1.5f;
+    screenResolution.size.y = screenResolution.size.y / 1.5f;
+
+    sf::ContextSettings settings;
+    settings.antiAliasingLevel = 8;
+    // settings.sRgbCapable = true;
+
+    windowView.setSize({
+        (float)screenResolution.size.x,
+        (float)screenResolution.size.y
+    });
+
+    windowView.setCenter({
+        (float)screenResolution.size.x / 2.f,
+        (float)screenResolution.size.y / 2.f
+    });
+
+    window.create(screenResolution, "MULO", sf::Style::Default, sf::State::Windowed, settings);
+
     engine.newComposition("untitled");
     engine.addTrack("Master");
     initUIResources();
@@ -37,7 +59,7 @@ Application::Application() {
     contextMenu->hide();
 
     // Base UI
-    ui = new UILO("MULO", {{
+    ui = new UILO(window, windowView, {{
         page({
             column(
                 Modifier(),
@@ -68,6 +90,8 @@ Application::Application() {
     ui->switchToPage("timeline");
 
     loadComposition("assets/empty_project.mpf");
+
+    ui->forceUpdate();
 }
 
 Application::~Application() {
@@ -88,7 +112,7 @@ void Application::update() {
         shouldForceUpdate |= handleKeyboardShortcuts();
 
         if (shouldForceUpdate) ui->forceUpdate();
-        else ui->update();
+        else ui->update(windowView);
     }
 }
 
@@ -225,7 +249,17 @@ bool Application::handleKeyboardShortcuts() {
 }
 
 void Application::render() {
-    ui->render();
+    if (ui->windowShouldUpdate()) {
+        window.clear(sf::Color::Black);
+
+        // Draw Stuff Here
+
+        ui->render();
+
+        // Or Here
+
+        window.display();
+    }
 }
 
 bool Application::isRunning() const {
