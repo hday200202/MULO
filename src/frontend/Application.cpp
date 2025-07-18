@@ -405,6 +405,21 @@ Column* Application::mixerTrack(const std::string& trackName, Align alignment, f
             trackName + "_mixer_volume_slider"
         ),
         spacer(Modifier().setfixedHeight(12).align(Align::BOTTOM)),
+        // Was working here 
+        button(
+            Modifier()
+                .setfixedHeight(32)
+                .setfixedWidth(64)
+                .align(Align::CENTER_X | Align::BOTTOM)
+                .setColor(sf::Color::Red),
+            ButtonStyle::Rect,
+            "solo",
+            resources.openSansFont,
+            sf::Color::White,
+            "solo_" + trackName
+        ),
+
+
     });
 }
 
