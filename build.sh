@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 
+# Exit the script immediately if any command fails
 set -e
+
+echo "Updating Git submodules..."
+git submodule update --init --recursive
 
 BUILD_TYPE="Debug"
 BUILD_DIR="build"
