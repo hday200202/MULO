@@ -47,12 +47,13 @@ private:
     Row* topRowElement;
     Column* fileBrowserElement;
     Row* masterTrackElement;
-    Column* timelineElement;
-    Row* mixerElement;
+    ScrollableColumn* timelineElement;
+    ScrollableRow* mixerElement;
     Column* masterMixerTrackElement;
     Row* browserAndTimelineElement;
     Row* browserAndMixerElement;
     Row* fxRackElement;
+    FreeColumn* contextMenu;
 
     // UI Component Definitions
     Row* topRow();
@@ -60,11 +61,31 @@ private:
     Row* browserAndMixer();
     Row* masterTrack();
     Column* fileBrowser();
-    Column* timeline();
+    ScrollableColumn* timeline();
     Row* fxRack();
-    Row* track(const std::string& trackName = "", Align alignment = Align::LEFT | Align::TOP, float volume = 0.75f, float pan = 0.0f);
-    Row* mixer();
-    Column* mixerTrack(const std::string& trackName = "", Align alignment = Align::LEFT | Align::TOP, float volume = 0.75f, float pan = 0.0f);
+
+    Row* track(
+        const std::string& trackName = "", 
+        Align alignment = Align::LEFT | Align::TOP, 
+        float volume = 0.75f, 
+        float pan = 0.0f
+    );
+
+    ScrollableRow* mixer();
+
+    Column* mixerTrack(
+        const std::string& trackName = "", 
+        Align alignment = Align::LEFT | Align::TOP, 
+        float volume = 0.75f, 
+        float pan = 0.0f
+    );
+    
+    Column* masterMixerTrack(
+        const std::string& trackName = "Master", 
+        Align alignment = Align::LEFT | Align::TOP, 
+        float volume = 0.75f, 
+        float pan = 0.0f
+    );
 
     // UI Helpers
     std::string selectDirectory();
@@ -73,7 +94,15 @@ private:
     void loadComposition(const std::string& path);
     void initUIResources();
     void rebuildUIFromEngine();
-    void handleTrackEvents();
+    bool handleTrackEvents();
+    
+    // Update function helpers
+    bool handleContextMenu();
+    bool handleUIButtons();
+    bool handlePlaybackControls();
+    bool handleKeyboardShortcuts();
+    
     void undo();
     void redo();
+    float getDistance(sf::Vector2f point1, sf::Vector2f point2);
 };
