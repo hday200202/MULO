@@ -1,6 +1,29 @@
 #include "Application.hpp"
 
 Application::Application() {
+    // Initialize the window and engine
+    screenResolution = sf::VideoMode::getDesktopMode();
+
+    screenResolution.size.x = screenResolution.size.x / 1.5f;
+    screenResolution.size.y = screenResolution.size.y / 1.5f;
+
+    sf::ContextSettings settings;
+    settings.antiAliasingLevel = 8;
+    // settings.sRgbCapable = true;
+
+    windowView.setSize({
+        (float)screenResolution.size.x,
+        (float)screenResolution.size.y
+    });
+
+    windowView.setCenter({
+        (float)screenResolution.size.x / 2.f,
+        (float)screenResolution.size.y / 2.f
+    });
+
+    window.create(screenResolution, "MULO", sf::Style::Default, sf::State::Windowed, settings);
+    window.setVerticalSyncEnabled(true);
+
     engine.newComposition("untitled");
     engine.addTrack("Master");
     initUIResources();
@@ -37,7 +60,7 @@ Application::Application() {
     contextMenu->hide();
 
     // Base UI
-    ui = new UILO("MULO", {{
+    ui = new UILO(window, windowView, {{
         page({
             column(
                 Modifier(),
@@ -68,6 +91,10 @@ Application::Application() {
     ui->switchToPage("timeline");
 
     loadComposition("assets/empty_project.mpf");
+
+    timelineMeasures = TimelineMeasures(engine.getTimeSignature().first, engine.getTimeSignature().second);
+
+    ui->forceUpdate();
 }
 
 Application::~Application() {
@@ -81,14 +108,49 @@ void Application::update() {
     if (ui->isRunning() && running) {
         bool shouldForceUpdate = false;
         
+        // If user interaction, force update
         shouldForceUpdate |= handleContextMenu();
         shouldForceUpdate |= handleUIButtons();
         shouldForceUpdate |= handlePlaybackControls();
         shouldForceUpdate |= handleTrackEvents();
         shouldForceUpdate |= handleKeyboardShortcuts();
 
+        // Update UILO ui
         if (shouldForceUpdate) ui->forceUpdate();
-        else ui->update();
+        else ui->update(windowView);
+
+        // Update Custom UI Elements (rendered on top of UILO)
+        if (!engine.getAllTracks().empty()) {
+            float newMasterOffset = timelineOffset;
+
+            for (const auto& track : engine.getAllTracks()) {
+                auto* scrollableRow = static_cast<ScrollableRow*>(containers[track->getName() + "_scrollable_row"]);
+                scrollableRow->setScrollSpeed(20.f);
+                if (scrollableRow->getOffset() != timelineOffset) {
+                    newMasterOffset = scrollableRow->getOffset();
+                    break;
+                }
+            }
+
+            float clampedOffset = std::min(0.f, newMasterOffset);
+
+            for (const auto& track : engine.getAllTracks()) {
+                auto* trackRow = containers[track->getName() + "_scrollable_row"];
+                auto* scrollableRow = static_cast<ScrollableRow*>(trackRow);
+
+                scrollableRow->setOffset(clampedOffset);
+
+                auto lines = timelineMeasures.generateLines(
+                    100.f * uiState.timelineZoomLevel,
+                    clampedOffset,
+                    trackRow->getSize()
+                );
+
+                static_cast<uilo::Element*>(trackRow)->setCustomGeometry(lines);
+            }
+
+            timelineOffset = clampedOffset;
+        }
     }
 }
 
@@ -225,7 +287,17 @@ bool Application::handleKeyboardShortcuts() {
 }
 
 void Application::render() {
-    ui->render();
+    if (ui->windowShouldUpdate()) {
+        window.clear(sf::Color::Black);
+
+        // Draw Stuff Here
+
+        ui->render();
+
+        // Or Here
+
+        window.display();
+    }
 }
 
 bool Application::isRunning() const {
@@ -390,6 +462,12 @@ Row* Application::track(const std::string& trackName, Align alignment, float vol
             .setfixedHeight(96)
             .align(alignment),
     contains{
+        scrollableRow(
+            Modifier().setHeight(1.f).align(Align::LEFT).setColor(sf::Color::Transparent),
+        contains {
+            // contains nothing, really just to get the offset from scroll
+        }, trackName + "_scrollable_row"),
+
         column(
             Modifier()
                 .align(Align::RIGHT)
@@ -399,7 +477,7 @@ Row* Application::track(const std::string& trackName, Align alignment, float vol
             spacer(Modifier().setfixedHeight(12).align(Align::TOP)),
 
             row(
-                Modifier(),
+                Modifier().align(Align::RIGHT),
             contains{
                 spacer(Modifier().setfixedWidth(8).align(Align::LEFT)),
 

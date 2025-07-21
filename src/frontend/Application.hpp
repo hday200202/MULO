@@ -3,6 +3,7 @@
 #include "UILO/UILO.hpp"
 #include "Engine.hpp"
 #include "UIData.hpp"
+#include "CustomUIElements.hpp"
 #include <juce_gui_basics/juce_gui_basics.h>
 
 using namespace uilo;
@@ -30,6 +31,9 @@ public:
     bool isRunning() const;
 
 private:
+    sf::RenderWindow window;
+    sf::View windowView;
+    sf::VideoMode screenResolution;
     Engine engine;
     UILO* ui = nullptr;
     UIState uiState;
@@ -43,6 +47,8 @@ private:
     bool playing = false;
     bool uiChanged = false;
 
+    float timelineOffset = 0.f;
+
     // UI Components
     Row* topRowElement;
     Column* fileBrowserElement;
@@ -54,6 +60,8 @@ private:
     Row* browserAndMixerElement;
     Row* fxRackElement;
     FreeColumn* contextMenu;
+
+    TimelineMeasures timelineMeasures;
 
     // UI Component Definitions
     Row* topRow();

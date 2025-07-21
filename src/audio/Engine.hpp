@@ -48,6 +48,7 @@ public:
     void newComposition(const std::string& name = "untitled");
     void loadComposition(const std::string& path);
     void saveComposition(const std::string& path);
+    std::pair<int, int> getTimeSignature() const;
     
     // Track Management 
     void addTrack(const std::string& name = "");

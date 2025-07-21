@@ -20,6 +20,7 @@ struct UIState {
     std::string fileBrowserDirectory = "";
     std::string selectedTrackName = "Master";
     int trackCount = 0;
+    float timelineZoomLevel = 1.0f;
 
     TrackData masterTrack{"Master"};
 
