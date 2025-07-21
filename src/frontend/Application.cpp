@@ -22,6 +22,7 @@ Application::Application() {
     });
 
     window.create(screenResolution, "MULO", sf::Style::Default, sf::State::Windowed, settings);
+    window.setVerticalSyncEnabled(true);
 
     engine.newComposition("untitled");
     engine.addTrack("Master");
@@ -91,6 +92,8 @@ Application::Application() {
 
     loadComposition("assets/empty_project.mpf");
 
+    timelineMeasures = TimelineMeasures(engine.getTimeSignature().first, engine.getTimeSignature().second);
+
     ui->forceUpdate();
 }
 
@@ -105,14 +108,49 @@ void Application::update() {
     if (ui->isRunning() && running) {
         bool shouldForceUpdate = false;
         
+        // If user interaction, force update
         shouldForceUpdate |= handleContextMenu();
         shouldForceUpdate |= handleUIButtons();
         shouldForceUpdate |= handlePlaybackControls();
         shouldForceUpdate |= handleTrackEvents();
         shouldForceUpdate |= handleKeyboardShortcuts();
 
+        // Update UILO ui
         if (shouldForceUpdate) ui->forceUpdate();
         else ui->update(windowView);
+
+        // Update Custom UI Elements (rendered on top of UILO)
+        if (!engine.getAllTracks().empty()) {
+            float newMasterOffset = timelineOffset;
+
+            for (const auto& track : engine.getAllTracks()) {
+                auto* scrollableRow = static_cast<ScrollableRow*>(containers[track->getName() + "_scrollable_row"]);
+                scrollableRow->setScrollSpeed(20.f);
+                if (scrollableRow->getOffset() != timelineOffset) {
+                    newMasterOffset = scrollableRow->getOffset();
+                    break;
+                }
+            }
+
+            float clampedOffset = std::min(0.f, newMasterOffset);
+
+            for (const auto& track : engine.getAllTracks()) {
+                auto* trackRow = containers[track->getName() + "_scrollable_row"];
+                auto* scrollableRow = static_cast<ScrollableRow*>(trackRow);
+
+                scrollableRow->setOffset(clampedOffset);
+
+                auto lines = timelineMeasures.generateLines(
+                    100.f * uiState.timelineZoomLevel,
+                    clampedOffset,
+                    trackRow->getSize()
+                );
+
+                static_cast<uilo::Element*>(trackRow)->setCustomGeometry(lines);
+            }
+
+            timelineOffset = clampedOffset;
+        }
     }
 }
 
@@ -424,6 +462,12 @@ Row* Application::track(const std::string& trackName, Align alignment, float vol
             .setfixedHeight(96)
             .align(alignment),
     contains{
+        scrollableRow(
+            Modifier().setHeight(1.f).align(Align::LEFT).setColor(sf::Color::Transparent),
+        contains {
+            // contains nothing, really just to get the offset from scroll
+        }, trackName + "_scrollable_row"),
+
         column(
             Modifier()
                 .align(Align::RIGHT)
@@ -433,7 +477,7 @@ Row* Application::track(const std::string& trackName, Align alignment, float vol
             spacer(Modifier().setfixedHeight(12).align(Align::TOP)),
 
             row(
-                Modifier(),
+                Modifier().align(Align::RIGHT),
             contains{
                 spacer(Modifier().setfixedWidth(8).align(Align::LEFT)),
 

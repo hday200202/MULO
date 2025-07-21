@@ -164,6 +164,9 @@ void Engine::loadComposition(const std::string& path) {
 
 void Engine::saveComposition(const std::string&) {}
 
+std::pair<int, int> Engine::getTimeSignature() const 
+{ return std::pair<int, int>(currentComposition->timeSigNumerator, currentComposition->timeSigDenominator); }
+
 void Engine::addTrack(const std::string& name) {
     auto* t = new Track(formatManager);
     t->setName(name);
