@@ -60,6 +60,7 @@ private:
     Row* browserAndMixerElement;
     Row* fxRackElement;
     FreeColumn* contextMenu;
+    FreeColumn* toolTip;
 
     TimelineMeasures timelineMeasures;
 
@@ -109,6 +110,7 @@ private:
     bool handleUIButtons();
     bool handlePlaybackControls();
     bool handleKeyboardShortcuts();
+    bool handleToolTips();
     
     void undo();
     void redo();

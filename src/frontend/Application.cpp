@@ -59,6 +59,14 @@ Application::Application() {
     );
     contextMenu->hide();
 
+    toolTip = freeColumn(
+        Modifier().setfixedHeight(200).setfixedWidth(400).setColor(sf::Color(50, 50, 50)),
+        contains {
+            text(Modifier(), "Test string", resources.openSansFont, "tool_tip"),
+        }
+    );
+    toolTip->hide();
+
     // Base UI
     ui = new UILO(window, windowView, {{
         page({
@@ -110,6 +118,7 @@ void Application::update() {
         
         // If user interaction, force update
         shouldForceUpdate |= handleContextMenu();
+        shouldForceUpdate |= handleToolTips();
         shouldForceUpdate |= handleUIButtons();
         shouldForceUpdate |= handlePlaybackControls();
         shouldForceUpdate |= handleTrackEvents();
@@ -182,6 +191,47 @@ bool Application::handleContextMenu() {
     
     prevRightClick = rightClick;
     return shouldForceUpdate;
+}
+
+bool Application::handleToolTips() {
+    std::string toolTipMessage = "";
+
+    if(buttons["select_directory"]->isHovered()) {
+        toolTipMessage = "Press this button to set your preffered directory for your tracks.";
+    }
+
+    if(buttons["new_track"]->isHovered()) {
+        toolTipMessage = "Press this to add a track to your composition.";
+    }
+
+    if(buttons["mute_master"]->isHovered()) {
+        toolTipMessage = "Press this to mute the entire composition.";
+    }
+    
+    if(buttons["mixer"]->isHovered()) {
+        toolTipMessage = "Press this button to switch between timeline and mixer.";
+    }
+    
+    if(buttons["play"]->isHovered()) {
+        toolTipMessage = "Press this to play your composition.";
+    }
+    
+    if(buttons["save"]->isHovered()) {
+        toolTipMessage = "Press this to manually save the current state of your composition.";
+    }
+    
+    if(buttons["load"]->isHovered()) {
+        toolTipMessage = "Press this to load another composition.";
+    }
+
+    if(!toolTipMessage.empty()) {
+        texts["tool_tip"]->setString(toolTipMessage);
+        return true;
+    }
+    else {
+        texts["tool_tip"]->setString("This button is unknown.");
+        return false;
+    }
 }
 
 bool Application::handleUIButtons() {
