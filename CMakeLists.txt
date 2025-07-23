@@ -9,6 +9,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG         ${CMAKE_SOURCE_DIR}/bin/${CMAKE
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE       ${CMAKE_SOURCE_DIR}/bin/${CMAKE_SYSTEM_NAME}/Release)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${CMAKE_SOURCE_DIR}/bin/${CMAKE_SYSTEM_NAME}/RelWithDebInfo)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL    ${CMAKE_SOURCE_DIR}/bin/${CMAKE_SYSTEM_NAME}/MinSizeRel)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG ${CMAKE_SOURCE_DIR}/bin/Mac/Debug)
 
 # Platform-specific JUCE
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -45,6 +46,9 @@ elseif (CMAKE_SYSTEM_NAME STREQUAL "Windows")
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
     find_package(SFML 3.0.1 COMPONENTS Graphics Window System REQUIRED)
 endif()
+
+# JSON for config handling
+find_package(nlohmann_json CONFIG REQUIRED)
 
 # Gather source files
 file(GLOB_RECURSE MULO_SOURCES
@@ -114,6 +118,9 @@ target_link_libraries(MULO PRIVATE
     SFML::Window
     SFML::System
 
+    # JSON library for config file I/O
+    nlohmann_json::nlohmann_json
+
     # Curl (Linux only)
     $<$<STREQUAL:${CMAKE_SYSTEM_NAME},Linux>:curl>
 )
@@ -163,3 +170,4 @@ add_custom_target(copy_assets ALL
         "${CMAKE_SOURCE_DIR}/assets" "$<TARGET_FILE_DIR:MULO>/assets"
     COMMENT "Copying assets folder to $<TARGET_FILE_DIR:MULO>/assets"
 )
+
