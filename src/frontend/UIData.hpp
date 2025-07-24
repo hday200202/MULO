@@ -28,7 +28,11 @@ struct UIState {
 };
 
 struct UIResources {
-    std::string openSansFont;
+    std::string dejavuSansFont;
+    std::string spaceMonoFont;
+    std::string ubuntuBoldFont;
+    std::string ubuntuMonoFont;
+    std::string ubuntuMonoBoldFont;
     // Add more resources as needed
 };
 
