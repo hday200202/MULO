@@ -189,7 +189,7 @@ inline std::vector<std::shared_ptr<sf::Drawable>> generateTimelineMeasures(
             auto measureLine = std::make_shared<sf::RectangleShape>();
             measureLine->setSize({2.f, rowSize.y});
             measureLine->setPosition({xPos, 0.f});
-            measureLine->setFillColor(sf::Color(100, 100, 100, 150));
+            measureLine->setFillColor(sf::Color(100, 100, 100, 255));
             lines.push_back(measureLine);
         }
         
