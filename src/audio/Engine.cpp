@@ -167,6 +167,8 @@ void Engine::saveComposition(const std::string&) {}
 std::pair<int, int> Engine::getTimeSignature() const 
 { return std::pair<int, int>(currentComposition->timeSigNumerator, currentComposition->timeSigDenominator); }
 
+double Engine::getBpm() const { return currentComposition->bpm; }
+
 void Engine::addTrack(const std::string& name) {
     auto* t = new Track(formatManager);
     t->setName(name);
@@ -523,7 +525,10 @@ Composition::Composition(const std::string&) {}
 
 Track::Track(juce::AudioFormatManager& fm) : formatManager(fm) {}
 
-Track::~Track() {}
+Track::~Track() {
+    delete referenceClip;
+    referenceClip = nullptr;
+}
 
 void Track::setName(const std::string& n) {
     name = n;
@@ -560,6 +565,14 @@ void Track::removeClip(int idx) {
 
 const std::vector<AudioClip>& Track::getClips() const {
     return clips;
+}
+
+void Track::setReferenceClip(const AudioClip& clip) {
+    referenceClip = new AudioClip(clip);
+}
+
+AudioClip* Track::getReferenceClip() {
+    return referenceClip;
 }
 
 void Track::process(double playheadSeconds,

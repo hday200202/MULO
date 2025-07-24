@@ -49,6 +49,7 @@ public:
     void loadComposition(const std::string& path);
     void saveComposition(const std::string& path);
     std::pair<int, int> getTimeSignature() const;
+    double getBpm() const;
     
     // Track Management 
     void addTrack(const std::string& name = "");
@@ -145,6 +146,9 @@ public:
     void removeClip(int index);
     const std::vector<AudioClip>& getClips() const;
 
+    void setReferenceClip(const AudioClip& clip);
+    AudioClip* getReferenceClip();
+
     void process(
         double playheadSeconds,
         juce::AudioBuffer<float>& outputBuffer,
@@ -162,6 +166,7 @@ private:
     bool muted = false;
 
     std::vector<AudioClip> clips;
+    AudioClip* referenceClip = nullptr;
 
     juce::AudioFormatManager& formatManager;
 };

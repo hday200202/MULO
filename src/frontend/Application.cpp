@@ -1,7 +1,7 @@
 #include "Application.hpp"
 
 Application::Application() {
-    // Initialize the window and engine
+    // Initialize window and engine
     screenResolution = sf::VideoMode::getDesktopMode();
 
     screenResolution.size.x = screenResolution.size.x / 1.5f;
@@ -28,7 +28,7 @@ Application::Application() {
     engine.addTrack("Master");
     initUIResources();
 
-    // Persistent UI Elements
+    // UI Elements
     topRowElement               = topRow();
     fileBrowserElement          = fileBrowser();
     masterTrackElement          = masterTrack();
@@ -44,15 +44,15 @@ Application::Application() {
     contextMenu = freeColumn(
         Modifier().setfixedHeight(400).setfixedWidth(200).setColor(sf::Color(50, 50, 50)),
         contains {
-            button(Modifier().setfixedHeight(32).setColor(sf::Color::White).onClick([&](){std::cout << "options" << std::endl;}), 
+            button(Modifier().setfixedHeight(32).setColor(sf::Color::White).onLClick([&](){std::cout << "options" << std::endl;}), 
                 ButtonStyle::Rect, "Options", resources.openSansFont, sf::Color::Black, "cm_options"),
             spacer(Modifier().setfixedHeight(1)),
 
-            button(Modifier().setfixedHeight(32).setColor(sf::Color::White).onClick([&](){std::cout << "rename" << std::endl;}), 
+            button(Modifier().setfixedHeight(32).setColor(sf::Color::White).onLClick([&](){std::cout << "rename" << std::endl;}), 
                 ButtonStyle::Rect, "Rename", resources.openSansFont, sf::Color::Black, "cm_rename"),
             spacer(Modifier().setfixedHeight(1)),
 
-            button(Modifier().setfixedHeight(32).setColor(sf::Color::White).onClick([&](){std::cout << "change color" << std::endl;}), 
+            button(Modifier().setfixedHeight(32).setColor(sf::Color::White).onLClick([&](){std::cout << "change color" << std::endl;}), 
                 ButtonStyle::Rect, "Change Color", resources.openSansFont, sf::Color::Black, "cm_change_color"),
             spacer(Modifier().setfixedHeight(1)),
         }
@@ -88,12 +88,9 @@ Application::Application() {
     );
 
     running = ui->isRunning();
+
     ui->switchToPage("timeline");
-
     loadComposition("assets/empty_project.mpf");
-
-    timelineMeasures = TimelineMeasures(engine.getTimeSignature().first, engine.getTimeSignature().second);
-
     ui->forceUpdate();
 }
 
@@ -108,50 +105,249 @@ void Application::update() {
     if (ui->isRunning() && running) {
         bool shouldForceUpdate = false;
         
-        // If user interaction, force update
+        // Handle user interactions
         shouldForceUpdate |= handleContextMenu();
         shouldForceUpdate |= handleUIButtons();
         shouldForceUpdate |= handlePlaybackControls();
         shouldForceUpdate |= handleTrackEvents();
         shouldForceUpdate |= handleKeyboardShortcuts();
+        shouldForceUpdate |= playing;
 
-        // Update UILO ui
+        // Update UI
         if (shouldForceUpdate) ui->forceUpdate();
         else ui->update(windowView);
 
-        // Update Custom UI Elements (rendered on top of UILO)
-        if (!engine.getAllTracks().empty()) {
-            float newMasterOffset = timelineOffset;
+        // Update timeline rendering
+        updateTimelineRendering();
+    }
+}
 
-            for (const auto& track : engine.getAllTracks()) {
-                auto* scrollableRow = static_cast<ScrollableRow*>(containers[track->getName() + "_scrollable_row"]);
-                scrollableRow->setScrollSpeed(20.f);
-                if (scrollableRow->getOffset() != timelineOffset) {
-                    newMasterOffset = scrollableRow->getOffset();
+void Application::updateTimelineRendering() {
+    if (engine.getAllTracks().empty()) return;
+
+    // Sync timeline scroll offset
+    float newMasterOffset = timelineOffset;
+    for (const auto& track : engine.getAllTracks()) {
+        auto* scrollableRow = static_cast<ScrollableRow*>(containers[track->getName() + "_scrollable_row"]);
+        scrollableRow->setScrollSpeed(20.f);
+        if (scrollableRow->getOffset() != timelineOffset) {
+            newMasterOffset = scrollableRow->getOffset();
+            break;
+        }
+    }
+
+    // Handle playhead following during playback
+    if (playing) {
+        newMasterOffset = calculatePlayheadFollowOffset(newMasterOffset);
+    }
+
+    float clampedOffset = std::min(0.f, newMasterOffset);
+    
+    // Render all timeline elements
+    renderTimelineElements(clampedOffset);
+    
+    timelineOffset = clampedOffset;
+}
+
+float Application::calculatePlayheadFollowOffset(float currentOffset) {
+    float playheadXPos = secondsToXPosition(engine.getBpm(), 100.f * uiState.timelineZoomLevel, engine.getPosition());
+    float visibleWidth = 0.f;
+    
+    // Get visible width from any track
+    for (const auto& track : engine.getAllTracks()) {
+        auto* trackRow = containers[track->getName() + "_scrollable_row"];
+        if (trackRow) {
+            visibleWidth = trackRow->getSize().x;
+            break;
+        }
+    }
+    
+    if (visibleWidth > 0.f) {
+        float centerPos = visibleWidth * 0.5f;
+        float targetOffset = -(playheadXPos - centerPos);
+        float followSpeed = 0.08f;
+        return currentOffset + (targetOffset - currentOffset) * followSpeed;
+    }
+    
+    return currentOffset;
+}
+
+void Application::renderTimelineElements(float clampedOffset) {
+    std::vector<std::shared_ptr<sf::Drawable>> allTimelineElements;
+
+    // Process each track
+    for (const auto& track : engine.getAllTracks()) {
+        auto* trackRow = containers[track->getName() + "_scrollable_row"];
+        auto* scrollableRow = static_cast<ScrollableRow*>(trackRow);
+
+        scrollableRow->setScrollSpeed(20.f);
+        scrollableRow->setOffset(clampedOffset);
+
+        // Set up track interaction handlers
+        setupTrackInteractionHandlers(track, trackRow, clampedOffset);
+
+        // Generate and clip timeline elements for this track
+        auto [clips, lines] = generateAndClipTrackElements(track, trackRow, scrollableRow, clampedOffset);
+        
+        // Add to collection
+        allTimelineElements.insert(allTimelineElements.end(), clips.begin(), clips.end());
+        allTimelineElements.insert(allTimelineElements.end(), lines.begin(), lines.end());
+
+        // Clear individual track geometry
+        std::vector<std::shared_ptr<sf::Drawable>> emptyGeometry;
+        static_cast<uilo::Element*>(trackRow)->setCustomGeometry(emptyGeometry);
+    }
+
+    // Add playhead
+    addPlayheadToTimeline(allTimelineElements, clampedOffset);
+    
+    // Set all elements to timeline for rendering
+    timelineElement->setCustomGeometry(allTimelineElements);
+}
+
+void Application::setupTrackInteractionHandlers(Track* track, uilo::Element* trackRow, float clampedOffset) {
+    // Left click - add clip
+    trackRow->m_modifier.onLClick([&, track, clampedOffset](){
+        sf::Vector2f globalMousePos = ui->getMousePosition();
+        sf::Vector2f trackRowPos = trackRow->getPosition();
+        sf::Vector2f localMousePos = globalMousePos - trackRowPos;
+        
+        auto* scrollableRow = static_cast<ScrollableRow*>(trackRow);
+        sf::Vector2f scrollableSize = scrollableRow->getSize();
+        
+        auto lines = generateTimelineMeasures(0.f * uiState.timelineZoomLevel, clampedOffset, scrollableSize);
+        float snapX = getNearestMeasureX(localMousePos, lines);
+        float timePosition = xPosToSeconds(engine.getBpm(), 100.f * uiState.timelineZoomLevel, snapX - clampedOffset, clampedOffset);
+        
+        if (track->getReferenceClip()) {
+            AudioClip* newClip = track->getReferenceClip();
+            track->addClip(AudioClip(newClip->sourceFile, timePosition, 0.0, newClip->duration, 1.0f));
+        }
+        
+        std::cout << "Added clip to track '" << track->getName() << "' at time: " << timePosition << " seconds" << std::endl;
+    });
+
+    // Right click - remove clip
+    trackRow->m_modifier.onRClick([&, track, clampedOffset](){
+        sf::Vector2f globalMousePos = ui->getMousePosition();
+        sf::Vector2f trackRowPos = trackRow->getPosition();
+        sf::Vector2f localMousePos = globalMousePos - trackRowPos;
+        
+        float timePosition = xPosToSeconds(engine.getBpm(), 100.f * uiState.timelineZoomLevel, localMousePos.x - clampedOffset, clampedOffset);
+        
+        auto clips = track->getClips();
+        for (size_t i = 0; i < clips.size(); ++i) {
+            if (timePosition >= clips[i].startTime && timePosition <= (clips[i].startTime + clips[i].duration)) {
+                std::cout << "Removed clip from track '" << track->getName() << "' at time: " << clips[i].startTime << " seconds" << std::endl;
+                track->removeClip(i);
+                contextMenu->hide();
+                break;
+            }
+        }
+    });
+}
+
+std::pair<std::vector<std::shared_ptr<sf::Drawable>>, std::vector<std::shared_ptr<sf::Drawable>>> 
+Application::generateAndClipTrackElements(Track* track, uilo::Element* trackRow, ScrollableRow* scrollableRow, float clampedOffset) {
+    sf::Vector2f scrollableSize = scrollableRow->getSize();
+    
+    // Generate elements
+    auto lines = generateTimelineMeasures(100.f * uiState.timelineZoomLevel, clampedOffset, scrollableSize);
+    auto clips = generateClipRects(engine.getBpm(), 100.f * uiState.timelineZoomLevel, clampedOffset, scrollableSize, track->getClips());
+
+    // Calculate positioning and clipping bounds
+    float trackYOffset = trackRow->getPosition().y - timelineElement->getPosition().y;
+    sf::Vector2f timelinePos = timelineElement->getPosition();
+    sf::Vector2f trackRowPos = trackRow->getPosition();
+    float scrollableAreaLeft = trackRowPos.x - timelinePos.x;
+    float scrollableAreaRight = scrollableAreaLeft + scrollableSize.x;
+    
+    // Apply positioning and clipping to clips
+    for (auto& clip : clips) {
+        if (auto rect = std::dynamic_pointer_cast<sf::RectangleShape>(clip)) {
+            clipAndPositionElement(rect, trackYOffset, scrollableAreaLeft, scrollableAreaRight);
+        }
+    }
+    
+    // Apply positioning and clipping to lines
+    for (auto& line : lines) {
+        if (auto rect = std::dynamic_pointer_cast<sf::RectangleShape>(line)) {
+            clipAndPositionElement(rect, trackYOffset, scrollableAreaLeft, scrollableAreaRight);
+        }
+    }
+
+    return {clips, lines};
+}
+
+void Application::clipAndPositionElement(std::shared_ptr<sf::RectangleShape> rect, float yOffset, float leftBound, float rightBound) {
+    sf::Vector2f pos = rect->getPosition();
+    sf::Vector2f size = rect->getSize();
+    
+    // Apply Y offset
+    pos.y += yOffset;
+    
+    // Clip horizontally
+    float elementRight = pos.x + size.x;
+    if (elementRight > rightBound) {
+        size.x = std::max(0.f, rightBound - pos.x);
+    }
+    
+    if (pos.x < leftBound) {
+        float clipAmount = leftBound - pos.x;
+        pos.x = leftBound;
+        size.x = std::max(0.f, size.x - clipAmount);
+    }
+    
+    rect->setPosition(pos);
+    rect->setSize(size);
+}
+
+void Application::addPlayheadToTimeline(std::vector<std::shared_ptr<sf::Drawable>>& allTimelineElements, float clampedOffset) {
+    if (engine.getAllTracks().empty()) return;
+
+    float timelineHeight = (engine.getAllTracks().size() - 1) * 98.f + 96.f;
+    auto playheadDrawable = getPlayHead(engine.getBpm(), 100.f * uiState.timelineZoomLevel, clampedOffset, engine.getPosition(), sf::Vector2f(4.f, timelineHeight));
+    
+    if (auto playheadRect = std::dynamic_pointer_cast<sf::RectangleShape>(playheadDrawable)) {
+        sf::Vector2f currentPos = playheadRect->getPosition();
+        sf::Vector2f playheadSize = playheadRect->getSize();
+        
+        // Find first track Y position
+        float firstTrackY = 2.f;
+        const auto& timelineElements = timelineElement->getElements();
+        if (!timelineElements.empty()) {
+            for (const auto* element : timelineElements) {
+                if (element && element->getType() == uilo::EType::Row) {
+                    firstTrackY = element->getPosition().y - timelineElement->getPosition().y;
                     break;
                 }
             }
-
-            float clampedOffset = std::min(0.f, newMasterOffset);
-
-            for (const auto& track : engine.getAllTracks()) {
-                auto* trackRow = containers[track->getName() + "_scrollable_row"];
-                auto* scrollableRow = static_cast<ScrollableRow*>(trackRow);
-
-                scrollableRow->setOffset(clampedOffset);
-
-                auto lines = timelineMeasures.generateLines(
-                    100.f * uiState.timelineZoomLevel,
-                    clampedOffset,
-                    trackRow->getSize()
-                );
-
-                static_cast<uilo::Element*>(trackRow)->setCustomGeometry(lines);
-            }
-
-            timelineOffset = clampedOffset;
         }
+        
+        // Clip playhead to scrollable area
+        if (!engine.getAllTracks().empty()) {
+            auto* firstTrackRow = containers[engine.getAllTracks()[0]->getName() + "_scrollable_row"];
+            if (firstTrackRow) {
+                auto* firstScrollableRow = static_cast<ScrollableRow*>(firstTrackRow);
+                sf::Vector2f timelinePos = timelineElement->getPosition();
+                sf::Vector2f firstTrackPos = firstTrackRow->getPosition();
+                sf::Vector2f firstScrollableSize = firstScrollableRow->getSize();
+                
+                float scrollableAreaLeft = firstTrackPos.x - timelinePos.x;
+                float scrollableAreaRight = scrollableAreaLeft + firstScrollableSize.x;
+                
+                float playheadRight = currentPos.x + playheadSize.x;
+                if (playheadRight > scrollableAreaRight) {
+                    playheadSize.x = std::max(0.f, scrollableAreaRight - currentPos.x);
+                    playheadRect->setSize(playheadSize);
+                }
+            }
+        }
+        
+        playheadRect->setPosition({currentPos.x, firstTrackY});
     }
+    
+    allTimelineElements.push_back(playheadDrawable);
 }
 
 bool Application::handleContextMenu() {
@@ -262,22 +458,51 @@ bool Application::handlePlaybackControls() {
 
 bool Application::handleKeyboardShortcuts() {
     static bool prevCtrl = false, prevZ = false, prevY = false;
+    
     bool ctrl = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl);
     bool z = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Z);
     bool y = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Y);
     bool shouldForceUpdate = false;
 
+    // Block UILO input when Ctrl is pressed to capture scroll events
+    if (ctrl != prevCtrl) {
+        ui->setInputBlocked(ctrl);
+    }
+
     if (ctrl && !prevCtrl) prevZ = prevY = false;
 
+    // Handle Ctrl+Z (Undo)
     if (ctrl && z && !prevZ) {
         undo();
         std::cout << "Undo, undoStack size: " << undoStack.size() << std::endl;
         shouldForceUpdate = true;
     }
+    
+    // Handle Ctrl+Y (Redo)
     if (ctrl && y && !prevY) {
         redo();
         std::cout << "Redo, redoStack size: " << redoStack.size() << std::endl;
         shouldForceUpdate = true;
+    }
+
+    // Handle Ctrl+Scroll for timeline zoom
+    if (ctrl) {
+        float scrollDelta = ui->getVerticalScrollDelta();
+        
+        if (scrollDelta != 0.0f) {
+            const float zoomSpeed = 0.1f;
+            const float minZoom = 0.1f;
+            const float maxZoom = 5.0f;
+            
+            if (scrollDelta > 0) {
+                uiState.timelineZoomLevel = std::max(minZoom, uiState.timelineZoomLevel - zoomSpeed);
+            } else {
+                uiState.timelineZoomLevel = std::min(maxZoom, uiState.timelineZoomLevel + zoomSpeed);
+            }
+            
+            ui->resetScrollDeltas();
+            shouldForceUpdate = true;
+        }
     }
 
     prevCtrl = ctrl;
@@ -518,7 +743,7 @@ Row* Application::track(const std::string& trackName, Align alignment, float vol
 
             spacer(Modifier().setfixedHeight(8).align(Align::BOTTOM)),
         })
-    });
+    }, trackName + "_track_row");
 }
 
 Column* Application::mixerTrack(const std::string& trackName, Align alignment, float volume, float pan) {
@@ -709,6 +934,8 @@ std::string Application::selectFile(std::initializer_list<std::string> filters) 
 
 void Application::newTrack() {
     std::string samplePath = selectFile({"*.wav", "*.mp3", "*.flac"});
+    if (samplePath.empty()) return;
+
     std::string trackName;
     int trackIndex = uiState.trackCount;
 
@@ -724,7 +951,7 @@ void Application::newTrack() {
             delete reader;
         }
 
-        engine.getTrack(trackIndex)->addClip(AudioClip(sampleFile, 0.0, 0.0, lengthSeconds, 1.0f));
+        engine.getTrack(trackIndex)->setReferenceClip(AudioClip(sampleFile, 0.0, 0.0, lengthSeconds, 1.0f));
         std::cout << "Loaded sample: " << samplePath << " into Track '" << trackName << "' (" << (trackIndex + 1) << ")" << std::endl;
     } 
     else {
@@ -761,6 +988,10 @@ void Application::loadComposition(const std::string& path) {
     // );
 
     uiState.trackCount = engine.getAllTracks().size();
+
+    for (auto& track : engine.getAllTracks())
+        if (!track->getReferenceClip() && !track->getClips().empty())
+            track->setReferenceClip(track->getClips()[0]);
     
     for (auto& t : engine.getAllTracks()) {
         std::cout << "Loaded track: " << t->getName() << std::endl;

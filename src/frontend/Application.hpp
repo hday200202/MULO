@@ -3,7 +3,7 @@
 #include "UILO/UILO.hpp"
 #include "Engine.hpp"
 #include "UIData.hpp"
-#include "CustomUIElements.hpp"
+#include "TimelineHelpers.hpp"
 #include <juce_gui_basics/juce_gui_basics.h>
 
 using namespace uilo;
@@ -61,8 +61,6 @@ private:
     Row* fxRackElement;
     FreeColumn* contextMenu;
 
-    TimelineMeasures timelineMeasures;
-
     // UI Component Definitions
     Row* topRow();
     Row* browserAndTimeline();
@@ -109,6 +107,16 @@ private:
     bool handleUIButtons();
     bool handlePlaybackControls();
     bool handleKeyboardShortcuts();
+    
+    // Timeline rendering helpers
+    void updateTimelineRendering();
+    float calculatePlayheadFollowOffset(float currentOffset);
+    void renderTimelineElements(float clampedOffset);
+    void setupTrackInteractionHandlers(Track* track, uilo::Element* trackRow, float clampedOffset);
+    std::pair<std::vector<std::shared_ptr<sf::Drawable>>, std::vector<std::shared_ptr<sf::Drawable>>> 
+        generateAndClipTrackElements(Track* track, uilo::Element* trackRow, ScrollableRow* scrollableRow, float clampedOffset);
+    void clipAndPositionElement(std::shared_ptr<sf::RectangleShape> rect, float yOffset, float leftBound, float rightBound);
+    void addPlayheadToTimeline(std::vector<std::shared_ptr<sf::Drawable>>& allTimelineElements, float clampedOffset);
     
     void undo();
     void redo();
