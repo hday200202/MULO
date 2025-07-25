@@ -116,9 +116,9 @@ namespace Themes {
         sf::Color::Black,             // black
         sf::Color::White,             // sliderKnobColor
         sf::Color::Black,             // sliderBarColor
-        sf::Color(100, 150, 200),     // clipColor - Light Blue
+        sf::Color::White,             // clipColor - Light Blue
         sf::Color(80, 80, 80),        // lineColor - Gray
-        sf::Color(0, 150, 255)        // waveformColor - Blue
+        sf::Color::Black              // waveformColor - Blue
     );
     
     // Dark Theme

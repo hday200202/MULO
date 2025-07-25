@@ -161,11 +161,15 @@ public:
     void toggleMute() { muted = !muted; }
     bool isMuted() const { return muted; }
 
+    void setSolo(bool solo) { soloed = solo; }
+    bool isSolo() const { return soloed; }
+
 private:
     std::string name;
     float volumeDb = 0.0f;
     float pan = 0.0f;
     bool muted = false;
+    bool soloed = false;
 
     std::vector<AudioClip> clips;
     AudioClip* referenceClip = nullptr;

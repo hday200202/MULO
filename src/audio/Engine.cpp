@@ -496,9 +496,45 @@ void Engine::processBlock(juce::AudioBuffer<float>& outputBuffer, int numSamples
     tempMixBuffer.setSize(outputBuffer.getNumChannels(), numSamples, false, false, true);
     tempMixBuffer.clear();
 
+    // Check if any tracks are soloed (including master track)
+    bool anyTrackSoloed = false;
+    bool masterSoloed = false;
+    
+    if (masterTrack && masterTrack->isSolo()) {
+        anyTrackSoloed = true;
+        masterSoloed = true;
+    }
+    
+    if (!anyTrackSoloed) {
+        for (auto* track : currentComposition->tracks) {
+            if (track && track->isSolo()) {
+                anyTrackSoloed = true;
+                break;
+            }
+        }
+    }
+
     for (auto* track : currentComposition->tracks) {
-        if (track && !track->isMuted())
-            track->process(positionSeconds, tempMixBuffer, numSamples, sampleRate);
+        if (track) {
+            bool shouldPlay = false;
+            
+            if (anyTrackSoloed) {
+                if (masterSoloed) {
+                    // If master is soloed, play all non-muted tracks
+                    shouldPlay = !track->isMuted();
+                } else {
+                    // If any other track is soloed, only play soloed tracks
+                    shouldPlay = track->isSolo();
+                }
+            } else {
+                // If no tracks are soloed, play all non-muted tracks
+                shouldPlay = !track->isMuted();
+            }
+            
+            if (shouldPlay) {
+                track->process(positionSeconds, tempMixBuffer, numSamples, sampleRate);
+            }
+        }
     }
 
     // Now process the master track (for effects, volume, etc.)

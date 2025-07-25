@@ -5,6 +5,7 @@
 Application::Application() {
     // Initialize auto-save timer from config
     loadConfig();
+    applyThemeByName(selectedThemeName); // Apply the theme from config
     autoSaveTimer.restart();
     uiState.autoSaveIntervalSeconds = autoSaveIntervalSeconds;
 
@@ -27,6 +28,7 @@ Application::Application() {
     // Initialize project settings values
     projectNameValue = engine.getCurrentCompositionName();
     bpmValue = std::to_string(static_cast<int>(engine.getBpm()));
+    autosaveValue = std::to_string(autoSaveIntervalSeconds);
 
     // UI Elements
     topRowElement               = topRow();
@@ -152,7 +154,7 @@ void Application::update() {
         }
         
         // Handle text input keyboard events (SFML 3.0)
-        if (textInputActive || projectNameInputActive || bpmInputActive) {
+        if (textInputActive || projectNameInputActive || bpmInputActive || autosaveInputActive) {
             // Determine which input is active and get references to the appropriate variables
             bool* activeInput;
             std::string* inputValue;
@@ -169,11 +171,21 @@ void Application::update() {
                 inputValue = &projectNameValue;
                 textElementId = "project_name_box";
                 containerElementId = "project_name_row";
-            } else { // bpmInputActive
+            } else if (bpmInputActive) {
                 activeInput = &bpmInputActive;
                 inputValue = &bpmValue;
                 textElementId = "bpm_box";
                 containerElementId = "bpm_row";
+            } else { // autosaveInputActive
+                activeInput = &autosaveInputActive;
+                inputValue = &autosaveValue;
+                textElementId = "autosave_box";
+                containerElementId = "autosave_row";
+                static bool debugShown = false;
+                if (!debugShown) {
+                    std::cout << "Autosave input is active, current value: " << *inputValue << std::endl;
+                    debugShown = true;
+                }
             }
             
             // Simple text input handling with static variables to track key states
@@ -200,7 +212,7 @@ void Application::update() {
                 *activeInput = false;
                 shouldForceUpdate = true;
                 
-                // Apply changes if it was project name or BPM
+                // Apply changes if it was project name, BPM, or autosave
                 if (inputValue == &projectNameValue) {
                     engine.setCurrentCompositionName(*inputValue);
                 } else if (inputValue == &bpmValue) {
@@ -214,13 +226,30 @@ void Application::update() {
                     } catch (...) {
                         *inputValue = std::to_string(engine.getBpm()); // Reset to current value if invalid
                     }
+                } else if (inputValue == &autosaveValue) {
+                    try {
+                        int interval = std::stoi(*inputValue);
+                        if (interval >= 10 && interval <= 3600) { // 10 seconds to 1 hour
+                            autoSaveIntervalSeconds = interval;
+                            uiState.autoSaveIntervalSeconds = interval;
+                            autoSaveTimer.restart(); // Restart timer with new interval
+                            saveConfig(); // Save to config file
+                            std::cout << "Auto-save interval updated to " << interval << " seconds" << std::endl;
+                        } else {
+                            *inputValue = std::to_string(autoSaveIntervalSeconds); // Reset to current value if invalid
+                            std::cout << "Invalid auto-save interval: " << *inputValue << " (must be between 10 and 3600 seconds)" << std::endl;
+                        }
+                    } catch (...) {
+                        *inputValue = std::to_string(autoSaveIntervalSeconds); // Reset to current value if invalid
+                        std::cout << "Invalid auto-save interval format: " << *inputValue << std::endl;
+                    }
                 }
             }
             wasEnterPressed = enterPressed;
             wasEscapePressed = escapePressed;
             
-            // Handle letters a-z (skip for BPM input to only allow numbers)
-            if (inputValue != &bpmValue) {
+            // Handle letters a-z (skip for BPM and autosave input to only allow numbers)
+            if (inputValue != &bpmValue && inputValue != &autosaveValue) {
                 bool shift = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LShift) || sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RShift);
                 for (int i = 0; i < 26; i++) {
                     sf::Keyboard::Key key = static_cast<sf::Keyboard::Key>(static_cast<int>(sf::Keyboard::Key::A) + i);
@@ -275,7 +304,7 @@ void Application::update() {
                     *activeInput = false;
                     shouldForceUpdate = true;
                     
-                    // Apply changes if it was project name or BPM
+                    // Apply changes if it was project name, BPM, or autosave
                     if (inputValue == &projectNameValue) {
                         engine.setCurrentCompositionName(*inputValue);
                     } else if (inputValue == &bpmValue) {
@@ -288,6 +317,23 @@ void Application::update() {
                             }
                         } catch (...) {
                             *inputValue = std::to_string(engine.getBpm()); // Reset to current value if invalid
+                        }
+                    } else if (inputValue == &autosaveValue) {
+                        try {
+                            int interval = std::stoi(*inputValue);
+                            if (interval >= 10 && interval <= 3600) { // 10 seconds to 1 hour
+                                autoSaveIntervalSeconds = interval;
+                                uiState.autoSaveIntervalSeconds = interval;
+                                autoSaveTimer.restart(); // Restart timer with new interval
+                                saveConfig(); // Save to config file
+                                std::cout << "Auto-save interval updated to " << interval << " seconds" << std::endl;
+                            } else {
+                                *inputValue = std::to_string(autoSaveIntervalSeconds); // Reset to current value if invalid
+                                std::cout << "Invalid auto-save interval: " << *inputValue << " (must be between 10 and 3600 seconds)" << std::endl;
+                            }
+                        } catch (...) {
+                            *inputValue = std::to_string(autoSaveIntervalSeconds); // Reset to current value if invalid
+                            std::cout << "Invalid auto-save interval format: " << *inputValue << std::endl;
                         }
                     }
                 }
@@ -315,6 +361,9 @@ void Application::update() {
         shouldForceUpdate |= handleKeyboardShortcuts();
         shouldForceUpdate |= handleScrollWheel();
         shouldForceUpdate |= playing;
+
+        // Check auto save
+        checkAutoSave();
 
         // Update UILO ui
         if (shouldForceUpdate) ui->forceUpdate();
@@ -978,7 +1027,7 @@ Row* Application::topRow() {
             secondary_text_color,
             "new_track"
         ),
-        spacer(Modifier().setfixedWidth(16).align(Align::LEFT)),
+        spacer(Modifier().setfixedWidth(16).align(Align::RIGHT)),
     });
 }
 Row* Application::browserAndTimeline() {
@@ -1437,7 +1486,7 @@ ScrollableColumn* Application::settingsColumn() {
                 }
             }), contains{
                 spacer(Modifier().setfixedWidth(8.f)),
-                text(Modifier().setfixedHeight(28).setColor(sf::Color::Black).align(Align::LEFT | Align::CENTER_Y), "Default", resources.dejavuSansFont, "theme_text"),
+                text(Modifier().setfixedHeight(28).setColor(sf::Color::Black).align(Align::LEFT | Align::CENTER_Y), selectedThemeName, resources.dejavuSansFont, "theme_text"),
             }, "theme_dropdown"),
             spacer(Modifier().setfixedWidth(32.f).align(Align::RIGHT)),
         }),
@@ -1458,7 +1507,7 @@ ScrollableColumn* Application::settingsColumn() {
                 }
             }), contains{
                 spacer(Modifier().setfixedWidth(8.f)),
-                text(Modifier().setfixedHeight(28).setColor(sf::Color::Black).align(Align::LEFT | Align::CENTER_Y), "44100", resources.dejavuSansFont, "sample_rate_text"),
+                text(Modifier().setfixedHeight(28).setColor(sf::Color::Black).align(Align::LEFT | Align::CENTER_Y), currentSampleRate, resources.dejavuSansFont, "sample_rate_text"),
             }, "sample_rate_dropdown"),
             spacer(Modifier().setfixedWidth(32.f).align(Align::RIGHT)),
         }),
@@ -1475,7 +1524,7 @@ ScrollableColumn* Application::settingsColumn() {
             spacer(Modifier().setfixedWidth(32.f)),
             text(Modifier().setfixedHeight(32).setColor(primary_text_color).align(Align::LEFT | Align::CENTER_Y), "Project Name", resources.dejavuSansFont, "project_name_label"),
             row(Modifier().setfixedHeight(32).setfixedWidth(256).align(Align::RIGHT).setColor(sf::Color::White).onLClick([&](){
-                if (!dropdownMenu->m_modifier.isVisible() && !sampleRateDropdownMenu->m_modifier.isVisible() && !textInputActive && !bpmInputActive) {
+                if (!dropdownMenu->m_modifier.isVisible() && !sampleRateDropdownMenu->m_modifier.isVisible() && !textInputActive && !bpmInputActive && !autosaveInputActive) {
                     projectNameInputActive = true;
                 }
             }), contains{
@@ -1490,13 +1539,29 @@ ScrollableColumn* Application::settingsColumn() {
             spacer(Modifier().setfixedWidth(32.f)),
             text(Modifier().setfixedHeight(32).setColor(primary_text_color).align(Align::LEFT | Align::CENTER_Y), "BPM", resources.dejavuSansFont, "bpm_label"),
             row(Modifier().setfixedHeight(32).setfixedWidth(256).align(Align::RIGHT).setColor(sf::Color::White).onLClick([&](){
-                if (!dropdownMenu->m_modifier.isVisible() && !sampleRateDropdownMenu->m_modifier.isVisible() && !textInputActive && !projectNameInputActive) {
+                if (!dropdownMenu->m_modifier.isVisible() && !sampleRateDropdownMenu->m_modifier.isVisible() && !textInputActive && !projectNameInputActive && !autosaveInputActive) {
                     bpmInputActive = true;
                 }
             }), contains{
                 spacer(Modifier().setfixedWidth(8.f)),
                 text(Modifier().setfixedHeight(28).setColor(sf::Color::Black).align(Align::LEFT | Align::CENTER_Y), bpmValue, resources.dejavuSansFont, "bpm_box"),
             }, "bpm_row"),
+            spacer(Modifier().setfixedWidth(32.f).align(Align::RIGHT)),
+        }),
+        spacer(Modifier().setfixedHeight(16.f)),
+        // Autosave interval input
+        row(Modifier().setfixedHeight(32), contains{
+            spacer(Modifier().setfixedWidth(32.f)),
+            text(Modifier().setfixedHeight(32).setColor(primary_text_color).align(Align::LEFT | Align::CENTER_Y), "Auto-save Interval (sec)", resources.dejavuSansFont, "autosave_label"),
+            row(Modifier().setfixedHeight(32).setfixedWidth(256).align(Align::RIGHT).setColor(sf::Color::White).onLClick([&](){
+                if (!dropdownMenu->m_modifier.isVisible() && !sampleRateDropdownMenu->m_modifier.isVisible() && !textInputActive && !projectNameInputActive && !bpmInputActive) {
+                    autosaveInputActive = true;
+                    std::cout << "Autosave input activated" << std::endl;
+                }
+            }), contains{
+                spacer(Modifier().setfixedWidth(8.f)),
+                text(Modifier().setfixedHeight(28).setColor(sf::Color::Black).align(Align::LEFT | Align::CENTER_Y), autosaveValue, resources.dejavuSansFont, "autosave_box"),
+            }, "autosave_row"),
             spacer(Modifier().setfixedWidth(32.f).align(Align::RIGHT)),
         })
     });
@@ -1559,6 +1624,11 @@ FreeColumn* Application::generateDropdown(sf::Vector2f position, const std::vect
                         if (texts.count("theme_text")) {
                             texts["theme_text"]->setString(item);
                         }
+                        
+                        // Update current theme and save to config
+                        selectedThemeName = item;
+                        applyThemeByName(selectedThemeName); // Apply the new theme immediately
+                        saveConfig();
                         
                         showThemeDropdown = false; // Close dropdown after selection
                         lastSelected = item;
@@ -1634,6 +1704,10 @@ FreeColumn* Application::generateSampleRateDropdown(sf::Vector2f position, const
                         if (texts.count("sample_rate_text")) {
                             texts["sample_rate_text"]->setString(item);
                         }
+                        
+                        // Update current sample rate and save to config
+                        currentSampleRate = item;
+                        saveConfig();
                         
                         showSampleRateDropdown = false; // Close dropdown after selection
                         lastSelected = item;
@@ -1802,6 +1876,39 @@ bool Application::handleTrackEvents() {
         shouldForceUpdate = true;
     }
 
+    // Handle master track solo button
+    if (getButton("solo_Master") && getButton("solo_Master")->isClicked()) {
+        bool wasSolo = engine.getMasterTrack()->isSolo();
+        
+        if (wasSolo) {
+            // Un-solo master track
+            engine.getMasterTrack()->setSolo(false);
+        } else {
+            // Solo master track and un-solo all other tracks
+            engine.getMasterTrack()->setSolo(true);
+            for (auto& track : engine.getAllTracks()) {
+                track->setSolo(false);
+            }
+        }
+        
+        // Update button colors
+        if (getButton("solo_Master")) {
+            getButton("solo_Master")->m_modifier.setColor(
+                (engine.getMasterTrack()->isSolo() ? mute_color : button_color)
+            );
+        }
+        for (auto& track : engine.getAllTracks()) {
+            if (getButton("solo_" + track->getName())) {
+                getButton("solo_" + track->getName())->m_modifier.setColor(
+                    (track->isSolo() ? mute_color : button_color)
+                );
+            }
+        }
+        
+        std::cout << "Master track solo state toggled to " << ((engine.getMasterTrack()->isSolo()) ? "true" : "false") << std::endl;
+        shouldForceUpdate = true;
+    }
+
     if (getSlider("Master_volume_slider")->getValue() != decibelsToFloat(engine.getMasterTrack()->getVolume())) {
         float newVolume = floatToDecibels(getSlider("Master_volume_slider")->getValue());
         engine.getMasterTrack()->setVolume(newVolume);
@@ -1826,6 +1933,50 @@ bool Application::handleTrackEvents() {
             getButton("mute_" + track->getName())->m_modifier.setColor((track->isMuted() ? mute_color : not_muted_color));
             std::cout << "Track '" << track->getName() << "' mute state toggled to " << ((track->isMuted()) ? "true" : "false") << std::endl;
 
+            shouldForceUpdate = true;
+        }
+
+        // Handle solo button clicks
+        if (getButton("solo_" + track->getName()) && getButton("solo_" + track->getName())->isClicked()) {
+            bool wasSolo = track->isSolo();
+            
+            // If this track was the only one soloed, un-solo it
+            if (wasSolo) {
+                // Check if this is the only soloed track
+                bool isOnlySoloedTrack = true;
+                for (auto& otherTrack : engine.getAllTracks()) {
+                    if (otherTrack != track && otherTrack->isSolo()) {
+                        isOnlySoloedTrack = false;
+                        break;
+                    }
+                }
+                
+                if (isOnlySoloedTrack) {
+                    // Un-solo this track
+                    track->setSolo(false);
+                } else {
+                    // There are other soloed tracks, so just solo this one (un-solo others)
+                    for (auto& otherTrack : engine.getAllTracks()) {
+                        otherTrack->setSolo(otherTrack == track);
+                    }
+                }
+            } else {
+                // Solo this track and un-solo all others
+                for (auto& otherTrack : engine.getAllTracks()) {
+                    otherTrack->setSolo(otherTrack == track);
+                }
+            }
+            
+            // Update button colors for all tracks
+            for (auto& updateTrack : engine.getAllTracks()) {
+                if (getButton("solo_" + updateTrack->getName())) {
+                    getButton("solo_" + updateTrack->getName())->m_modifier.setColor(
+                        (updateTrack->isSolo() ? mute_color : button_color)
+                    );
+                }
+            }
+            
+            std::cout << "Track '" << track->getName() << "' solo state toggled to " << ((track->isSolo()) ? "true" : "false") << std::endl;
             shouldForceUpdate = true;
         }
 
@@ -2067,6 +2218,15 @@ void Application::loadConfig() {
         if (j.contains("autoSaveIntervalSeconds") && j["autoSaveIntervalSeconds"].is_number_integer()) {
             autoSaveIntervalSeconds = j["autoSaveIntervalSeconds"];
             uiState.autoSaveIntervalSeconds = autoSaveIntervalSeconds;
+            std::cout << "Loaded auto-save interval: " << autoSaveIntervalSeconds << " seconds" << std::endl;
+        }
+        if (j.contains("currentTheme") && j["currentTheme"].is_string()) {
+            selectedThemeName = j["currentTheme"];
+            std::cout << "Loaded theme: " << selectedThemeName << std::endl;
+        }
+        if (j.contains("currentSampleRate") && j["currentSampleRate"].is_string()) {
+            currentSampleRate = j["currentSampleRate"];
+            std::cout << "Loaded sample rate: " << currentSampleRate << " Hz" << std::endl;
         }
     } catch (const std::exception& e) {
         std::cerr << "Failed to parse config: " << e.what() << "\n";
@@ -2076,11 +2236,14 @@ void Application::loadConfig() {
 void Application::saveConfig() {
     nlohmann::json j;
     j["autoSaveIntervalSeconds"] = autoSaveIntervalSeconds;
+    j["currentTheme"] = selectedThemeName;
+    j["currentSampleRate"] = currentSampleRate;
     std::ofstream out(configFilePath);
     if (!out) {
         std::cerr << "Cannot write config\n"; return;
     }
     out << j.dump(4);
+    std::cout << "Config saved: theme=" << selectedThemeName << ", sampleRate=" << currentSampleRate << ", autoSave=" << autoSaveIntervalSeconds << "s" << std::endl;
 }
 
 void Application::checkAutoSave() {
@@ -2092,4 +2255,23 @@ void Application::checkAutoSave() {
             std::cerr << "Auto-save failed\n";
         autoSaveTimer.restart();
     }
+}
+
+void Application::applyThemeByName(const std::string& themeName) {
+    if (themeName == "Default") {
+        applyTheme(Themes::Default);
+    } else if (themeName == "Dark") {
+        applyTheme(Themes::Dark);
+    } else if (themeName == "Light") {
+        applyTheme(Themes::Light);
+    } else if (themeName == "Cyberpunk") {
+        applyTheme(Themes::Cyberpunk);
+    } else if (themeName == "Forest") {
+        applyTheme(Themes::Forest);
+    } else {
+        // Default fallback
+        applyTheme(Themes::Default);
+        std::cout << "Unknown theme '" << themeName << "', using Default theme" << std::endl;
+    }
+    std::cout << "Applied theme: " << themeName << std::endl;
 }

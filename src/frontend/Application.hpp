@@ -15,7 +15,6 @@
 #include <stack>
 
 using namespace uilo;
-
 /**
  * @brief Main application class for the audio workstation.
  *
@@ -27,9 +26,6 @@ using namespace uilo;
  * - File operations (load/save/select).
  * - Auto-save functionality loaded from and persisted to config.json.
  */
-// namespace nlohmann { class json; }
-using namespace uilo;
-
 class Application {
 public:
     Application();
@@ -64,6 +60,7 @@ private:
     bool textInputActive = false;
     bool projectNameInputActive = false;
     bool bpmInputActive = false;
+    bool autosaveInputActive = false;
     bool playing = false;
     bool uiChanged = false;
     bool fileTreeNeedsRebuild = false;
@@ -71,6 +68,7 @@ private:
     std::string textInputValue = "";
     std::string projectNameValue = "untitled";
     std::string bpmValue = "120";
+    std::string autosaveValue = "300";
 
     // Tooltip timing
     sf::Clock toolTipTimer;
@@ -101,6 +99,10 @@ private:
     int        autoSaveIntervalSeconds = 300;  // loaded from config.json (default 5m)
     sf::Clock  autoSaveTimer;                // tracks elapsed time since last save
     std::string lastSavePath;                // path for repeated auto-saves
+
+    // UI configuration (saved to config.json)
+    std::string selectedThemeName = "Default";   // current selected theme name
+    std::string currentSampleRate = "44100";     // current selected sample rate
 
     // Filename for configuration storage
     const std::string configFilePath = "config.json";
@@ -162,4 +164,5 @@ private:
     void loadConfig();   // read autoSaveIntervalSeconds from config.json
     void saveConfig();   // write current autoSaveIntervalSeconds to config.json
     void checkAutoSave(); // called within update()
+    void applyThemeByName(const std::string& themeName); // apply theme based on name
 };
