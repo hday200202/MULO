@@ -50,6 +50,11 @@ private:
     std::string projectNameValue = "untitled";
     std::string bpmValue = "120";
 
+    // Tooltip timing
+    sf::Clock toolTipTimer;
+    std::string currentHoveredButton = "";
+    bool tooltipShown = false;
+
     // Undo/Redo stacks
     std::stack<std::string> undoStack;
     std::stack<std::string> redoStack;
@@ -65,6 +70,7 @@ private:
     Row* browserAndMixerElement;
     Row* fxRackElement;
     FreeColumn* contextMenu;
+    FreeColumn* toolTip;
     ScrollableColumn* settingsColumnElement;
     FreeColumn* dropdownMenu;
     FreeColumn* sampleRateDropdownMenu;
@@ -86,6 +92,7 @@ private:
     bool handleKeyboardShortcuts();
     bool handleScrollWheel();
     bool handleTrackEvents();
+    bool handleToolTips();
 
     // UI creation methods
     Row* topRow();

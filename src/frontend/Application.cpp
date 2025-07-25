@@ -68,6 +68,14 @@ Application::Application() {
     );
     contextMenu->hide();
 
+    toolTip = freeColumn(
+        Modifier().setfixedHeight(32).setfixedWidth(750).setColor(sf::Color::Transparent),
+        contains {
+            text(Modifier().setfixedHeight(28).align(Align::CENTER_Y).setColor(primary_text_color), "Test string", resources.dejavuSansFont, "tool_tip"),
+        }
+    );
+    toolTip->hide();
+
     // Base UI
     ui = new UILO(window, windowView, {{
         page({
@@ -78,6 +86,7 @@ Application::Application() {
                 browserAndTimelineElement,
                 fxRackElement,
             }),
+            toolTip,
             contextMenu,
             dropdownMenu,
             sampleRateDropdownMenu
@@ -94,6 +103,7 @@ Application::Application() {
                 browserAndMixerElement,
                 fxRackElement,
             }),
+            toolTip,
             contextMenu,
             dropdownMenu,
             sampleRateDropdownMenu
@@ -113,6 +123,7 @@ Application::Application() {
                     settingsColumnElement
                 }),
             }),
+            toolTip,
             contextMenu,
             dropdownMenu,
             sampleRateDropdownMenu
@@ -301,6 +312,7 @@ void Application::update() {
         
         // If user interaction, force update
         shouldForceUpdate |= handleContextMenu();
+        shouldForceUpdate |= handleToolTips();
         shouldForceUpdate |= handleUIButtons();
         shouldForceUpdate |= handlePlaybackControls();
         shouldForceUpdate |= handleTrackEvents();
@@ -576,6 +588,92 @@ bool Application::handleContextMenu() {
     return shouldForceUpdate;
 }
 
+bool Application::handleToolTips() {
+    std::string toolTipMessage = "";
+    std::string hoveredButtonId = "";
+
+    // Check which button is currently being hovered
+    if(getButton("select_directory")->isHovered()) {
+        toolTipMessage = "Press this button to set your preferred directory for your tracks.";
+        hoveredButtonId = "select_directory";
+    }
+    else if(getButton("new_track")->isHovered()) {
+        toolTipMessage = "Press this to add a track to your composition.";
+        hoveredButtonId = "new_track";
+    }
+    else if(getButton("mute_Master")->isHovered()) {
+        toolTipMessage = "Press this to mute the entire composition.";
+        hoveredButtonId = "mute_Master";
+    }
+    else if(getButton("mixer")->isHovered()) {
+        toolTipMessage = "Press this button to switch between timeline and mixer.";
+        hoveredButtonId = "mixer";
+    }
+    else if(getButton("play")->isHovered()) {
+        toolTipMessage = "Press this to play your composition.";
+        hoveredButtonId = "play";
+    }
+    else if(getButton("save")->isHovered()) {
+        toolTipMessage = "Press this to manually save the current state of your composition.";
+        hoveredButtonId = "save";
+    }
+    else if(getButton("load")->isHovered()) {
+        toolTipMessage = "Press this to load another composition.";
+        hoveredButtonId = "load";
+    }
+
+    // Handle tooltip timer logic
+    if (!hoveredButtonId.empty()) {
+        if (currentHoveredButton != hoveredButtonId) {
+            currentHoveredButton = hoveredButtonId;
+            toolTipTimer.restart();
+            tooltipShown = false;
+            toolTip->hide();
+        }
+        
+        if (toolTipTimer.getElapsedTime().asSeconds() >= 1.5f && !tooltipShown) {
+            tooltipShown = true;
+            
+            sf::Vector2f mousePos = ui->getMousePosition();
+            const float tooltipWidth = toolTip->getSize().x;
+            const float tooltipHeight = 32.f;
+            const float offset = 20.f;
+            
+            float tooltipX = mousePos.x + offset;
+            float tooltipY = mousePos.y + offset;
+            
+            if (tooltipX + tooltipWidth > screenResolution.size.x) {
+                tooltipX = mousePos.x - tooltipWidth - offset;
+            }
+            
+            if (tooltipY + tooltipHeight > screenResolution.size.y) {
+                tooltipY = mousePos.y - tooltipHeight - offset;
+            }
+            
+            tooltipX = std::max(0.f, tooltipX);
+            tooltipY = std::max(0.f, tooltipY);
+            
+            toolTip->setPosition({tooltipX, tooltipY});
+            toolTip->show();
+            if (getText("tool_tip")) {
+                getText("tool_tip")->setString(toolTipMessage);
+            }
+            return true;
+        }
+        
+        return false;
+    }
+    else {
+        if (tooltipShown || !currentHoveredButton.empty()) {
+            currentHoveredButton = "";
+            tooltipShown = false;
+            toolTip->hide();
+            return true;
+        }
+        return false;
+    }
+}
+
 bool Application::handleUIButtons() {
     bool shouldForceUpdate = false;
 
@@ -615,13 +713,13 @@ bool Application::handleUIButtons() {
         prevLeftClickSampleRate = leftClick;
     }
 
-    if (buttons["select_directory"]->isClicked()) {
+    if (getButton("select_directory")->isClicked()) {
         fileTree.setRootDirectory(selectDirectory());
         buildFileTreeUI();
         shouldForceUpdate = true;
     }
 
-    if (buttons["mixer"]->isClicked()) {
+    if (getButton("mixer")->isClicked()) {
         showMixer = !showMixer;
 
         if (showMixer)
@@ -632,7 +730,7 @@ bool Application::handleUIButtons() {
         shouldForceUpdate = true;
     }
 
-    if (buttons["settings"]->isClicked()) {
+    if (getButton("settings")->isClicked()) {
         showSettings = !showSettings;
 
         if (showSettings)
@@ -643,14 +741,14 @@ bool Application::handleUIButtons() {
         shouldForceUpdate = true;
     }
 
-    if (buttons["new_track"]->isClicked()) {
+    if (getButton("new_track")->isClicked()) {
         uiChanged = true;
         newTrack(selectFile({"*.wav", "*.mp3", "*.flac"}));
         std::cout << "New track added. Total tracks: " << uiState.trackCount << std::endl;
         shouldForceUpdate = true;
     }
 
-    if (buttons["save"]->isClicked()) {
+    if (getButton("save")->isClicked()) {
         if (engine.saveState(selectDirectory() + "/" + engine.getCurrentCompositionName() + ".mpf"))
             std::cout << "Project saved successfully." << std::endl;
         else
@@ -658,7 +756,7 @@ bool Application::handleUIButtons() {
         shouldForceUpdate = true;
     }
 
-    if (buttons["load"]->isClicked()) {
+    if (getButton("load")->isClicked()) {
         std::string path = selectFile({"*.mpf"});
         if (!path.empty()) {
             loadComposition(path);
@@ -676,18 +774,18 @@ bool Application::handlePlaybackControls() {
     bool space = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Space);
     bool shouldForceUpdate = false;
 
-    if ((buttons["play"]->isClicked() || (space && !prevSpace)) && !playing) {
+    if ((getButton("play")->isClicked() || (space && !prevSpace)) && !playing) {
         std::cout << "Playing audio..." << std::endl;
         engine.play();
-        buttons["play"]->setText("pause");
+        getButton("play")->setText("pause");
         playing = true;
         shouldForceUpdate = true;
     }
-    else if ((buttons["play"]->isClicked() || (space && !prevSpace)) && playing) {
+    else if ((getButton("play")->isClicked() || (space && !prevSpace)) && playing) {
         std::cout << "Pausing audio..." << std::endl;
         engine.pause();
         engine.setPosition(0.0);
-        buttons["play"]->setText("play");
+        getButton("play")->setText("play");
         playing = false;
         shouldForceUpdate = true;
     }
