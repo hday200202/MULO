@@ -3,7 +3,7 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
-
+#include <SFML/Graphics/Color.hpp>
 #include "Engine.hpp"
 
 struct TrackData {
@@ -18,12 +18,12 @@ struct TrackData {
 
 struct UIState {
     std::string fileBrowserDirectory = "";
-    std::string selectedTrackName = "Master";
-    int trackCount = 0;
+    std::string selectedTrackName   = "Master";
+    int         trackCount          = 0;
     float timelineZoomLevel = 1.f;
+    int         autoSaveIntervalSeconds = 300; // default 5 minutes
 
     TrackData masterTrack{"Master"};
-
     std::unordered_map<std::string, TrackData> tracks;
 };
 

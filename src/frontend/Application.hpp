@@ -10,7 +10,24 @@
 #include <stack>
 #include <chrono>
 #include <map>
+#include <SFML/System/Clock.hpp>
+#include <string>
+#include <stack>
 
+using namespace uilo;
+
+/**
+ * @brief Main application class for the audio workstation.
+ *
+ * Handles:
+ * - UI initialization and management using UILO.
+ * - Audio engine state and project management.
+ * - Undo/redo stack for project state.
+ * - User input, event handling, and UI updates.
+ * - File operations (load/save/select).
+ * - Auto-save functionality loaded from and persisted to config.json.
+ */
+// namespace nlohmann { class json; }
 using namespace uilo;
 
 class Application {
@@ -20,16 +37,21 @@ public:
 
     void update();
     void render();
+    void rebuildUI(); 
     bool isRunning() const;
 
 private:
     // Core systems
     sf::RenderWindow window;
-    sf::View windowView;
-    sf::VideoMode screenResolution;
-    Engine engine;
-    UILO* ui = nullptr;
-    UIState uiState;
+    sf::View          windowView;
+    sf::VideoMode     screenResolution;
+    std::string       currentPage = "timeline";
+    std::string       pendingLoadPath;
+
+    // Core engine and UI
+    Engine   engine;
+    UILO*    ui = nullptr;
+    UIState  uiState;
     UIResources resources;
     FileTree fileTree;
 
@@ -74,6 +96,14 @@ private:
     ScrollableColumn* settingsColumnElement;
     FreeColumn* dropdownMenu;
     FreeColumn* sampleRateDropdownMenu;
+
+    // Auto-save configuration
+    int        autoSaveIntervalSeconds = 300;  // loaded from config.json (default 5m)
+    sf::Clock  autoSaveTimer;                // tracks elapsed time since last save
+    std::string lastSavePath;                // path for repeated auto-saves
+
+    // Filename for configuration storage
+    const std::string configFilePath = "config.json";
 
     // Initialization methods
     void initWindow();
@@ -127,4 +157,9 @@ private:
     // Helper functions
     float getDistance(sf::Vector2f point1, sf::Vector2f point2);
     void toggleTreeNodeByPath(const std::string& path);
+
+    // Auto-save routines
+    void loadConfig();   // read autoSaveIntervalSeconds from config.json
+    void saveConfig();   // write current autoSaveIntervalSeconds to config.json
+    void checkAutoSave(); // called within update()
 };
