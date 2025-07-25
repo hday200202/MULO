@@ -5,14 +5,11 @@
 #include "UIData.hpp"
 #include "TimelineHelpers.hpp"
 #include "FileTree.hpp"
+
 #include <juce_gui_basics/juce_gui_basics.h>
-#include <memory>
-#include <stack>
 #include <chrono>
 #include <map>
-#include <SFML/System/Clock.hpp>
-#include <string>
-#include <stack>
+#include <nlohmann/json.hpp>
 
 using namespace uilo;
 /**

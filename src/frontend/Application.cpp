@@ -1,8 +1,4 @@
-#include <nlohmann/json.hpp>
 #include "Application.hpp"
-#include <fstream>
-#include <chrono>
-#include <filesystem>
 
 Application::Application() {
     // Initialize auto-save timer from config
