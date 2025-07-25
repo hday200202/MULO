@@ -1,6 +1,8 @@
 #include <nlohmann/json.hpp>
 #include "Application.hpp"
 #include <fstream>
+#include <chrono>
+#include <filesystem>
 
 Application::Application() {
     // Initialize auto-save timer from config
@@ -23,6 +25,12 @@ Application::Application() {
 
     engine.newComposition("untitled");
     engine.addTrack("Master");
+    
+    // Set master track pan to center
+    if (engine.getMasterTrack()) {
+        engine.getMasterTrack()->setPan(0.5f);
+    }
+    
     initUIResources();
 
     // Initialize project settings values
@@ -131,9 +139,14 @@ Application::Application() {
 
     ui->switchToPage("timeline");
     loadComposition("assets/empty_project.mpf");
+    
+    // Set pan sliders to center position (0.5f)
+    if (getSlider("Master_mixer_pan_slider")) {
+        getSlider("Master_mixer_pan_slider")->setValue(0.5f);
+    }
+    
     ui->forceUpdate();
 }
-
 
 Application::~Application(){
     delete ui;
@@ -794,7 +807,8 @@ bool Application::handleUIButtons() {
     }
 
     if (buttons["save"]->isClicked()) {
-        if (engine.saveState(selectDirectory() + "/" + engine.getCurrentCompositionName() + ".mpf"))
+        uiState.saveDirectory = selectDirectory();
+        if (engine.saveState(uiState.saveDirectory + "/" + engine.getCurrentCompositionName() + ".mpf"))
             std::cout << "Project saved successfully." << std::endl;
         else
             std::cerr << "Failed to save project." << std::endl;
@@ -835,6 +849,7 @@ bool Application::handlePlaybackControls() {
     prevSpace = space;
     return shouldForceUpdate;
 }
+
 bool Application::handleKeyboardShortcuts() {
     static bool prevCtrl = false, prevZ = false, prevY = false;
     bool ctrl = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl);
@@ -897,7 +912,6 @@ void Application::render() {
         window.display();
     }
 }
-
 
 bool Application::isRunning() const {
     return running;
@@ -1030,6 +1044,7 @@ Row* Application::topRow() {
         spacer(Modifier().setfixedWidth(16).align(Align::RIGHT)),
     });
 }
+
 Row* Application::browserAndTimeline() {
     return row(
         Modifier().setWidth(1.f).setHeight(1.f),
@@ -1184,7 +1199,21 @@ void Application::buildFileTreeUIRecursive(const FileTree& tree, int indentLevel
     else if (tree.isAudioFile()) {
         std::string filePath = tree.getPath();
         textElement->m_modifier.onLClick([this, filePath](){
-            newTrack(filePath);
+            // Prevent rapid multiple clicks
+            static std::string lastFilePath = "";
+            static auto lastClickTime = std::chrono::steady_clock::now();
+            auto now = std::chrono::steady_clock::now();
+            auto timeDiff = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastClickTime);
+            
+            // Only process if it's a different file or enough time has passed
+            if (filePath != lastFilePath || timeDiff.count() > 500) {
+                std::cout << "Loading sample from file browser: " << filePath << std::endl;
+                newTrack(filePath);
+                lastFilePath = filePath;
+                lastClickTime = now;
+            } else {
+                std::cout << "Ignoring rapid click on same file: " << filePath << std::endl;
+            }
         });
     }
     
@@ -1308,6 +1337,7 @@ Row* Application::track(const std::string& trackName, Align alignment, float vol
                     Modifier().setfixedWidth(16).setHeight(1.f).align(Align::RIGHT | Align::CENTER_Y),
                     slider_knob_color,
                     slider_bar_color,
+                    SliderOrientation::Vertical,
                     trackName + "_volume_slider"
                 ),
 
@@ -1336,11 +1366,26 @@ Column* Application::mixerTrack(const std::string& trackName, Align alignment, f
         spacer(Modifier().setfixedHeight(12).align(Align::TOP)),
 
         slider(
-            Modifier().setfixedWidth(32).setHeight(1.f).align(Align::BOTTOM | Align::CENTER_X),
+            Modifier().setfixedWidth(32).setHeight(1.f).align(Align::CENTER_X | Align::BOTTOM),
             slider_knob_color,
             slider_bar_color,
+            SliderOrientation::Vertical,
             trackName + "_mixer_volume_slider"
         ),
+
+        spacer(Modifier().setfixedHeight(12).align(Align::BOTTOM)),
+
+        row(Modifier().setWidth(.8f).setfixedHeight(32.f).align(Align::BOTTOM | Align::CENTER_X),
+        contains{
+            slider(
+                Modifier().setWidth(.8f).setfixedHeight(32.f).align(Align::BOTTOM | Align::CENTER_X),
+                slider_knob_color,
+                slider_bar_color,
+                SliderOrientation::Horizontal,
+                trackName + "_mixer_pan_slider"
+            ),
+        }),
+
         spacer(Modifier().setfixedHeight(12).align(Align::BOTTOM)),
 
         button(
@@ -1378,8 +1423,22 @@ Column* Application::masterMixerTrack(const std::string& trackName, Align alignm
             Modifier().setfixedWidth(32).setHeight(1.f).align(Align::BOTTOM | Align::CENTER_X),
             slider_knob_color,
             slider_bar_color,
+            SliderOrientation::Vertical,
             "Master_mixer_volume_slider"
         ),
+        spacer(Modifier().setfixedHeight(12).align(Align::BOTTOM)),
+
+        row(Modifier().setWidth(.8f).setfixedHeight(32.f).align(Align::BOTTOM | Align::CENTER_X),
+        contains{
+            slider(
+                Modifier().setWidth(.8f).setfixedHeight(32.f).align(Align::BOTTOM | Align::CENTER_X),
+                slider_knob_color,
+                slider_bar_color,
+                SliderOrientation::Horizontal,
+                "Master_mixer_pan_slider"
+            ),
+        }),
+
         spacer(Modifier().setfixedHeight(12).align(Align::BOTTOM)),
 
         button(
@@ -1446,6 +1505,7 @@ Row* Application::masterTrack() {
                     Modifier().setfixedWidth(16).setHeight(1.f).align(Align::RIGHT | Align::CENTER_Y),
                     slider_knob_color,
                     slider_bar_color,
+                    SliderOrientation::Vertical,
                     "Master_volume_slider"
                 ),
 
@@ -1778,13 +1838,39 @@ std::string Application::selectFile(std::initializer_list<std::string> filters) 
 void Application::newTrack(const std::string& samplePath) {
     if (samplePath.empty()) return;
 
+    // Prevent rapid duplicate track creation
+    static std::string lastSamplePath = "";
+    static auto lastTrackCreationTime = std::chrono::steady_clock::now();
+    auto now = std::chrono::steady_clock::now();
+    auto timeDiff = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastTrackCreationTime);
+    
+    if (samplePath == lastSamplePath && timeDiff.count() < 1000) {
+        std::cout << "Ignoring rapid duplicate track creation for: " << samplePath << std::endl;
+        return;
+    }
+    
+    lastSamplePath = samplePath;
+    lastTrackCreationTime = now;
+
     std::string trackName;
     int trackIndex = uiState.trackCount;
 
     if (!samplePath.empty()) {
         juce::File sampleFile(samplePath);
         trackName = sampleFile.getFileNameWithoutExtension().toStdString();
+        
+        // Check if track with this name already exists
+        for (const auto& track : engine.getAllTracks()) {
+            if (track->getName() == trackName) {
+                std::cout << "Track with name '" << trackName << "' already exists, skipping creation" << std::endl;
+                return;
+            }
+        }
+        
         engine.addTrack(trackName);
+        
+        // Set default pan to center
+        engine.getTrack(trackIndex)->setPan(0.5f);
 
         double lengthSeconds = 0.0;
         if (auto* reader = engine.formatManager.createReaderFor(sampleFile)) {
@@ -1798,6 +1884,10 @@ void Application::newTrack(const std::string& samplePath) {
     else {
         trackName = "Track_" + std::to_string(trackIndex + 1);
         engine.addTrack(trackName);
+        
+        // Set default pan to center
+        engine.getTrack(trackIndex)->setPan(0.5f);
+        
         std::cout << "No sample selected for Track '" << trackName << "' (" << (trackIndex + 1) << ")" << std::endl;
     }
 
@@ -1812,6 +1902,17 @@ void Application::newTrack(const std::string& samplePath) {
         spacer(Modifier().setfixedWidth(2).align(Align::LEFT)),
         mixerTrack(trackName, Align::TOP | Align::LEFT),
     });
+    
+    // Force UI update to ensure elements are available
+    ui->forceUpdate();
+    
+    // Set pan slider to center position for new track
+    if (getSlider(trackName + "_mixer_pan_slider")) {
+        getSlider(trackName + "_mixer_pan_slider")->setValue(0.5f);
+        std::cout << "Set pan slider for " << trackName << " to 0.5f" << std::endl;
+    } else {
+        std::cout << "Pan slider for " << trackName << " not found!" << std::endl;
+    }
 }
 
 void Application::loadComposition(const std::string& path) {
@@ -1855,6 +1956,11 @@ void Application::loadComposition(const std::string& path) {
 
             getSlider(t->getName() + "_volume_slider")->setValue(decibelsToFloat(t->getVolume()));
             getSlider(t->getName() + "_mixer_volume_slider")->setValue(decibelsToFloat(t->getVolume()));
+            
+            // Convert engine pan (-1 to 1) to slider value (0 to 1)
+            float panSliderValue = (t->getPan() + 1.0f) / 2.0f;
+            getSlider(t->getName() + "_mixer_pan_slider")->setValue(panSliderValue);
+            std::cout << "Set " << t->getName() << " pan slider to " << panSliderValue << " (engine pan: " << t->getPan() << ")" << std::endl;
         }
     }
 
@@ -1923,6 +2029,17 @@ bool Application::handleTrackEvents() {
         engine.getMasterTrack()->setVolume(newVolume);
         getSlider("Master_volume_slider")->setValue(getSlider("Master_mixer_volume_slider")->getValue());
         std::cout << "Master track volume changed to: " << newVolume << " db" << std::endl;
+
+        shouldForceUpdate = true;
+    }
+
+    // Handle Master pan sliders (mixer only)
+    float masterSliderValue = (engine.getMasterTrack()->getPan() + 1.0f) / 2.0f;
+    if (getSlider("Master_mixer_pan_slider")->getValue() != masterSliderValue) {
+        float sliderPan = getSlider("Master_mixer_pan_slider")->getValue();
+        float newPan = (sliderPan * 2.0f) - 1.0f; // Convert slider (0-1) to engine (-1 to 1)
+        engine.getMasterTrack()->setPan(newPan);
+        std::cout << "Master track pan changed to: " << newPan << " (slider: " << sliderPan << ")" << std::endl;
 
         shouldForceUpdate = true;
     }
@@ -1997,6 +2114,17 @@ bool Application::handleTrackEvents() {
 
             shouldForceUpdate = true;
         }
+
+        // Handle track pan sliders (mixer only)
+        float trackSliderValue = (track->getPan() + 1.0f) / 2.0f;
+        if (getSlider(track->getName() + "_mixer_pan_slider")->getValue() != trackSliderValue) {
+            float sliderPan = getSlider(track->getName() + "_mixer_pan_slider")->getValue();
+            float newPan = (sliderPan * 2.0f) - 1.0f; // Convert slider (0-1) to engine (-1 to 1)
+            track->setPan(newPan);
+            std::cout << "Track '" << track->getName() << "' pan changed to: " << newPan << " (slider: " << sliderPan << ")" << std::endl;
+
+            shouldForceUpdate = true;
+        }
     }
     return shouldForceUpdate;
 }
@@ -2028,10 +2156,20 @@ void Application::rebuildUIFromEngine() {
         });
         getSlider(t->getName() + "_volume_slider")->setValue(decibelsToFloat(t->getVolume()));
         getSlider(t->getName() + "_mixer_volume_slider")->setValue(decibelsToFloat(t->getVolume()));
+        
+        // Convert engine pan (-1 to 1) to slider value (0 to 1)
+        float panSliderValue = (t->getPan() + 1.0f) / 2.0f;
+        getSlider(t->getName() + "_mixer_pan_slider")->setValue(panSliderValue);
+    }
+    
+    // Set master mixer pan slider to center position (convert engine pan to slider value)
+    if (getSlider("Master_mixer_pan_slider")) {
+        float masterPanSliderValue = (engine.getMasterTrack()->getPan() + 1.0f) / 2.0f;
+        getSlider("Master_mixer_pan_slider")->setValue(masterPanSliderValue);
     }
 }
-void Application::rebuildUI()
-{
+
+void Application::rebuildUI() {
     // --- Destroy the entire UI and all owned elements/maps ---
     if (ui) {
         delete ui;
@@ -2117,6 +2255,7 @@ void Application::rebuildUI()
                     Modifier().setfixedWidth(15).setHeight(1.f).align(Align::BOTTOM | Align::CENTER_X),
                     sf::Color::White,
                     sf::Color::Black,
+                    SliderOrientation::Vertical,
                     "Auto-save_interval_slider"
                 ),
                 spacer(Modifier().setfixedHeight(12).align(Align::BOTTOM)),
@@ -2208,7 +2347,6 @@ float Application::getDistance(sf::Vector2f point1, sf::Vector2f point2) {
     return sqrt(pow(point2.x - point1.x, 2) + pow(point2.y - point1.y, 2));
 }
 
-
 void Application::loadConfig() {
     std::ifstream in(configFilePath);
     if (!in) return;
@@ -2247,12 +2385,27 @@ void Application::saveConfig() {
 }
 
 void Application::checkAutoSave() {
-    if (autoSaveTimer.getElapsedTime().asSeconds() >= autoSaveIntervalSeconds) {
-        std::string path = engine.getCurrentCompositionName() + "_autosave.mpf";
-        if (engine.saveState(path))
-            std::cout << "Auto-saved to " << path << "\n";
-        else
-            std::cerr << "Auto-save failed\n";
+    if (autoSaveTimer.getElapsedTime().asSeconds() >= autoSaveIntervalSeconds && !uiState.saveDirectory.empty()) {
+        std::string autosaveFilename = engine.getCurrentCompositionName() + "_autosave.mpf";
+        std::string autosavePath = uiState.saveDirectory + "/" + autosaveFilename;
+        
+        std::cout << "Attempting auto-save to: " << autosavePath << std::endl;
+        std::string currentState = engine.getStateString();
+        
+        if (engine.saveState(autosavePath)) {
+            std::cout << "Auto-saved to " << autosavePath << std::endl;
+            
+            if (std::filesystem::exists(autosavePath)) {
+                auto fileSize = std::filesystem::file_size(autosavePath);
+                std::cout << "Auto-save file size: " << fileSize << " bytes" << std::endl;
+                std::cout << "Saved composition: " << engine.getCurrentCompositionName() << std::endl;
+                std::cout << "Number of tracks: " << engine.getAllTracks().size() << std::endl;
+            } else {
+                std::cerr << "Auto-save file was not created!" << std::endl;
+            }
+        } else {
+            std::cerr << "Auto-save failed to " << autosavePath << std::endl;
+        }
         autoSaveTimer.restart();
     }
 }
