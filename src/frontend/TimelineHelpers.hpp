@@ -9,6 +9,7 @@
 #include <unordered_map>
 
 #include "Engine.hpp"
+#include "UIData.hpp"
 
 /**
  * @brief Generate visual rectangles for audio clips on the timeline.
@@ -189,7 +190,7 @@ inline std::vector<std::shared_ptr<sf::Drawable>> generateTimelineMeasures(
             auto measureLine = std::make_shared<sf::RectangleShape>();
             measureLine->setSize({2.f, rowSize.y});
             measureLine->setPosition({xPos, 0.f});
-            measureLine->setFillColor(sf::Color(100, 100, 100, 255));
+            measureLine->setFillColor(line_color);
             lines.push_back(measureLine);
         }
         
@@ -202,7 +203,9 @@ inline std::vector<std::shared_ptr<sf::Drawable>> generateTimelineMeasures(
                 auto subMeasureLine = std::make_shared<sf::RectangleShape>();
                 subMeasureLine->setSize({1.f, rowSize.y});
                 subMeasureLine->setPosition({beatX, 0.f});
-                subMeasureLine->setFillColor(sf::Color(80, 80, 80, 100));
+                sf::Color transparentLineColor = line_color;
+                transparentLineColor.a = 100;
+                subMeasureLine->setFillColor(transparentLineColor);
                 lines.push_back(subMeasureLine);
             }
         }
@@ -238,7 +241,7 @@ inline std::vector<std::shared_ptr<sf::Drawable>> generateClipRects(
         
         clipRect->setSize({clipWidthPixels, rowSize.y});
         clipRect->setPosition({clipXPosition, 0.f});
-        clipRect->setFillColor(sf::Color::White);
+        clipRect->setFillColor(clip_color);
         
         clipRects.push_back(clipRect);
 
@@ -380,7 +383,9 @@ inline std::vector<std::shared_ptr<sf::Drawable>> generateWaveformData(const Aud
             
             waveformLine->setSize({lineWidth, lineHeight});
             waveformLine->setPosition({lineX, lineY});
-            waveformLine->setFillColor(sf::Color(0, 0, 0, 180));
+            sf::Color waveformColorWithAlpha = waveform_color;
+            waveformColorWithAlpha.a = 180;
+            waveformLine->setFillColor(waveformColorWithAlpha);
             
             waveformDrawables.push_back(waveformLine);
         }

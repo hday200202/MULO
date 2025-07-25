@@ -168,6 +168,7 @@ std::pair<int, int> Engine::getTimeSignature() const
 { return std::pair<int, int>(currentComposition->timeSigNumerator, currentComposition->timeSigDenominator); }
 
 double Engine::getBpm() const { return currentComposition->bpm; }
+void Engine::setBpm(double newBpm) { currentComposition->bpm = newBpm; }
 
 void Engine::addTrack(const std::string& name) {
     auto* t = new Track(formatManager);
@@ -187,6 +188,10 @@ void Engine::removeTrack(int idx) {
 
 std::string Engine::getCurrentCompositionName() const {
     return currentComposition->name;
+}
+
+void Engine::setCurrentCompositionName(const std::string& newName) {
+    currentComposition->name = newName;
 }
 
 Track* Engine::getTrack(int idx) {

@@ -27,6 +27,10 @@ Application::Application() {
     engine.addTrack("Master");
     initUIResources();
 
+    // Initialize project settings values
+    projectNameValue = engine.getCurrentCompositionName();
+    bpmValue = std::to_string(static_cast<int>(engine.getBpm()));
+
     // UI Elements
     topRowElement               = topRow();
     fileBrowserElement          = fileBrowser();
@@ -37,22 +41,28 @@ Application::Application() {
     browserAndTimelineElement   = browserAndTimeline();
     browserAndMixerElement      = browserAndMixer();
     fxRackElement               = fxRack();
+    settingsColumnElement       = settingsColumn();
+    dropdownMenu                = generateDropdown({0, 0}, {"Default", "Dark", "Light", "Cyberpunk", "Forest"});
+    sampleRateDropdownMenu      = generateSampleRateDropdown({0, 0}, {"44100", "48000", "88200", "96000"});
+
+    dropdownMenu->hide();
+    sampleRateDropdownMenu->hide();
     timelineElement->setScrollSpeed(20.f);
     mixerElement->setScrollSpeed(20.f);
 
     contextMenu = freeColumn(
-        Modifier().setfixedHeight(400).setfixedWidth(200).setColor(sf::Color(50, 50, 50)),
+        Modifier().setfixedHeight(400).setfixedWidth(200).setColor(not_muted_color),
         contains {
-            button(Modifier().setfixedHeight(32).setColor(sf::Color::White).onLClick([&](){std::cout << "options" << std::endl;}), 
-                ButtonStyle::Rect, "Options", resources.dejavuSansFont, sf::Color::Black, "cm_options"),
+            button(Modifier().setfixedHeight(32).setColor(white).onLClick([&](){std::cout << "options" << std::endl;}), 
+                ButtonStyle::Rect, "Options", resources.dejavuSansFont, primary_text_color, "cm_options"),
             spacer(Modifier().setfixedHeight(1)),
 
-            button(Modifier().setfixedHeight(32).setColor(sf::Color::White).onLClick([&](){std::cout << "rename" << std::endl;}), 
-                ButtonStyle::Rect, "Rename", resources.dejavuSansFont, sf::Color::Black, "cm_rename"),
+            button(Modifier().setfixedHeight(32).setColor(white).onLClick([&](){std::cout << "rename" << std::endl;}), 
+                ButtonStyle::Rect, "Rename", resources.dejavuSansFont, primary_text_color, "cm_rename"),
             spacer(Modifier().setfixedHeight(1)),
 
-            button(Modifier().setfixedHeight(32).setColor(sf::Color::White).onLClick([&](){std::cout << "change color" << std::endl;}), 
-                ButtonStyle::Rect, "Change Color", resources.dejavuSansFont, sf::Color::Black, "cm_change_color"),
+            button(Modifier().setfixedHeight(32).setColor(white).onLClick([&](){std::cout << "change color" << std::endl;}), 
+                ButtonStyle::Rect, "Change Color", resources.dejavuSansFont, primary_text_color, "cm_change_color"),
             spacer(Modifier().setfixedHeight(1)),
         }
     );
@@ -68,7 +78,9 @@ Application::Application() {
                 browserAndTimelineElement,
                 fxRackElement,
             }),
-            contextMenu
+            contextMenu,
+            dropdownMenu,
+            sampleRateDropdownMenu
         }), "timeline" }
     });
 
@@ -82,8 +94,29 @@ Application::Application() {
                 browserAndMixerElement,
                 fxRackElement,
             }),
-            contextMenu
+            contextMenu,
+            dropdownMenu,
+            sampleRateDropdownMenu
         }), "mixer" }
+    );
+
+    ui->addPage({
+        page({
+            column(
+                Modifier(),
+            contains{
+                topRowElement,
+
+                row(
+                    Modifier().setColor(master_track_color),
+                contains{
+                    settingsColumnElement
+                }),
+            }),
+            contextMenu,
+            dropdownMenu,
+            sampleRateDropdownMenu
+        }), "settings" }
     );
 
     running = ui->isRunning();
@@ -109,6 +142,161 @@ void Application::update() {
             buildFileTreeUI();
             fileTreeNeedsRebuild = false;
             shouldForceUpdate = true;
+        }
+        
+        // Handle text input keyboard events (SFML 3.0)
+        if (textInputActive || projectNameInputActive || bpmInputActive) {
+            // Determine which input is active and get references to the appropriate variables
+            bool* activeInput;
+            std::string* inputValue;
+            std::string textElementId;
+            std::string containerElementId;
+            
+            if (textInputActive) {
+                activeInput = &textInputActive;
+                inputValue = &textInputValue;
+                textElementId = "text_input_box";
+                containerElementId = "text_input_row";
+            } else if (projectNameInputActive) {
+                activeInput = &projectNameInputActive;
+                inputValue = &projectNameValue;
+                textElementId = "project_name_box";
+                containerElementId = "project_name_row";
+            } else { // bpmInputActive
+                activeInput = &bpmInputActive;
+                inputValue = &bpmValue;
+                textElementId = "bpm_box";
+                containerElementId = "bpm_row";
+            }
+            
+            // Simple text input handling with static variables to track key states
+            static bool wasBackspacePressed = false;
+            static bool wasEnterPressed = false;
+            static bool wasEscapePressed = false;
+            static bool wasSpacePressed = false;
+            static std::map<sf::Keyboard::Key, bool> keyStates;
+            
+            // Check for backspace
+            bool backspacePressed = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Backspace);
+            if (backspacePressed && !wasBackspacePressed) {
+                if (!inputValue->empty()) {
+                    inputValue->pop_back();
+                    shouldForceUpdate = true;
+                }
+            }
+            wasBackspacePressed = backspacePressed;
+            
+            // Check for Enter or Escape to exit text input mode
+            bool enterPressed = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Enter);
+            bool escapePressed = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Escape);
+            if ((enterPressed && !wasEnterPressed) || (escapePressed && !wasEscapePressed)) {
+                *activeInput = false;
+                shouldForceUpdate = true;
+                
+                // Apply changes if it was project name or BPM
+                if (inputValue == &projectNameValue) {
+                    engine.setCurrentCompositionName(*inputValue);
+                } else if (inputValue == &bpmValue) {
+                    try {
+                        float bpm = std::stof(*inputValue);
+                        if (bpm > 0 && bpm <= 300) { // Reasonable BPM range
+                            engine.setBpm(bpm);
+                        } else {
+                            *inputValue = std::to_string(engine.getBpm()); // Reset to current value if invalid
+                        }
+                    } catch (...) {
+                        *inputValue = std::to_string(engine.getBpm()); // Reset to current value if invalid
+                    }
+                }
+            }
+            wasEnterPressed = enterPressed;
+            wasEscapePressed = escapePressed;
+            
+            // Handle letters a-z (skip for BPM input to only allow numbers)
+            if (inputValue != &bpmValue) {
+                bool shift = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LShift) || sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RShift);
+                for (int i = 0; i < 26; i++) {
+                    sf::Keyboard::Key key = static_cast<sf::Keyboard::Key>(static_cast<int>(sf::Keyboard::Key::A) + i);
+                    bool isPressed = sf::Keyboard::isKeyPressed(key);
+                    if (isPressed && !keyStates[key]) {
+                        char c = 'a' + i;
+                        if (shift) c = 'A' + i;
+                        *inputValue += c;
+                        shouldForceUpdate = true;
+                    }
+                    keyStates[key] = isPressed;
+                }
+                
+                // Handle space (not for BPM)
+                bool spacePressed = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Space);
+                if (spacePressed && !wasSpacePressed) {
+                    *inputValue += ' ';
+                    shouldForceUpdate = true;
+                }
+                wasSpacePressed = spacePressed;
+            }
+            
+            // Handle numbers 0-9
+            for (int i = 0; i <= 9; i++) {
+                sf::Keyboard::Key key = static_cast<sf::Keyboard::Key>(static_cast<int>(sf::Keyboard::Key::Num0) + i);
+                bool isPressed = sf::Keyboard::isKeyPressed(key);
+                if (isPressed && !keyStates[key]) {
+                    *inputValue += ('0' + i);
+                    shouldForceUpdate = true;
+                }
+                keyStates[key] = isPressed;
+            }
+            
+            // Handle decimal point for BPM
+            if (inputValue == &bpmValue) {
+                static bool wasPeriodPressed = false;
+                bool periodPressed = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Period);
+                if (periodPressed && !wasPeriodPressed && inputValue->find('.') == std::string::npos) {
+                    *inputValue += '.';
+                    shouldForceUpdate = true;
+                }
+                wasPeriodPressed = periodPressed;
+            }
+            
+            // Check for mouse click outside text input box
+            static bool wasMousePressed = false;
+            bool mousePressed = sf::Mouse::isButtonPressed(sf::Mouse::Button::Left);
+            if (mousePressed && !wasMousePressed) {
+                sf::Vector2f mousePos = ui->getMousePosition();
+                auto* inputRow = containers.count(containerElementId) ? containers[containerElementId] : nullptr;
+                if (inputRow && !inputRow->m_bounds.getGlobalBounds().contains(mousePos)) {
+                    *activeInput = false;
+                    shouldForceUpdate = true;
+                    
+                    // Apply changes if it was project name or BPM
+                    if (inputValue == &projectNameValue) {
+                        engine.setCurrentCompositionName(*inputValue);
+                    } else if (inputValue == &bpmValue) {
+                        try {
+                            float bpm = std::stof(*inputValue);
+                            if (bpm > 0 && bpm <= 300) { // Reasonable BPM range
+                                engine.setBpm(bpm);
+                            } else {
+                                *inputValue = std::to_string(engine.getBpm()); // Reset to current value if invalid
+                            }
+                        } catch (...) {
+                            *inputValue = std::to_string(engine.getBpm()); // Reset to current value if invalid
+                        }
+                    }
+                }
+            }
+            wasMousePressed = mousePressed;
+            
+            // Update the text display
+            if (texts.count(textElementId)) {
+                texts[textElementId]->setString(*inputValue);
+            }
+            
+            // Block all other input while text input is active
+            if (shouldForceUpdate) {
+                ui->forceUpdate();
+            }
+            return;
         }
         
         // If user interaction, force update
@@ -313,6 +501,48 @@ void Application::update() {
             timelineElement->setCustomGeometry(allTimelineElements);
             timelineOffset = clampedOffset;
         }
+
+        if (showThemeDropdown) {
+            if (!dropdownMenu->m_modifier.isVisible()) {
+                // Position the dropdown below the theme button
+                sf::Vector2f themeButtonPos = containers["theme_dropdown"]->getPosition();
+                sf::Vector2f themeButtonSize = containers["theme_dropdown"]->getSize();
+                sf::Vector2f dropdownPos = {themeButtonPos.x, themeButtonPos.y + themeButtonSize.y + 4};
+                
+                dropdownMenu->setPosition(dropdownPos);
+                dropdownMenu->m_modifier.setfixedWidth(themeButtonSize.x);
+                dropdownMenu->show();
+                shouldForceUpdate = true;
+                std::cout << "Showing theme dropdown at position: " << dropdownPos.x << ", " << dropdownPos.y << std::endl;
+            }
+        }
+        else {
+            if (dropdownMenu->m_modifier.isVisible()) {
+                dropdownMenu->hide();
+                shouldForceUpdate = true;
+            }
+        }
+
+        if (showSampleRateDropdown) {
+            if (!sampleRateDropdownMenu->m_modifier.isVisible()) {
+                // Position the dropdown below the sample rate button
+                sf::Vector2f sampleRateButtonPos = containers["sample_rate_dropdown"]->getPosition();
+                sf::Vector2f sampleRateButtonSize = containers["sample_rate_dropdown"]->getSize();
+                sf::Vector2f dropdownPos = {sampleRateButtonPos.x, sampleRateButtonPos.y + sampleRateButtonSize.y + 4};
+                
+                sampleRateDropdownMenu->setPosition(dropdownPos);
+                sampleRateDropdownMenu->m_modifier.setfixedWidth(sampleRateButtonSize.x);
+                sampleRateDropdownMenu->show();
+                shouldForceUpdate = true;
+                std::cout << "Showing sample rate dropdown at position: " << dropdownPos.x << ", " << dropdownPos.y << std::endl;
+            }
+        }
+        else {
+            if (sampleRateDropdownMenu->m_modifier.isVisible()) {
+                sampleRateDropdownMenu->hide();
+                shouldForceUpdate = true;
+            }
+        }
     }
 }
 
@@ -349,6 +579,42 @@ bool Application::handleContextMenu() {
 bool Application::handleUIButtons() {
     bool shouldForceUpdate = false;
 
+    // Handle dropdown menu clicks outside - only when visible
+    if (showThemeDropdown && dropdownMenu->m_modifier.isVisible()) {
+        static bool prevLeftClick = false;
+        bool leftClick = sf::Mouse::isButtonPressed(sf::Mouse::Button::Left);
+        
+        if (leftClick && !prevLeftClick) {
+            sf::Vector2f mousePos = ui->getMousePosition();
+            bool clickedInDropdown = dropdownMenu->getBounds().contains(mousePos);
+            bool clickedInThemeButton = containers["theme_dropdown"]->m_bounds.getGlobalBounds().contains(mousePos);
+            
+            if (!clickedInDropdown && !clickedInThemeButton) {
+                showThemeDropdown = false;
+                shouldForceUpdate = true;
+            }
+        }
+        prevLeftClick = leftClick;
+    }
+
+    // Handle sample rate dropdown menu clicks outside - only when visible
+    if (showSampleRateDropdown && sampleRateDropdownMenu->m_modifier.isVisible()) {
+        static bool prevLeftClickSampleRate = false;
+        bool leftClick = sf::Mouse::isButtonPressed(sf::Mouse::Button::Left);
+        
+        if (leftClick && !prevLeftClickSampleRate) {
+            sf::Vector2f mousePos = ui->getMousePosition();
+            bool clickedInDropdown = sampleRateDropdownMenu->getBounds().contains(mousePos);
+            bool clickedInSampleRateButton = containers["sample_rate_dropdown"]->m_bounds.getGlobalBounds().contains(mousePos);
+            
+            if (!clickedInDropdown && !clickedInSampleRateButton) {
+                showSampleRateDropdown = false;
+                shouldForceUpdate = true;
+            }
+        }
+        prevLeftClickSampleRate = leftClick;
+    }
+
     if (buttons["select_directory"]->isClicked()) {
         fileTree.setRootDirectory(selectDirectory());
         buildFileTreeUI();
@@ -363,6 +629,17 @@ bool Application::handleUIButtons() {
         else
             ui->switchToPage("timeline");
 
+        shouldForceUpdate = true;
+    }
+
+    if (buttons["settings"]->isClicked()) {
+        showSettings = !showSettings;
+
+        if (showSettings)
+            ui->switchToPage("settings");
+        else
+            ui->switchToPage("timeline");
+        
         shouldForceUpdate = true;
     }
 
@@ -534,7 +811,7 @@ Row* Application::topRow() {
         Modifier()
             .setWidth(1.f)
             .setfixedHeight(64)
-            .setColor(sf::Color(200, 200, 200)),
+            .setColor(foreground_color),
     contains{
         spacer(Modifier().setfixedWidth(16).align(Align::LEFT)),
 
@@ -543,7 +820,7 @@ Row* Application::topRow() {
             ButtonStyle::Pill, 
             "load", 
             resources.dejavuSansFont, 
-            sf::Color(230, 230, 230),
+            secondary_text_color,
             "load"
         ),
 
@@ -554,7 +831,7 @@ Row* Application::topRow() {
             ButtonStyle::Pill,
             "save",
             resources.dejavuSansFont,
-            sf::Color::White,
+            secondary_text_color,
             "save"
         ),
 
@@ -563,8 +840,19 @@ Row* Application::topRow() {
             ButtonStyle::Pill,
             "play",
             resources.dejavuSansFont,
-            sf::Color::White,
+            secondary_text_color,
             "play"
+        ),
+
+        spacer(Modifier().setfixedWidth(12).align(Align::RIGHT)),
+
+        button(
+            Modifier().align(Align::RIGHT | Align::CENTER_Y).setHeight(.75f).setfixedWidth(96).setColor(button_color),
+            ButtonStyle::Pill,
+            "settings",
+            resources.dejavuSansFont,
+            secondary_text_color,
+            "settings"
         ),
 
         spacer(Modifier().setfixedWidth(12).align(Align::RIGHT)),
@@ -574,7 +862,7 @@ Row* Application::topRow() {
             ButtonStyle::Pill,
             "mixer",
             resources.dejavuSansFont,
-            sf::Color::White,
+            secondary_text_color,
             "mixer"
         ),
 
@@ -585,7 +873,7 @@ Row* Application::topRow() {
             ButtonStyle::Pill,
             "+ track",
             resources.dejavuSansFont,
-            sf::Color::White,
+            secondary_text_color,
             "new_track"
         ),
 
@@ -602,7 +890,7 @@ Row* Application::browserAndTimeline() {
             Modifier()
                 .setWidth(1.f)
                 .setHeight(1.f)
-                .setColor(sf::Color(100, 100, 100)),
+                .setColor(middle_color),
         contains{
             column(
                 Modifier()
@@ -632,7 +920,7 @@ ScrollableColumn* Application::fileBrowser() {
         Modifier()
             .align(Align::LEFT)
             .setfixedWidth(360)
-            .setColor(sf::Color(155, 155, 155)),
+            .setColor(track_color),
     contains{
         spacer(Modifier().setfixedHeight(16).align(Align::TOP)),
 
@@ -640,12 +928,12 @@ ScrollableColumn* Application::fileBrowser() {
             Modifier()
                 .setfixedHeight(48)
                 .setWidth(0.8f)
-                .setColor(sf::Color(120, 120, 120))
+                .setColor(alt_button_color)
                 .align(Align::CENTER_X),
             ButtonStyle::Pill,
             "Browse Files",
             resources.dejavuSansFont,
-            sf::Color::White,
+            secondary_text_color,
             "select_directory"
         ),
 
@@ -665,12 +953,12 @@ void Application::buildFileTreeUI() {
             Modifier()
                 .setfixedHeight(48)
                 .setWidth(0.8f)
-                .setColor(sf::Color(120, 120, 120))
+                .setColor(alt_button_color)
                 .align(Align::CENTER_X),
             ButtonStyle::Pill,
             "Browse Files",
             resources.dejavuSansFont,
-            sf::Color::White,
+            secondary_text_color,
             "select_directory"
         ),
 
@@ -685,7 +973,7 @@ void Application::buildFileTreeUI() {
     }
     
     auto rootTextElement = text(
-        Modifier().setfixedHeight(28).setColor(sf::Color::Black), 
+        Modifier().setfixedHeight(28).setColor(primary_text_color), 
         displayName, 
         resources.dejavuSansFont
     );
@@ -730,7 +1018,7 @@ void Application::buildFileTreeUIRecursive(const FileTree& tree, int indentLevel
     }
     
     auto textElement = text(
-        Modifier().setfixedHeight(28).setColor(sf::Color::Black), 
+        Modifier().setfixedHeight(28).setColor(primary_text_color), 
         displayName, 
         resources.dejavuSansFont
     );
@@ -808,7 +1096,7 @@ Row* Application::fxRack() {
         Modifier()
             .setWidth(1.f)
             .setfixedHeight(256)
-            .setColor(sf::Color(200, 200, 200))
+            .setColor(foreground_color)
             .align(Align::BOTTOM),
     contains{
         
@@ -819,7 +1107,7 @@ Row* Application::track(const std::string& trackName, Align alignment, float vol
     std::cout << "Creating track: " << trackName << std::endl;
     return row(
         Modifier()
-            .setColor(sf::Color(120, 120, 120))
+            .setColor(track_row_color)
             .setfixedHeight(96)
             .align(alignment),
     contains{
@@ -846,7 +1134,7 @@ Row* Application::track(const std::string& trackName, Align alignment, float vol
                     Modifier(),
                 contains{
                     text(
-                        Modifier().setColor(sf::Color(25, 25, 25)).setfixedHeight(24).align(Align::LEFT | Align::TOP),
+                        Modifier().setColor(primary_text_color).setfixedHeight(24).align(Align::LEFT | Align::TOP),
                         trackName,
                         resources.dejavuSansFont
                     ),
@@ -857,11 +1145,11 @@ Row* Application::track(const std::string& trackName, Align alignment, float vol
                         spacer(Modifier().setfixedWidth(16).align(Align::LEFT)),
 
                         button(
-                            Modifier().align(Align::LEFT | Align::BOTTOM).setfixedWidth(64).setfixedHeight(32).setColor(sf::Color(50, 50, 50)),
+                            Modifier().align(Align::LEFT | Align::BOTTOM).setfixedWidth(64).setfixedHeight(32).setColor(not_muted_color),
                             ButtonStyle::Rect,
                             "mute",
                             resources.dejavuSansFont,
-                            sf::Color::White,
+                            secondary_text_color,
                             "mute_" + trackName
                         ),
                     }),
@@ -869,8 +1157,8 @@ Row* Application::track(const std::string& trackName, Align alignment, float vol
 
                 slider(
                     Modifier().setfixedWidth(16).setHeight(1.f).align(Align::RIGHT | Align::CENTER_Y),
-                    sf::Color::White,
-                    sf::Color::Black,
+                    slider_knob_color,
+                    slider_bar_color,
                     trackName + "_volume_slider"
                 ),
 
@@ -891,7 +1179,7 @@ Column* Application::mixerTrack(const std::string& trackName, Align alignment, f
     contains{
         spacer(Modifier().setfixedHeight(12).align(Align::TOP | Align::CENTER_X)),
         text(
-            Modifier().setColor(sf::Color(25, 25, 25)).setfixedHeight(18).align(Align::CENTER_X | Align::TOP),
+            Modifier().setColor(primary_text_color).setfixedHeight(18).align(Align::CENTER_X | Align::TOP),
             trackName,
             resources.dejavuSansFont
         ),
@@ -900,8 +1188,8 @@ Column* Application::mixerTrack(const std::string& trackName, Align alignment, f
 
         slider(
             Modifier().setfixedWidth(32).setHeight(1.f).align(Align::BOTTOM | Align::CENTER_X),
-            sf::Color::White,
-            sf::Color::Black,
+            slider_knob_color,
+            slider_bar_color,
             trackName + "_mixer_volume_slider"
         ),
         spacer(Modifier().setfixedHeight(12).align(Align::BOTTOM)),
@@ -911,11 +1199,11 @@ Column* Application::mixerTrack(const std::string& trackName, Align alignment, f
                 .setfixedHeight(32)
                 .setfixedWidth(64)
                 .align(Align::CENTER_X | Align::BOTTOM)
-                .setColor(sf::Color::Red),
+                .setColor(button_color),
             ButtonStyle::Rect,
             "solo",
             resources.dejavuSansFont,
-            sf::Color::White,
+            secondary_text_color,
             "solo_" + trackName
         ),
     });
@@ -930,7 +1218,7 @@ Column* Application::masterMixerTrack(const std::string& trackName, Align alignm
     contains{
         spacer(Modifier().setfixedHeight(12).align(Align::TOP | Align::CENTER_X)),
         text(
-            Modifier().setColor(sf::Color(25, 25, 25)).setfixedHeight(18).align(Align::CENTER_X | Align::TOP),
+            Modifier().setColor(primary_text_color).setfixedHeight(18).align(Align::CENTER_X | Align::TOP),
             trackName,
             resources.dejavuSansFont
         ),
@@ -939,8 +1227,8 @@ Column* Application::masterMixerTrack(const std::string& trackName, Align alignm
 
         slider(
             Modifier().setfixedWidth(32).setHeight(1.f).align(Align::BOTTOM | Align::CENTER_X),
-            sf::Color::White,
-            sf::Color::Black,
+            slider_knob_color,
+            slider_bar_color,
             "Master_mixer_volume_slider"
         ),
         spacer(Modifier().setfixedHeight(12).align(Align::BOTTOM)),
@@ -950,11 +1238,11 @@ Column* Application::masterMixerTrack(const std::string& trackName, Align alignm
                 .setfixedHeight(32)
                 .setfixedWidth(64)
                 .align(Align::CENTER_X | Align::BOTTOM)
-                .setColor(sf::Color::Red),
+                .setColor(button_color),
             ButtonStyle::Rect,
             "solo",
             resources.dejavuSansFont,
-            sf::Color::White,
+            secondary_text_color,
             "solo_Master"
         ),
     });
@@ -963,7 +1251,7 @@ Column* Application::masterMixerTrack(const std::string& trackName, Align alignm
 Row* Application::masterTrack() {
     return row(
         Modifier()
-            .setColor(sf::Color(120, 120, 120))
+            .setColor(track_row_color)
             .setfixedHeight(96)
             .align(Align::LEFT | Align::BOTTOM),
     contains{
@@ -971,7 +1259,7 @@ Row* Application::masterTrack() {
             Modifier()
                 .align(Align::RIGHT)
                 .setfixedWidth(150)
-                .setColor(sf::Color(155, 155, 155)),
+                .setColor(master_track_color),
         contains{
             spacer(Modifier().setfixedHeight(12).align(Align::TOP)),
 
@@ -984,7 +1272,7 @@ Row* Application::masterTrack() {
                     Modifier(),
                 contains{
                     text(
-                        Modifier().setColor(sf::Color(25, 25, 25)).setfixedHeight(24).align(Align::LEFT | Align::TOP),
+                        Modifier().setColor(primary_text_color).setfixedHeight(24).align(Align::LEFT | Align::TOP),
                         "Master",
                         resources.dejavuSansFont
                     ),
@@ -995,11 +1283,11 @@ Row* Application::masterTrack() {
                         spacer(Modifier().setfixedWidth(16).align(Align::LEFT)),
 
                         button(
-                            Modifier().align(Align::LEFT | Align::BOTTOM).setfixedWidth(64).setfixedHeight(32).setColor(sf::Color(50, 50, 50)),
+                            Modifier().align(Align::LEFT | Align::BOTTOM).setfixedWidth(64).setfixedHeight(32).setColor(not_muted_color),
                             ButtonStyle::Rect,
                             "mute",
                             resources.dejavuSansFont,
-                            sf::Color::White,
+                            secondary_text_color,
                             "mute_Master"
                         ),
                     }),
@@ -1007,8 +1295,8 @@ Row* Application::masterTrack() {
 
                 slider(
                     Modifier().setfixedWidth(16).setHeight(1.f).align(Align::RIGHT | Align::CENTER_Y),
-                    sf::Color::White,
-                    sf::Color::Black,
+                    slider_knob_color,
+                    slider_bar_color,
                     "Master_volume_slider"
                 ),
 
@@ -1022,10 +1310,255 @@ Row* Application::masterTrack() {
 
 ScrollableRow* Application::mixer() {
     return scrollableRow(
-        Modifier().setWidth(1.f).setHeight(1.f).setColor(sf::Color(100, 100, 100)),
+        Modifier().setWidth(1.f).setHeight(1.f).setColor(track_row_color),
     contains{
        
     }, "mixer");
+}
+
+ScrollableColumn* Application::settingsColumn() {
+    return scrollableColumn(
+        Modifier().setfixedWidth(1024.f).setColor(track_color).align(Align::CENTER_X),
+    contains{
+        spacer(Modifier().setfixedHeight(32.f)),
+        text(
+            Modifier().setfixedHeight(48).setColor(primary_text_color).align(Align::LEFT),
+            "  UI",
+            resources.dejavuSansFont,
+            "ui_section_text"
+        ),
+        spacer(Modifier().setfixedHeight(8.f)),
+        row(Modifier().setfixedHeight(32), contains{
+            spacer(Modifier().setfixedWidth(32.f)),
+            text(Modifier().setfixedHeight(32).setColor(primary_text_color).align(Align::LEFT | Align::CENTER_Y), "Select Theme", resources.dejavuSansFont, "select_theme_text"),
+            row(Modifier().setfixedHeight(32).setfixedWidth(256).align(Align::RIGHT).setColor(sf::Color::White).onLClick([&](){
+                if (!dropdownMenu->m_modifier.isVisible() && !sampleRateDropdownMenu->m_modifier.isVisible()) {
+                    showThemeDropdown = !showThemeDropdown;
+                }
+            }), contains{
+                spacer(Modifier().setfixedWidth(8.f)),
+                text(Modifier().setfixedHeight(28).setColor(sf::Color::Black).align(Align::LEFT | Align::CENTER_Y), "Default", resources.dejavuSansFont, "theme_text"),
+            }, "theme_dropdown"),
+            spacer(Modifier().setfixedWidth(32.f).align(Align::RIGHT)),
+        }),
+        spacer(Modifier().setfixedHeight(64.f)),
+        text(
+            Modifier().setfixedHeight(48).setColor(primary_text_color).align(Align::LEFT),
+            "  Audio",
+            resources.dejavuSansFont,
+            "audio_section_text"
+        ),
+        spacer(Modifier().setfixedHeight(16.f)),
+        row(Modifier().setfixedHeight(32), contains{
+            spacer(Modifier().setfixedWidth(32.f)),
+            text(Modifier().setfixedHeight(32).setColor(primary_text_color).align(Align::LEFT | Align::CENTER_Y), "Sample Rate", resources.dejavuSansFont, "select_sample_rate_text"),
+            row(Modifier().setfixedHeight(32).setfixedWidth(256).align(Align::RIGHT).setColor(sf::Color::White).onLClick([&](){
+                if (!dropdownMenu->m_modifier.isVisible() && !sampleRateDropdownMenu->m_modifier.isVisible()) {
+                    showSampleRateDropdown = !showSampleRateDropdown;
+                }
+            }), contains{
+                spacer(Modifier().setfixedWidth(8.f)),
+                text(Modifier().setfixedHeight(28).setColor(sf::Color::Black).align(Align::LEFT | Align::CENTER_Y), "44100", resources.dejavuSansFont, "sample_rate_text"),
+            }, "sample_rate_dropdown"),
+            spacer(Modifier().setfixedWidth(32.f).align(Align::RIGHT)),
+        }),
+        spacer(Modifier().setfixedHeight(64.f)),
+        text(
+            Modifier().setfixedHeight(48).setColor(primary_text_color).align(Align::LEFT),
+            "  Project",
+            resources.dejavuSansFont,
+            "project_section_text"
+        ),
+        spacer(Modifier().setfixedHeight(16.f)),
+        // Project name input
+        row(Modifier().setfixedHeight(32), contains{
+            spacer(Modifier().setfixedWidth(32.f)),
+            text(Modifier().setfixedHeight(32).setColor(primary_text_color).align(Align::LEFT | Align::CENTER_Y), "Project Name", resources.dejavuSansFont, "project_name_label"),
+            row(Modifier().setfixedHeight(32).setfixedWidth(256).align(Align::RIGHT).setColor(sf::Color::White).onLClick([&](){
+                if (!dropdownMenu->m_modifier.isVisible() && !sampleRateDropdownMenu->m_modifier.isVisible() && !textInputActive && !bpmInputActive) {
+                    projectNameInputActive = true;
+                }
+            }), contains{
+                spacer(Modifier().setfixedWidth(8.f)),
+                text(Modifier().setfixedHeight(28).setColor(sf::Color::Black).align(Align::LEFT | Align::CENTER_Y), projectNameValue, resources.dejavuSansFont, "project_name_box"),
+            }, "project_name_row"),
+            spacer(Modifier().setfixedWidth(32.f).align(Align::RIGHT)),
+        }),
+        spacer(Modifier().setfixedHeight(16.f)),
+        // BPM input
+        row(Modifier().setfixedHeight(32), contains{
+            spacer(Modifier().setfixedWidth(32.f)),
+            text(Modifier().setfixedHeight(32).setColor(primary_text_color).align(Align::LEFT | Align::CENTER_Y), "BPM", resources.dejavuSansFont, "bpm_label"),
+            row(Modifier().setfixedHeight(32).setfixedWidth(256).align(Align::RIGHT).setColor(sf::Color::White).onLClick([&](){
+                if (!dropdownMenu->m_modifier.isVisible() && !sampleRateDropdownMenu->m_modifier.isVisible() && !textInputActive && !projectNameInputActive) {
+                    bpmInputActive = true;
+                }
+            }), contains{
+                spacer(Modifier().setfixedWidth(8.f)),
+                text(Modifier().setfixedHeight(28).setColor(sf::Color::Black).align(Align::LEFT | Align::CENTER_Y), bpmValue, resources.dejavuSansFont, "bpm_box"),
+            }, "bpm_row"),
+            spacer(Modifier().setfixedWidth(32.f).align(Align::RIGHT)),
+        })
+    });
+}
+
+FreeColumn* Application::generateDropdown(sf::Vector2f position, const std::vector<std::string>& items) {
+    // Calculate height based on number of items
+    float itemHeight = 32.f;
+    float spacerHeight = 1.f;
+    float totalHeight = items.size() * itemHeight + (items.size() - 1) * spacerHeight;
+    
+    // Create a temporary freeColumn first, then we'll dynamically add elements
+    auto* dropdown = freeColumn(
+        Modifier()
+            .setfixedHeight(totalHeight)
+            .setfixedWidth(200)
+            .setColor(not_muted_color)
+    );
+    
+    // Add elements one by one
+    for (size_t i = 0; i < items.size(); ++i) {
+        // Add the button for this item
+        dropdown->addElement(
+            button(
+                Modifier()
+                    .setfixedHeight(itemHeight)
+                    .setColor(sf::Color::White)
+                    .onLClick([this, item = items[i]](){
+                        // Only process clicks if dropdown is visible
+                        if (!showThemeDropdown || !dropdownMenu->m_modifier.isVisible()) {
+                            return;
+                        }
+                        
+                        static std::string lastSelected = "";
+                        static auto lastClickTime = std::chrono::steady_clock::now();
+                        auto now = std::chrono::steady_clock::now();
+                        auto timeDiff = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastClickTime);
+                        
+                        // Prevent rapid clicking and duplicate selections
+                        if (item == lastSelected && timeDiff.count() < 100) {
+                            return;
+                        }
+                        
+                        std::cout << "Selected: " << item << std::endl;
+                        
+                        // Apply the selected theme
+                        if (item == "Default") {
+                            applyTheme(Themes::Default);
+                        } else if (item == "Dark") {
+                            applyTheme(Themes::Dark);
+                        } else if (item == "Light") {
+                            applyTheme(Themes::Light);
+                        } else if (item == "Cyberpunk") {
+                            applyTheme(Themes::Cyberpunk);
+                        } else if (item == "Forest") {
+                            applyTheme(Themes::Forest);
+                        }
+                        
+                        // Update the theme text in the settings
+                        if (texts.count("theme_text")) {
+                            texts["theme_text"]->setString(item);
+                        }
+                        
+                        showThemeDropdown = false; // Close dropdown after selection
+                        lastSelected = item;
+                        lastClickTime = now;
+                    }), 
+                ButtonStyle::Rect, 
+                items[i], 
+                resources.dejavuSansFont, 
+                sf::Color::Black, 
+                "dropdown_item_" + std::to_string(i)
+            )
+        );
+        
+        // Add spacer between items (except after the last one)
+        if (i < items.size() - 1) {
+            dropdown->addElement(
+                spacer(Modifier().setfixedHeight(spacerHeight))
+            );
+        }
+    }
+    
+    // Set the position
+    dropdown->setPosition(position);
+    
+    return dropdown;
+}
+
+FreeColumn* Application::generateSampleRateDropdown(sf::Vector2f position, const std::vector<std::string>& items) {
+    // Calculate height based on number of items
+    float itemHeight = 32.f;
+    float spacerHeight = 1.f;
+    float totalHeight = items.size() * itemHeight + (items.size() - 1) * spacerHeight;
+    
+    // Create a temporary freeColumn first, then we'll dynamically add elements
+    auto* dropdown = freeColumn(
+        Modifier()
+            .setfixedHeight(totalHeight)
+            .setfixedWidth(200)
+            .setColor(not_muted_color)
+    );
+    
+    // Add elements one by one
+    for (size_t i = 0; i < items.size(); ++i) {
+        // Add the button for this item
+        dropdown->addElement(
+            button(
+                Modifier()
+                    .setfixedHeight(itemHeight)
+                    .setColor(sf::Color::White)
+                    .onLClick([this, item = items[i]](){
+                        // Only process clicks if dropdown is visible
+                        if (!showSampleRateDropdown || !sampleRateDropdownMenu->m_modifier.isVisible()) {
+                            return;
+                        }
+                        
+                        static std::string lastSelected = "";
+                        static auto lastClickTime = std::chrono::steady_clock::now();
+                        auto now = std::chrono::steady_clock::now();
+                        auto timeDiff = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastClickTime);
+                        
+                        // Prevent rapid clicking and duplicate selections
+                        if (item == lastSelected && timeDiff.count() < 100) {
+                            return;
+                        }
+                        
+                        std::cout << "Selected sample rate: " << item << " Hz" << std::endl;
+                        
+                        // Note: Sample rate changes require audio device restart
+                        // For now, just update the display
+                        // TODO: Implement sample rate changing functionality in Engine
+                        
+                        // Update the sample rate text in the settings
+                        if (texts.count("sample_rate_text")) {
+                            texts["sample_rate_text"]->setString(item);
+                        }
+                        
+                        showSampleRateDropdown = false; // Close dropdown after selection
+                        lastSelected = item;
+                        lastClickTime = now;
+                    }), 
+                ButtonStyle::Rect, 
+                items[i] + " Hz", 
+                resources.dejavuSansFont, 
+                sf::Color::Black, 
+                "sample_rate_item_" + std::to_string(i)
+            )
+        );
+        
+        // Add spacer between items (except after the last one)
+        if (i < items.size() - 1) {
+            dropdown->addElement(
+                spacer(Modifier().setfixedHeight(spacerHeight))
+            );
+        }
+    }
+    
+    // Set the position
+    dropdown->setPosition(position);
+    
+    return dropdown;
 }
 
 std::string Application::selectDirectory() {
@@ -1152,6 +1685,10 @@ void Application::loadComposition(const std::string& path) {
     }
 
     undoStack.push(engine.getStateString());
+    
+    // Update project settings values
+    projectNameValue = engine.getCurrentCompositionName();
+    bpmValue = std::to_string(static_cast<int>(engine.getBpm()));
 }
 
 bool Application::handleTrackEvents() {
@@ -1159,7 +1696,7 @@ bool Application::handleTrackEvents() {
 
     if (getButton("mute_Master")->isClicked()) {
         engine.getMasterTrack()->toggleMute();
-        getButton("mute_Master")->m_modifier.setColor((engine.getMasterTrack()->isMuted() ? mute_color : sf::Color(50, 50, 50)));
+        getButton("mute_Master")->m_modifier.setColor((engine.getMasterTrack()->isMuted() ? mute_color : not_muted_color));
         std::cout << "Master track mute state toggled to " << ((engine.getMasterTrack()->isMuted()) ? "true" : "false") << std::endl;
 
         shouldForceUpdate = true;
@@ -1186,7 +1723,7 @@ bool Application::handleTrackEvents() {
     for (auto& track : engine.getAllTracks()) {
         if (getButton("mute_" + track->getName())->isClicked()) {
             track->toggleMute();
-            getButton("mute_" + track->getName())->m_modifier.setColor((track->isMuted() ? mute_color : sf::Color(50, 50, 50)));
+            getButton("mute_" + track->getName())->m_modifier.setColor((track->isMuted() ? mute_color : not_muted_color));
             std::cout << "Track '" << track->getName() << "' mute state toggled to " << ((track->isMuted()) ? "true" : "false") << std::endl;
 
             shouldForceUpdate = true;

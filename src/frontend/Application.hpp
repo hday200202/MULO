@@ -8,6 +8,8 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <memory>
 #include <stack>
+#include <chrono>
+#include <map>
 
 using namespace uilo;
 
@@ -34,10 +36,19 @@ private:
     // Application state
     bool running = false;
     bool showMixer = false;
+    bool showSettings = false;
+    bool showThemeDropdown = false;
+    bool showSampleRateDropdown = false;
+    bool textInputActive = false;
+    bool projectNameInputActive = false;
+    bool bpmInputActive = false;
     bool playing = false;
     bool uiChanged = false;
     bool fileTreeNeedsRebuild = false;
     float timelineOffset = 0.f;
+    std::string textInputValue = "";
+    std::string projectNameValue = "untitled";
+    std::string bpmValue = "120";
 
     // Undo/Redo stacks
     std::stack<std::string> undoStack;
@@ -54,6 +65,9 @@ private:
     Row* browserAndMixerElement;
     Row* fxRackElement;
     FreeColumn* contextMenu;
+    ScrollableColumn* settingsColumnElement;
+    FreeColumn* dropdownMenu;
+    FreeColumn* sampleRateDropdownMenu;
 
     // Initialization methods
     void initWindow();
@@ -85,6 +99,9 @@ private:
     Column* masterMixerTrack(const std::string& trackName = "Master", Align alignment = Align::LEFT, float volume = 1.0f, float pan = 0.0f);
     Row* masterTrack();
     ScrollableRow* mixer();
+    ScrollableColumn* settingsColumn();
+    FreeColumn* generateDropdown(sf::Vector2f position, const std::vector<std::string>& items);
+    FreeColumn* generateSampleRateDropdown(sf::Vector2f position, const std::vector<std::string>& items);
 
     // File operations
     std::string selectDirectory();

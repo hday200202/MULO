@@ -50,6 +50,7 @@ public:
     void saveComposition(const std::string& path);
     std::pair<int, int> getTimeSignature() const;
     double getBpm() const;
+    void setBpm(double newBpm);
     
     // Track Management 
     void addTrack(const std::string& name = "");
@@ -77,6 +78,7 @@ public:
     void audioDeviceAboutToStart(juce::AudioIODevice* device) override;
     void audioDeviceStopped() override;
     std::string getCurrentCompositionName() const;
+    void setCurrentCompositionName(const std::string& newName);
 
     void undo();
     void redo();
