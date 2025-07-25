@@ -1665,29 +1665,15 @@ FreeColumn* Application::generateDropdown(sf::Vector2f position, const std::vect
                             return;
                         }
                         
-                        std::cout << "Selected: " << item << std::endl;
-                        
-                        // Apply the selected theme
-                        if (item == "Default") {
-                            applyTheme(Themes::Default);
-                        } else if (item == "Dark") {
-                            applyTheme(Themes::Dark);
-                        } else if (item == "Light") {
-                            applyTheme(Themes::Light);
-                        } else if (item == "Cyberpunk") {
-                            applyTheme(Themes::Cyberpunk);
-                        } else if (item == "Forest") {
-                            applyTheme(Themes::Forest);
-                        }
+                        std::cout << "Selected: " << item << " (will apply on next startup)" << std::endl;
                         
                         // Update the theme text in the settings
                         if (texts.count("theme_text")) {
                             texts["theme_text"]->setString(item);
                         }
                         
-                        // Update current theme and save to config
+                        // Update current theme and save to config (theme will apply on next startup)
                         selectedThemeName = item;
-                        applyThemeByName(selectedThemeName); // Apply the new theme immediately
                         saveConfig();
                         
                         showThemeDropdown = false; // Close dropdown after selection
