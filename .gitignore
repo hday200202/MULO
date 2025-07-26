@@ -8,6 +8,7 @@ cmake_install.cmake
 install_manifest.txt
 CTestTestfile.cmake
 .cmake/
+test_project_files/
 
 # Executables and Libraries (for cross-platform output in bin/)
 # We set CMAKE_RUNTIME_OUTPUT_DIRECTORY to bin/${CMAKE_SYSTEM_NAME}/${CMAKE_BUILD_TYPE}

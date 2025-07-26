@@ -5,6 +5,8 @@
 #include "UIData.hpp"
 #include "TimelineHelpers.hpp"
 #include "FileTree.hpp"
+#include "MULOComponent.hpp"
+#include "TimelineComponent.hpp"
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <chrono>
@@ -25,6 +27,8 @@ using namespace uilo;
  */
 class Application {
 public:
+    bool shouldForceUpdate = false;
+
     Application();
     ~Application();
 
@@ -34,17 +38,19 @@ public:
     bool isRunning() const;
 
 private:
+    TimelineComponent timelineComponent;
+
     // Core systems
     sf::RenderWindow window;
-    sf::View          windowView;
-    sf::VideoMode     screenResolution;
-    std::string       currentPage = "timeline";
-    std::string       pendingLoadPath;
+    sf::View windowView;
+    sf::VideoMode screenResolution;
+    std::string currentPage = "timeline";
+    std::string pendingLoadPath;
 
     // Core engine and UI
-    Engine   engine;
-    UILO*    ui = nullptr;
-    UIState  uiState;
+    Engine engine;
+    UILO* ui = nullptr;
+    UIState uiState;
     UIResources resources;
     FileTree fileTree;
 
@@ -61,6 +67,7 @@ private:
     bool playing = false;
     bool uiChanged = false;
     bool fileTreeNeedsRebuild = false;
+
     float timelineOffset = 0.f;
     std::string textInputValue = "";
     std::string projectNameValue = "untitled";
@@ -80,7 +87,7 @@ private:
     Row* topRowElement;
     ScrollableColumn* fileBrowserElement;
     Row* masterTrackElement;
-    ScrollableColumn* timelineElement;
+    Container* timelineElement;
     ScrollableRow* mixerElement;
     Column* masterMixerTrackElement;
     Row* browserAndTimelineElement;
@@ -93,9 +100,9 @@ private:
     FreeColumn* sampleRateDropdownMenu;
 
     // Auto-save configuration
-    int        autoSaveIntervalSeconds = 300;  // loaded from config.json (default 5m)
-    sf::Clock  autoSaveTimer;                // tracks elapsed time since last save
-    std::string lastSavePath;                // path for repeated auto-saves
+    int autoSaveIntervalSeconds = 300;  // loaded from config.json (default 5m)
+    sf::Clock autoSaveTimer;              // tracks elapsed time since last save
+    std::string lastSavePath;              // path for repeated auto-saves
 
     // UI configuration (saved to config.json)
     std::string selectedThemeName = "Default";   // current selected theme name
@@ -105,23 +112,20 @@ private:
     const std::string configFilePath = "config.json";
 
     // Initialization methods
-    void initWindow();
     void initUIResources();
-    void initUI();
-    
-    // Timeline update methods
-    void updateTimeline();
-    void updatePlayheadFollow(float& newMasterOffset);
-    void updateTrackInteractions(float clampedOffset);
 
     // Input handling
     bool handleContextMenu();
     bool handleUIButtons();
-    bool handlePlaybackControls();
     bool handleKeyboardShortcuts();
+    bool handleTextInput();
+    void applyTextInputChanges(std::string* inputValue);
     bool handleScrollWheel();
     bool handleTrackEvents();
     bool handleToolTips();
+
+
+    std::string toolTipMessage = "";
 
     // UI creation methods
     Row* topRow();
@@ -147,7 +151,6 @@ private:
     void rebuildUIFromEngine();
     void buildFileTreeUI();
     void buildFileTreeUIRecursive(const FileTree& tree, int indentLevel);
-    void updateFileBrowserUI();
 
     // Undo/Redo
     void undo();

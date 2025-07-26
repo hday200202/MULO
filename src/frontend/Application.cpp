@@ -34,23 +34,34 @@ Application::Application() {
     bpmValue = std::to_string(static_cast<int>(engine.getBpm()));
     autosaveValue = std::to_string(autoSaveIntervalSeconds);
 
+    timelineComponent.setAppRef(this);
+    timelineComponent.setEngineRef(&engine);
+    timelineComponent.setUIStateRef(&uiState);
+    timelineComponent.setResourcesRef(&resources);
+
     // UI Elements
     topRowElement               = topRow();
     fileBrowserElement          = fileBrowser();
+
     masterTrackElement          = masterTrack();
-    timelineElement             = timeline();
+    timelineElement             = timelineComponent.getLayout();
+
     mixerElement                = mixer();
     masterMixerTrackElement     = masterMixerTrack();
+
     browserAndTimelineElement   = browserAndTimeline();
     browserAndMixerElement      = browserAndMixer();
+
     fxRackElement               = fxRack();
+
     settingsColumnElement       = settingsColumn();
+
     dropdownMenu                = generateDropdown({0, 0}, {"Default", "Dark", "Light", "Cyberpunk", "Forest"});
     sampleRateDropdownMenu      = generateSampleRateDropdown({0, 0}, {"44100", "48000", "88200", "96000"});
 
     dropdownMenu->hide();
     sampleRateDropdownMenu->hide();
-    timelineElement->setScrollSpeed(20.f);
+    // timelineElement->setScrollSpeed(20.f);
     mixerElement   ->setScrollSpeed(20.f);
 
     contextMenu = freeColumn(
@@ -162,212 +173,13 @@ void Application::update() {
             shouldForceUpdate = true;
         }
         
-        // Handle text input keyboard events (SFML 3.0)
-        if (textInputActive || projectNameInputActive || bpmInputActive || autosaveInputActive) {
-            // Determine which input is active and get references to the appropriate variables
-            bool* activeInput;
-            std::string* inputValue;
-            std::string textElementId;
-            std::string containerElementId;
-            
-            if (textInputActive) {
-                activeInput = &textInputActive;
-                inputValue = &textInputValue;
-                textElementId = "text_input_box";
-                containerElementId = "text_input_row";
-            } else if (projectNameInputActive) {
-                activeInput = &projectNameInputActive;
-                inputValue = &projectNameValue;
-                textElementId = "project_name_box";
-                containerElementId = "project_name_row";
-            } else if (bpmInputActive) {
-                activeInput = &bpmInputActive;
-                inputValue = &bpmValue;
-                textElementId = "bpm_box";
-                containerElementId = "bpm_row";
-            } else { // autosaveInputActive
-                activeInput = &autosaveInputActive;
-                inputValue = &autosaveValue;
-                textElementId = "autosave_box";
-                containerElementId = "autosave_row";
-                static bool debugShown = false;
-                if (!debugShown) {
-                    std::cout << "Autosave input is active, current value: " << *inputValue << std::endl;
-                    debugShown = true;
-                }
-            }
-            
-            // Simple text input handling with static variables to track key states
-            static bool wasBackspacePressed = false;
-            static bool wasEnterPressed = false;
-            static bool wasEscapePressed = false;
-            static bool wasSpacePressed = false;
-            static std::map<sf::Keyboard::Key, bool> keyStates;
-            
-            // Check for backspace
-            bool backspacePressed = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Backspace);
-            if (backspacePressed && !wasBackspacePressed) {
-                if (!inputValue->empty()) {
-                    inputValue->pop_back();
-                    shouldForceUpdate = true;
-                }
-            }
-            wasBackspacePressed = backspacePressed;
-            
-            // Check for Enter or Escape to exit text input mode
-            bool enterPressed = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Enter);
-            bool escapePressed = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Escape);
-            if ((enterPressed && !wasEnterPressed) || (escapePressed && !wasEscapePressed)) {
-                *activeInput = false;
-                shouldForceUpdate = true;
-                
-                // Apply changes if it was project name, BPM, or autosave
-                if (inputValue == &projectNameValue) {
-                    engine.setCurrentCompositionName(*inputValue);
-                } else if (inputValue == &bpmValue) {
-                    try {
-                        float bpm = std::stof(*inputValue);
-                        if (bpm > 0 && bpm <= 300) { // Reasonable BPM range
-                            engine.setBpm(bpm);
-                        } else {
-                            *inputValue = std::to_string(engine.getBpm()); // Reset to current value if invalid
-                        }
-                    } catch (...) {
-                        *inputValue = std::to_string(engine.getBpm()); // Reset to current value if invalid
-                    }
-                } else if (inputValue == &autosaveValue) {
-                    try {
-                        int interval = std::stoi(*inputValue);
-                        if (interval >= 10 && interval <= 3600) { // 10 seconds to 1 hour
-                            autoSaveIntervalSeconds = interval;
-                            uiState.autoSaveIntervalSeconds = interval;
-                            autoSaveTimer.restart(); // Restart timer with new interval
-                            saveConfig(); // Save to config file
-                            std::cout << "Auto-save interval updated to " << interval << " seconds" << std::endl;
-                        } else {
-                            *inputValue = std::to_string(autoSaveIntervalSeconds); // Reset to current value if invalid
-                            std::cout << "Invalid auto-save interval: " << *inputValue << " (must be between 10 and 3600 seconds)" << std::endl;
-                        }
-                    } catch (...) {
-                        *inputValue = std::to_string(autoSaveIntervalSeconds); // Reset to current value if invalid
-                        std::cout << "Invalid auto-save interval format: " << *inputValue << std::endl;
-                    }
-                }
-            }
-            wasEnterPressed = enterPressed;
-            wasEscapePressed = escapePressed;
-            
-            // Handle letters a-z (skip for BPM and autosave input to only allow numbers)
-            if (inputValue != &bpmValue && inputValue != &autosaveValue) {
-                bool shift = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LShift) || sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RShift);
-                for (int i = 0; i < 26; i++) {
-                    sf::Keyboard::Key key = static_cast<sf::Keyboard::Key>(static_cast<int>(sf::Keyboard::Key::A) + i);
-                    bool isPressed = sf::Keyboard::isKeyPressed(key);
-                    if (isPressed && !keyStates[key]) {
-                        char c = 'a' + i;
-                        if (shift) c = 'A' + i;
-                        *inputValue += c;
-                        shouldForceUpdate = true;
-                    }
-                    keyStates[key] = isPressed;
-                }
-                
-                // Handle space (not for BPM)
-                bool spacePressed = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Space);
-                if (spacePressed && !wasSpacePressed) {
-                    *inputValue += ' ';
-                    shouldForceUpdate = true;
-                }
-                wasSpacePressed = spacePressed;
-            }
-            
-            // Handle numbers 0-9
-            for (int i = 0; i <= 9; i++) {
-                sf::Keyboard::Key key = static_cast<sf::Keyboard::Key>(static_cast<int>(sf::Keyboard::Key::Num0) + i);
-                bool isPressed = sf::Keyboard::isKeyPressed(key);
-                if (isPressed && !keyStates[key]) {
-                    *inputValue += ('0' + i);
-                    shouldForceUpdate = true;
-                }
-                keyStates[key] = isPressed;
-            }
-            
-            // Handle decimal point for BPM
-            if (inputValue == &bpmValue) {
-                static bool wasPeriodPressed = false;
-                bool periodPressed = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Period);
-                if (periodPressed && !wasPeriodPressed && inputValue->find('.') == std::string::npos) {
-                    *inputValue += '.';
-                    shouldForceUpdate = true;
-                }
-                wasPeriodPressed = periodPressed;
-            }
-            
-            // Check for mouse click outside text input box
-            static bool wasMousePressed = false;
-            bool mousePressed = sf::Mouse::isButtonPressed(sf::Mouse::Button::Left);
-            if (mousePressed && !wasMousePressed) {
-                sf::Vector2f mousePos = ui->getMousePosition();
-                auto* inputRow = containers.count(containerElementId) ? containers[containerElementId] : nullptr;
-                if (inputRow && !inputRow->m_bounds.getGlobalBounds().contains(mousePos)) {
-                    *activeInput = false;
-                    shouldForceUpdate = true;
-                    
-                    // Apply changes if it was project name, BPM, or autosave
-                    if (inputValue == &projectNameValue) {
-                        engine.setCurrentCompositionName(*inputValue);
-                    } else if (inputValue == &bpmValue) {
-                        try {
-                            float bpm = std::stof(*inputValue);
-                            if (bpm > 0 && bpm <= 300) { // Reasonable BPM range
-                                engine.setBpm(bpm);
-                            } else {
-                                *inputValue = std::to_string(engine.getBpm()); // Reset to current value if invalid
-                            }
-                        } catch (...) {
-                            *inputValue = std::to_string(engine.getBpm()); // Reset to current value if invalid
-                        }
-                    } else if (inputValue == &autosaveValue) {
-                        try {
-                            int interval = std::stoi(*inputValue);
-                            if (interval >= 10 && interval <= 3600) { // 10 seconds to 1 hour
-                                autoSaveIntervalSeconds = interval;
-                                uiState.autoSaveIntervalSeconds = interval;
-                                autoSaveTimer.restart(); // Restart timer with new interval
-                                saveConfig(); // Save to config file
-                                std::cout << "Auto-save interval updated to " << interval << " seconds" << std::endl;
-                            } else {
-                                *inputValue = std::to_string(autoSaveIntervalSeconds); // Reset to current value if invalid
-                                std::cout << "Invalid auto-save interval: " << *inputValue << " (must be between 10 and 3600 seconds)" << std::endl;
-                            }
-                        } catch (...) {
-                            *inputValue = std::to_string(autoSaveIntervalSeconds); // Reset to current value if invalid
-                            std::cout << "Invalid auto-save interval format: " << *inputValue << std::endl;
-                        }
-                    }
-                }
-            }
-            wasMousePressed = mousePressed;
-            
-            // Update the text display
-            if (texts.count(textElementId)) {
-                texts[textElementId]->setString(*inputValue);
-            }
-            
-            // Block all other input while text input is active
-            if (shouldForceUpdate) {
-                ui->forceUpdate();
-            }
-            return;
-        }
-        
         // If user interaction, force update
         shouldForceUpdate |= handleContextMenu();
         shouldForceUpdate |= handleToolTips();
         shouldForceUpdate |= handleUIButtons();
-        shouldForceUpdate |= handlePlaybackControls();
-        shouldForceUpdate |= handleTrackEvents();
+        timelineComponent.handleEvents();
         shouldForceUpdate |= handleKeyboardShortcuts();
+        shouldForceUpdate |= handleTextInput();
         shouldForceUpdate |= handleScrollWheel();
         shouldForceUpdate |= playing;
 
@@ -651,10 +463,6 @@ bool Application::handleToolTips() {
         toolTipMessage = "Press this button to set your preferred directory for your tracks.";
         hoveredButtonId = "select_directory";
     }
-    else if(getButton("new_track")->isHovered()) {
-        toolTipMessage = "Press this to add a track to your composition.";
-        hoveredButtonId = "new_track";
-    }
     else if(getButton("mute_Master")->isHovered()) {
         toolTipMessage = "Press this to mute the entire composition.";
         hoveredButtonId = "mute_Master";
@@ -729,7 +537,7 @@ bool Application::handleToolTips() {
 }
 
 bool Application::handleUIButtons() {
-    bool shouldForceUpdate = false;
+    shouldForceUpdate = false;
 
     // Handle dropdown menu clicks outside - only when visible
     if (showThemeDropdown && dropdownMenu->m_modifier.isVisible()) {
@@ -767,109 +575,221 @@ bool Application::handleUIButtons() {
         prevLeftClickSampleRate = leftClick;
     }
 
-    if (getButton("select_directory")->isClicked()) {
-        fileTree.setRootDirectory(selectDirectory());
-        buildFileTreeUI();
-        shouldForceUpdate = true;
-    }
-
-    if (getButton("mixer")->isClicked()) {
-        showMixer = !showMixer;
-        const std::string pageToShow = showMixer ? "mixer" : "timeline";
-        ui->switchToPage(pageToShow);
-        currentPage = pageToShow;
-        shouldForceUpdate = true;
-    }
-
-    if (getButton("settings")->isClicked()) {
-        showSettings = !showSettings;
-
-        if (showSettings) {
-            ui->switchToPage("settings");
-            currentPage = "settings";
-        } else {
-            ui->switchToPage("timeline");
-            currentPage = "timeline";
-        }
-        
-        shouldForceUpdate = true;
-    }
-
-    if (getButton("new_track")->isClicked()) {
-        uiChanged = true;
-        newTrack(selectFile({"*.wav", "*.mp3", "*.flac"}));
-        std::cout << "New track added. Total tracks: " << uiState.trackCount << std::endl;
-        shouldForceUpdate = true;
-    }
-
-    if (buttons["save"]->isClicked()) {
-        uiState.saveDirectory = selectDirectory();
-        if (engine.saveState(uiState.saveDirectory + "/" + engine.getCurrentCompositionName() + ".mpf"))
-            std::cout << "Project saved successfully." << std::endl;
-        else
-            std::cerr << "Failed to save project." << std::endl;
-        shouldForceUpdate = true;
-    }
-
-    if (getButton("load")->isClicked()) {
-        std::string path = selectFile({"*.mpf"});
-        if (!path.empty())
-            loadComposition(path);
-        shouldForceUpdate = true;
-    }
-
-    return shouldForceUpdate;
-}
-
-bool Application::handlePlaybackControls() {
-    static bool prevSpace = false;
-    bool space = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Space);
-    bool shouldForceUpdate = false;
-
-    if ((getButton("play")->isClicked() || (space && !prevSpace)) && !playing) {
-        std::cout << "Playing audio..." << std::endl;
-        engine.play();
-        getButton("play")->setText("pause");
-        playing = true;
-        shouldForceUpdate = true;
-    }
-    else if ((getButton("play")->isClicked() || (space && !prevSpace)) && playing) {
-        std::cout << "Pausing audio..." << std::endl;
-        engine.pause();
-        engine.setPosition(0.0);
-        getButton("play")->setText("play");
-        playing = false;
-        shouldForceUpdate = true;
-    }
-
-    prevSpace = space;
     return shouldForceUpdate;
 }
 
 bool Application::handleKeyboardShortcuts() {
-    static bool prevCtrl = false, prevZ = false, prevY = false;
+    static bool prevCtrl = false, prevZ = false, prevY = false, prevSpace = false;
     bool ctrl = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl);
     bool z = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Z);
     bool y = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Y);
+    bool space = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Space);
     bool shouldForceUpdate = false;
 
     if (ctrl && !prevCtrl) prevZ = prevY = false;
 
+    // Handle Ctrl+Z (Undo)
     if (ctrl && z && !prevZ) {
         undo();
         std::cout << "Undo, undoStack size: " << undoStack.size() << std::endl;
         shouldForceUpdate = true;
     }
+    
+    // Handle Ctrl+Y (Redo)
     if (ctrl && y && !prevY) {
         redo();
         std::cout << "Redo, redoStack size: " << redoStack.size() << std::endl;
         shouldForceUpdate = true;
     }
 
+    // Handle Space (Play/Pause)
+    if (space && !prevSpace) {
+        if (auto* playButton = getButton("play")) {
+            // Call the play button's click handler directly
+            playButton->m_modifier.getOnLClick()();
+            shouldForceUpdate = true;
+        }
+    }
+
     prevCtrl = ctrl;
     prevZ = z;
     prevY = y;
+    prevSpace = space;
     return shouldForceUpdate;
+}
+
+bool Application::handleTextInput() {
+    if (!textInputActive && !projectNameInputActive && !bpmInputActive && !autosaveInputActive) {
+        return false;
+    }
+    
+    bool shouldForceUpdate = false;
+    
+    // Determine which input is active and get references to the appropriate variables
+    bool* activeInput;
+    std::string* inputValue;
+    std::string textElementId;
+    std::string containerElementId;
+    
+    if (textInputActive) {
+        activeInput = &textInputActive;
+        inputValue = &textInputValue;
+        textElementId = "text_input_box";
+        containerElementId = "text_input_row";
+    } else if (projectNameInputActive) {
+        activeInput = &projectNameInputActive;
+        inputValue = &projectNameValue;
+        textElementId = "project_name_box";
+        containerElementId = "project_name_row";
+    } else if (bpmInputActive) {
+        activeInput = &bpmInputActive;
+        inputValue = &bpmValue;
+        textElementId = "bpm_box";
+        containerElementId = "bpm_row";
+    } else { // autosaveInputActive
+        activeInput = &autosaveInputActive;
+        inputValue = &autosaveValue;
+        textElementId = "autosave_box";
+        containerElementId = "autosave_row";
+        static bool debugShown = false;
+        if (!debugShown) {
+            std::cout << "Autosave input is active, current value: " << *inputValue << std::endl;
+            debugShown = true;
+        }
+    }
+    
+    // Simple text input handling with static variables to track key states
+    static bool wasBackspacePressed = false;
+    static bool wasEnterPressed = false;
+    static bool wasEscapePressed = false;
+    static bool wasSpacePressed = false;
+    static std::map<sf::Keyboard::Key, bool> keyStates;
+    
+    // Check for backspace
+    bool backspacePressed = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Backspace);
+    if (backspacePressed && !wasBackspacePressed) {
+        if (!inputValue->empty()) {
+            inputValue->pop_back();
+            shouldForceUpdate = true;
+        }
+    }
+    wasBackspacePressed = backspacePressed;
+    
+    // Check for Enter or Escape to exit text input mode
+    bool enterPressed = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Enter);
+    bool escapePressed = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Escape);
+    if ((enterPressed && !wasEnterPressed) || (escapePressed && !wasEscapePressed)) {
+        *activeInput = false;
+        shouldForceUpdate = true;
+        
+        // Apply changes if it was project name, BPM, or autosave
+        applyTextInputChanges(inputValue);
+    }
+    wasEnterPressed = enterPressed;
+    wasEscapePressed = escapePressed;
+    
+    // Handle letters a-z (skip for BPM and autosave input to only allow numbers)
+    if (inputValue != &bpmValue && inputValue != &autosaveValue) {
+        bool shift = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LShift) || sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RShift);
+        for (int i = 0; i < 26; i++) {
+            sf::Keyboard::Key key = static_cast<sf::Keyboard::Key>(static_cast<int>(sf::Keyboard::Key::A) + i);
+            bool isPressed = sf::Keyboard::isKeyPressed(key);
+            if (isPressed && !keyStates[key]) {
+                char c = 'a' + i;
+                if (shift) c = 'A' + i;
+                *inputValue += c;
+                shouldForceUpdate = true;
+            }
+            keyStates[key] = isPressed;
+        }
+        
+        // Handle space (not for BPM)
+        bool spacePressed = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Space);
+        if (spacePressed && !wasSpacePressed) {
+            *inputValue += ' ';
+            shouldForceUpdate = true;
+        }
+        wasSpacePressed = spacePressed;
+    }
+    
+    // Handle numbers 0-9
+    for (int i = 0; i <= 9; i++) {
+        sf::Keyboard::Key key = static_cast<sf::Keyboard::Key>(static_cast<int>(sf::Keyboard::Key::Num0) + i);
+        bool isPressed = sf::Keyboard::isKeyPressed(key);
+        if (isPressed && !keyStates[key]) {
+            *inputValue += ('0' + i);
+            shouldForceUpdate = true;
+        }
+        keyStates[key] = isPressed;
+    }
+    
+    // Handle decimal point for BPM
+    if (inputValue == &bpmValue) {
+        static bool wasPeriodPressed = false;
+        bool periodPressed = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Period);
+        if (periodPressed && !wasPeriodPressed && inputValue->find('.') == std::string::npos) {
+            *inputValue += '.';
+            shouldForceUpdate = true;
+        }
+        wasPeriodPressed = periodPressed;
+    }
+    
+    // Check for mouse click outside text input box
+    static bool wasMousePressed = false;
+    bool mousePressed = sf::Mouse::isButtonPressed(sf::Mouse::Button::Left);
+    if (mousePressed && !wasMousePressed) {
+        sf::Vector2f mousePos = ui->getMousePosition();
+        auto* inputRow = containers.count(containerElementId) ? containers[containerElementId] : nullptr;
+        if (inputRow && !inputRow->m_bounds.getGlobalBounds().contains(mousePos)) {
+            *activeInput = false;
+            shouldForceUpdate = true;
+            
+            // Apply changes if it was project name, BPM, or autosave
+            applyTextInputChanges(inputValue);
+        }
+    }
+    wasMousePressed = mousePressed;
+    
+    // Update the text display
+    if (texts.count(textElementId)) {
+        texts[textElementId]->setString(*inputValue);
+    }
+    
+    return shouldForceUpdate;
+}
+
+void Application::applyTextInputChanges(std::string* inputValue) {
+    if (inputValue == &projectNameValue) {
+        engine.setCurrentCompositionName(*inputValue);
+    } else if (inputValue == &bpmValue) {
+        try {
+            float bpm = std::stof(*inputValue);
+            if (bpm > 0 && bpm <= 300) { // Reasonable BPM range
+                engine.setBpm(bpm);
+            } else {
+                *inputValue = std::to_string(engine.getBpm()); // Reset to current value if invalid
+            }
+        } catch (...) {
+            *inputValue = std::to_string(engine.getBpm()); // Reset to current value if invalid
+        }
+    } else if (inputValue == &autosaveValue) {
+        try {
+            int interval = std::stoi(*inputValue);
+            if (interval >= 10 && interval <= 3600) { // 10 seconds to 1 hour
+                autoSaveIntervalSeconds = interval;
+                uiState.autoSaveIntervalSeconds = interval;
+                autoSaveTimer.restart(); // Restart timer with new interval
+                saveConfig(); // Save to config file
+                std::cout << "Auto-save interval updated to " << interval << " seconds" << std::endl;
+            } else {
+                *inputValue = std::to_string(autoSaveIntervalSeconds); // Reset to current value if invalid
+                std::cout << "Invalid auto-save interval: " << *inputValue << " (must be between 10 and 3600 seconds)" << std::endl;
+            }
+        } catch (...) {
+            *inputValue = std::to_string(autoSaveIntervalSeconds); // Reset to current value if invalid
+            std::cout << "Invalid auto-save interval format: " << *inputValue << std::endl;
+        }
+    }
 }
 
 bool Application::handleScrollWheel() {
@@ -962,7 +882,16 @@ Row* Application::topRow() {
 
         // Load
         button(
-            Modifier().align(Align::LEFT | Align::CENTER_Y).setHeight(.75f).setfixedWidth(96).setColor(button_color),
+            Modifier()
+                .align(Align::LEFT | Align::CENTER_Y)
+                .setHeight(.75f)
+                .setfixedWidth(96)
+                .setColor(button_color)
+                .onLClick([&](){
+                    std::string path = selectFile({"*.mpf"});
+                    if (!path.empty())
+                        loadComposition(path);
+                }),
             ButtonStyle::Pill, 
             "load", 
             resources.dejavuSansFont, 
@@ -976,7 +905,14 @@ Row* Application::topRow() {
             Modifier()
                 .align(Align::LEFT | Align::CENTER_Y)
                 .setfixedWidth(96).setHeight(.75f)
-                .setColor(button_color),
+                .setColor(button_color)
+                .onLClick([&](){
+                    uiState.saveDirectory = selectDirectory();
+                    if (engine.saveState(uiState.saveDirectory + "/" + engine.getCurrentCompositionName() + ".mpf"))
+                        std::cout << "Project saved successfully." << std::endl;
+                    else
+                        std::cerr << "Failed to save project." << std::endl;
+                }),
             ButtonStyle::Pill,
             "save",
             resources.dejavuSansFont,
@@ -990,7 +926,21 @@ Row* Application::topRow() {
             Modifier()
                 .align(Align::CENTER_X | Align::CENTER_Y)
                 .setfixedWidth(96).setHeight(.75f)
-                .setColor(button_color),
+                .setColor(button_color)
+                .onLClick([&](){
+                    playing = !playing;
+                    if (playing) {
+                        std::cout << "Playing audio..." << std::endl;
+                        engine.play();
+                        getButton("play")->setText("pause");
+                    } else {
+                        std::cout << "Pausing audio..." << std::endl;
+                        engine.pause();
+                        engine.setPosition(0.0);
+                        getButton("play")->setText("play");
+                    }
+                    shouldForceUpdate = true;
+                }),
             ButtonStyle::Pill,
             "play",
             resources.dejavuSansFont,
@@ -1001,7 +951,18 @@ Row* Application::topRow() {
         spacer(Modifier().setfixedWidth(12).align(Align::RIGHT)),
 
         button(
-            Modifier().align(Align::RIGHT | Align::CENTER_Y).setHeight(.75f).setfixedWidth(96).setColor(button_color),
+            Modifier()
+                .align(Align::RIGHT | Align::CENTER_Y)
+                .setHeight(.75f)
+                .setfixedWidth(96)
+                .setColor(button_color)
+                .onLClick([&](){
+                    showSettings = !showSettings;
+                    const std::string pageToShow = showSettings ? "settings" : "timeline";
+                    ui->switchToPage(pageToShow);
+                    currentPage = pageToShow;
+                    shouldForceUpdate = true;
+                }),
             ButtonStyle::Pill,
             "settings",
             resources.dejavuSansFont,
@@ -1011,11 +972,19 @@ Row* Application::topRow() {
 
         spacer(Modifier().setfixedWidth(12).align(Align::RIGHT)),
 
+        // Mixer
         button(
             Modifier()
                 .align(Align::RIGHT | Align::CENTER_Y)
                 .setfixedWidth(96).setHeight(.75f)
-                .setColor(button_color),
+                .setColor(button_color)
+                .onLClick([&](){
+                    showMixer = !showMixer;
+                    const std::string pageToShow = showMixer ? "mixer" : "timeline";
+                    ui->switchToPage(pageToShow);
+                    currentPage = pageToShow;
+                    shouldForceUpdate = true;
+                }),
             ButtonStyle::Pill,
             "mixer",
             resources.dejavuSansFont,
@@ -1023,20 +992,6 @@ Row* Application::topRow() {
             "mixer"
         ),
         
-        spacer(Modifier().setfixedWidth(8).align(Align::RIGHT)),
-
-        // + Track
-        button(
-            Modifier()
-                .align(Align::RIGHT | Align::CENTER_Y)
-                .setfixedWidth(96).setHeight(.75f)
-                .setColor(button_color),
-            ButtonStyle::Pill,
-            "+ track",
-            resources.dejavuSansFont,
-            secondary_text_color,
-            "new_track"
-        ),
         spacer(Modifier().setfixedWidth(16).align(Align::RIGHT)),
     });
 }
@@ -1089,7 +1044,14 @@ ScrollableColumn* Application::fileBrowser() {
                 .setfixedHeight(48)
                 .setWidth(0.8f)
                 .setColor(alt_button_color)
-                .align(Align::CENTER_X),
+                .align(Align::CENTER_X)
+                .onLClick([&](){
+                    std::string selectedDir = selectDirectory();
+                    if (!selectedDir.empty() && std::filesystem::is_directory(selectedDir)) {
+                        fileTree.setRootDirectory(selectedDir);
+                        buildFileTreeUI();
+                    }
+                }),
             ButtonStyle::Pill,
             "Browse Files",
             resources.dejavuSansFont,
@@ -2170,7 +2132,7 @@ void Application::rebuildUI() {
     browserAndMixerElement    = browserAndMixer();
     fxRackElement             = fxRack();
 
-    if (timelineElement) timelineElement->setScrollSpeed(20.f);
+    // if (timelineElement) timelineElement->setScrollSpeed(20.f);
     if (mixerElement)    mixerElement->setScrollSpeed(20.f);
 
     contextMenu = freeColumn(
