@@ -22,12 +22,6 @@ class Effect;
 
 /**
  * @brief Main audio engine for playback and composition management.
- * 
- * Responsibilities:
- * - Manages audio device input/output.
- * - Handles playback transport (play, pause, stop).
- * - Manages the current Composition (project/song).
- * - Processes and mixes audio from multiple tracks.
  */
 class Engine : public juce::AudioIODeviceCallback {
 public:
@@ -53,11 +47,11 @@ public:
     void setBpm(double newBpm);
     
     // Track Management 
-    void addTrack(const std::string& name = "");
+    void addTrack(const std::string& name = "", const std::string& samplePath = "");
     void removeTrack(int index);
     Track* getTrack(int index);
     Track* getTrackByName(const std::string& name);
-    std::vector<Track*>& getAllTracks();
+    std::vector<std::unique_ptr<Track>>& getAllTracks(); // Changed to return reference to vector of unique_ptrs
     Track* getMasterTrack();
     
     // Project State
@@ -80,6 +74,10 @@ public:
     std::string getCurrentCompositionName() const;
     void setCurrentCompositionName(const std::string& newName);
 
+    inline double getSampleRate() const { return sampleRate; }
+    inline void setSampleRate(double newSampleRate)
+    { sampleRate = newSampleRate; std::cout << "[Engine] Sample rate set to " << newSampleRate << std::endl;}
+
     void undo();
     void redo();
 
@@ -100,22 +98,14 @@ private:
 
 /**
  * @brief Represents a musical composition/project.
- * 
- * Contains:
- * - Name
- * - BPM (beats per minute)
- * - Time signature
- * - Collection of tracks
  */
 struct Composition {
     std::string name = "untitled";
     double bpm = 120;
-
-    // Default 4/4 time signature
     int timeSigNumerator = 4;
     int timeSigDenominator = 4;
 
-    std::vector<Track*> tracks;
+    std::vector<std::unique_ptr<Track>> tracks; // Changed to unique_ptr
 
     Composition();
     Composition(const std::string& compositionPath);
@@ -124,11 +114,6 @@ struct Composition {
 
 /**
  * @brief Represents a single track in a composition.
- * 
- * Holds:
- * - A set of audio clips.
- * - Volume (in decibels) and pan (-1 left, 0 center, 1 right).
- * - Mixing logic for this track.
  */
 class Track {
 public:
@@ -172,30 +157,22 @@ private:
     bool soloed = false;
 
     std::vector<AudioClip> clips;
-    AudioClip* referenceClip = nullptr;
+    std::unique_ptr<AudioClip> referenceClip; // Changed to unique_ptr
 
     juce::AudioFormatManager& formatManager;
 };
 
 /**
  * @brief Represents a single audio clip on a track.
- * 
- * Parameters:
- * - Source audio file (e.g., WAV, MP3)
- * - Start time in the composition
- * - Offset into the audio file
- * - Duration
- * - Volume relative to the track
  */
 struct AudioClip {
-    juce::File sourceFile;      // mp3, wav, flac, ... file
-    double startTime;           // where it is played in the composition
-    double offset;              // where the audio starts relative to the whole clip
+    juce::File sourceFile;
+    double startTime;
+    double offset;
     double duration;
-    float volume;               // percentage of track volume
+    float volume;
 
     AudioClip();
-
     AudioClip(
         const juce::File& sourceFile, 
         double startTime, 
@@ -207,20 +184,18 @@ struct AudioClip {
 
 class Effect {
 public:
-
 private:
-
 };
 
 inline float floatToDecibels(float linear, float minusInfinityDb = -100.0f) {
-    constexpr float reference = 0.75f; // 0.75f maps to 0 dB
+    constexpr float reference = 0.75f;
     if (linear <= 0.0f)
         return minusInfinityDb;
     return 20.f * std::log10(linear / reference);
 }
 
 inline float decibelsToFloat(float db, float minusInfinityDb = -100.0f) {
-    constexpr float reference = 0.75f; // 0.75f maps to 0 dB
+    constexpr float reference = 0.75f;
     if (db <= minusInfinityDb)
         return 0.0f;
     return reference * std::pow(10.0f, db / 20.f);

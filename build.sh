@@ -20,6 +20,7 @@ case "${UNAME_OUT}" in
 esac
 
 # Parse arguments
+
 for arg in "$@"; do
     case "$arg" in
         release|Release)
@@ -27,6 +28,9 @@ for arg in "$@"; do
             ;;
         debug|Debug)
             BUILD_TYPE="Debug"
+            ;;
+        rdbi|RDBI)
+            BUILD_TYPE="RelWithDebInfo"
             ;;
         clean|Clean)
             DO_CLEAN=1

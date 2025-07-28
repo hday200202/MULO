@@ -3,166 +3,74 @@
 #include "UILO/UILO.hpp"
 #include "Engine.hpp"
 #include "UIData.hpp"
-#include "TimelineHelpers.hpp"
 #include "FileTree.hpp"
 #include "MULOComponent.hpp"
-#include "TimelineComponent.hpp"
+#include "Components/KBShortcuts.hpp"
+#include "Components/TimelineComponent.hpp"
+#include "Components/AppControls.hpp"
+#include "Components/FileBrowserComponent.hpp"
+#include "Components/SettingsComponent.hpp"
 
+#include <juce_core/juce_core.h>
 #include <juce_gui_basics/juce_gui_basics.h>
-#include <chrono>
-#include <map>
 #include <nlohmann/json.hpp>
 
-using namespace uilo;
-/**
- * @brief Main application class for the audio workstation.
- *
- * Handles:
- * - UI initialization and management using UILO.
- * - Audio engine state and project management.
- * - Undo/redo stack for project state.
- * - User input, event handling, and UI updates.
- * - File operations (load/save/select).
- * - Auto-save functionality loaded from and persisted to config.json.
- */
 class Application {
 public:
+    Column* baseContainer = nullptr;
     bool shouldForceUpdate = false;
+    bool freshRebuild = false;
+    std::unique_ptr<UILO> ui = nullptr;
 
     Application();
     ~Application();
 
     void update();
     void render();
-    void rebuildUI(); 
-    bool isRunning() const;
+    void handleEvents();
+    inline bool isRunning() const { return running; }
+
+    inline Container* getComponentLayout(const std::string& componentName) { 
+        if (muloComponents.find(componentName) != muloComponents.end()) 
+            return muloComponents[componentName]->getLayout(); 
+        return nullptr;
+    }
+    
+    // Get base container for a specific page
+    inline Container* getPageBaseContainer() { return baseContainer; }
+    
+    // Helper to set parent container for components during initialization
+    void setComponentParentContainer(const std::string& componentName, Container* parent);
+
+    std::string selectDirectory();
+    std::string selectFile(std::initializer_list<std::string> filters);
+
+    inline const sf::RenderWindow& getWindow() const { return window; }
+    inline void requestUIRebuild() { pendingUIRebuild = true; }
+    inline void requestFullscreenToggle() { pendingFullscreenToggle = true; }
 
 private:
-    TimelineComponent timelineComponent;
+    sf::Clock deltaClock;
+    std::unordered_map<std::string, std::unique_ptr<Page>> uiloPages;
+    std::unordered_map<std::string, std::unique_ptr<MULOComponent>> muloComponents;
 
-    // Core systems
     sf::RenderWindow window;
     sf::View windowView;
     sf::VideoMode screenResolution;
-    std::string currentPage = "timeline";
-    std::string pendingLoadPath;
 
     // Core engine and UI
     Engine engine;
-    UILO* ui = nullptr;
     UIState uiState;
     UIResources resources;
-    FileTree fileTree;
 
-    // Application state
     bool running = false;
-    bool showMixer = false;
-    bool showSettings = false;
-    bool showThemeDropdown = false;
-    bool showSampleRateDropdown = false;
-    bool textInputActive = false;
-    bool projectNameInputActive = false;
-    bool bpmInputActive = false;
-    bool autosaveInputActive = false;
-    bool playing = false;
-    bool uiChanged = false;
-    bool fileTreeNeedsRebuild = false;
+    bool fullscreen = false;
+    bool pendingUIRebuild = false;
+    bool pendingFullscreenToggle = false;
 
-    float timelineOffset = 0.f;
-    std::string textInputValue = "";
-    std::string projectNameValue = "untitled";
-    std::string bpmValue = "120";
-    std::string autosaveValue = "300";
+    size_t forceUpdatePoll = 0;
 
-    // Tooltip timing
-    sf::Clock toolTipTimer;
-    std::string currentHoveredButton = "";
-    bool tooltipShown = false;
-
-    // Undo/Redo stacks
-    std::stack<std::string> undoStack;
-    std::stack<std::string> redoStack;
-
-    // UI Components
-    Row* topRowElement;
-    ScrollableColumn* fileBrowserElement;
-    Row* masterTrackElement;
-    Container* timelineElement;
-    ScrollableRow* mixerElement;
-    Column* masterMixerTrackElement;
-    Row* browserAndTimelineElement;
-    Row* browserAndMixerElement;
-    Row* fxRackElement;
-    FreeColumn* contextMenu;
-    FreeColumn* toolTip;
-    ScrollableColumn* settingsColumnElement;
-    FreeColumn* dropdownMenu;
-    FreeColumn* sampleRateDropdownMenu;
-
-    // Auto-save configuration
-    int autoSaveIntervalSeconds = 300;  // loaded from config.json (default 5m)
-    sf::Clock autoSaveTimer;              // tracks elapsed time since last save
-    std::string lastSavePath;              // path for repeated auto-saves
-
-    // UI configuration (saved to config.json)
-    std::string selectedThemeName = "Default";   // current selected theme name
-    std::string currentSampleRate = "44100";     // current selected sample rate
-
-    // Filename for configuration storage
-    const std::string configFilePath = "config.json";
-
-    // Initialization methods
     void initUIResources();
-
-    // Input handling
-    bool handleContextMenu();
-    bool handleUIButtons();
-    bool handleKeyboardShortcuts();
-    bool handleTextInput();
-    void applyTextInputChanges(std::string* inputValue);
-    bool handleScrollWheel();
-    bool handleTrackEvents();
-    bool handleToolTips();
-
-
-    std::string toolTipMessage = "";
-
-    // UI creation methods
-    Row* topRow();
-    Row* browserAndTimeline();
-    Row* browserAndMixer();
-    ScrollableColumn* fileBrowser();
-    ScrollableColumn* timeline();
-    Row* fxRack();
-    Row* track(const std::string& trackName, Align alignment, float volume = 1.0f, float pan = 0.0f);
-    Column* mixerTrack(const std::string& trackName, Align alignment, float volume = 1.0f, float pan = 0.0f);
-    Column* masterMixerTrack(const std::string& trackName = "Master", Align alignment = Align::LEFT, float volume = 1.0f, float pan = 0.0f);
-    Row* masterTrack();
-    ScrollableRow* mixer();
-    ScrollableColumn* settingsColumn();
-    FreeColumn* generateDropdown(sf::Vector2f position, const std::vector<std::string>& items);
-    FreeColumn* generateSampleRateDropdown(sf::Vector2f position, const std::vector<std::string>& items);
-
-    // File operations
-    std::string selectDirectory();
-    std::string selectFile(std::initializer_list<std::string> filters);
-    void newTrack(const std::string& samplePath);
-    void loadComposition(const std::string& path);
-    void rebuildUIFromEngine();
-    void buildFileTreeUI();
-    void buildFileTreeUIRecursive(const FileTree& tree, int indentLevel);
-
-    // Undo/Redo
-    void undo();
-    void redo();
-
-    // Helper functions
-    float getDistance(sf::Vector2f point1, sf::Vector2f point2);
-    void toggleTreeNodeByPath(const std::string& path);
-
-    // Auto-save routines
-    void loadConfig();   // read autoSaveIntervalSeconds from config.json
-    void saveConfig();   // write current autoSaveIntervalSeconds to config.json
-    void checkAutoSave(); // called within update()
-    void applyThemeByName(const std::string& themeName); // apply theme based on name
+    void rebuildUI();
+    void toggleFullscreen();
 };

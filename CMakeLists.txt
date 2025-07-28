@@ -170,3 +170,16 @@ add_custom_target(copy_assets ALL
     COMMENT "Copying assets folder to $<TARGET_FILE_DIR:MULO>/assets"
 )
 
+# Enable AddressSanitizer and LeakSanitizer for debug and RelWithDebInfo builds
+option(ENABLE_SANITIZERS "Enable AddressSanitizer and LeakSanitizer" ON)
+if(ENABLE_SANITIZERS)
+    if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+        set(SANITIZER_FLAGS "-fsanitize=address -fsanitize=leak -fno-omit-frame-pointer")
+        set(SANITIZER_LINK_FLAGS "-fsanitize=address -fsanitize=leak")
+        foreach(build_type DEBUG RELWITHDEBINFO)
+            set(CMAKE_CXX_FLAGS_${build_type} "${CMAKE_CXX_FLAGS_${build_type}} ${SANITIZER_FLAGS}")
+            set(CMAKE_EXE_LINKER_FLAGS_${build_type} "${CMAKE_EXE_LINKER_FLAGS_${build_type}} ${SANITIZER_LINK_FLAGS}")
+        endforeach()
+    endif()
+endif()
+

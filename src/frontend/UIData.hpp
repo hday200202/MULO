@@ -6,6 +6,9 @@
 #include <SFML/Graphics/Color.hpp>
 #include "Engine.hpp"
 
+// Forward declaration
+struct UITheme;
+
 struct TrackData {
     std::string name;
     float volume = 1.0f;
@@ -19,10 +22,13 @@ struct TrackData {
 struct UIState {
     std::string fileBrowserDirectory = "";
     std::string saveDirectory = "";
-    std::string selectedTrackName   = "Master";
-    int         trackCount          = 0;
+    std::string selectedTrackName = "Master";
+    std::string selectedTheme = "Dark";
+    int trackCount = 0;
     float timelineZoomLevel = 1.f;
-    int         autoSaveIntervalSeconds = 300; // default 5 minutes
+    int autoSaveIntervalSeconds = 300; // default 5 minutes
+
+    bool settingsShown = false;
 
     TrackData masterTrack{"Master"};
     std::unordered_map<std::string, TrackData> tracks;
@@ -34,46 +40,30 @@ struct UIResources {
     std::string ubuntuBoldFont;
     std::string ubuntuMonoFont;
     std::string ubuntuMonoBoldFont;
+    UITheme* activeTheme = nullptr;
     // Add more resources as needed
 };
 
-// Colors
-static const sf::Color button_color = sf::Color::Red;
-static const sf::Color track_color = sf::Color(155, 155, 155);
-static const sf::Color track_row_color = sf::Color(120, 120, 120);
-static const sf::Color master_track_color = sf::Color(155, 155, 155);
-static const sf::Color mute_color = sf::Color::Red;
-static const sf::Color foreground_color = sf::Color(200, 200, 200);
-static const sf::Color primary_text_color = sf::Color::Black;
-static const sf::Color secondary_text_color = sf::Color::White;
-static const sf::Color not_muted_color = sf::Color(50, 50, 50);
-static const sf::Color middle_color = sf::Color(100, 100, 100);
-static const sf::Color alt_button_color = sf::Color(120, 120, 120);
-static const sf::Color white = sf::Color::White;
-static const sf::Color black = sf::Color::Black;
-static const sf::Color slider_knob_color = sf::Color::White;
-static const sf::Color slider_bar_color = sf::Color::Black;
-
 // Theme Structure
 struct UITheme {
-    sf::Color buttonColor;
-    sf::Color trackColor;
-    sf::Color trackRowColor;
-    sf::Color masterTrackColor;
-    sf::Color muteColor;
-    sf::Color foregroundColor;
-    sf::Color primaryTextColor;
-    sf::Color secondaryTextColor;
-    sf::Color notMutedColor;
-    sf::Color middleColor;
-    sf::Color altButtonColor;
+    sf::Color button_color;
+    sf::Color track_color;
+    sf::Color track_row_color;
+    sf::Color master_track_color;
+    sf::Color mute_color;
+    sf::Color foreground_color;
+    sf::Color primary_text_color;
+    sf::Color secondary_text_color;
+    sf::Color not_muted_color;
+    sf::Color middle_color;
+    sf::Color alt_button_color;
     sf::Color white;
     sf::Color black;
-    sf::Color sliderKnobColor;
-    sf::Color sliderBarColor;
-    sf::Color clipColor;
-    sf::Color lineColor;
-    sf::Color waveformColor;
+    sf::Color slider_knob_color;
+    sf::Color slider_bar_color;
+    sf::Color clip_color;
+    sf::Color line_color;
+    sf::Color wave_form_color;
     
     UITheme(
         sf::Color btn = sf::Color::Red,
@@ -94,10 +84,10 @@ struct UITheme {
         sf::Color clip = sf::Color(100, 150, 200),
         sf::Color line = sf::Color(80, 80, 80),
         sf::Color waveform = sf::Color(0, 150, 255)
-    ) : buttonColor(btn), trackColor(track), trackRowColor(trackRow), masterTrackColor(masterTrack),
-        muteColor(mute), foregroundColor(fg), primaryTextColor(primaryText), secondaryTextColor(secondaryText),
-        notMutedColor(notMuted), middleColor(middle), altButtonColor(altBtn), white(w), black(b),
-        sliderKnobColor(sliderKnob), sliderBarColor(sliderBar), clipColor(clip), lineColor(line), waveformColor(waveform) {}
+    ) : button_color(btn), track_color(track), track_row_color(trackRow), master_track_color(masterTrack),
+        mute_color(mute), foreground_color(fg), primary_text_color(primaryText), secondary_text_color(secondaryText),
+        not_muted_color(notMuted), middle_color(middle), alt_button_color(altBtn), white(w), black(b),
+        slider_knob_color(sliderKnob), slider_bar_color(sliderBar), clip_color(clip), line_color(line), wave_form_color(waveform) {}
 };
 
 namespace Themes {
@@ -209,32 +199,118 @@ namespace Themes {
         sf::Color(110, 120, 100),     // lineColor - Olive Gray
         sf::Color(120, 150, 100)      // waveformColor - Light Green
     );
+    
+    // Ocean Theme
+    const UITheme Ocean = UITheme(
+        sf::Color(50, 120, 180),      // buttonColor - Deep Blue
+        sf::Color(30, 60, 90),        // trackColor - Navy
+        sf::Color(40, 80, 120),       // trackRowColor - Blue Gray
+        sf::Color(60, 130, 180),      // masterTrackColor - Light Blue
+        sf::Color(200, 80, 80),       // muteColor - Coral Red
+        sf::Color(20, 40, 60),        // foregroundColor - Deep Navy
+        sf::Color(180, 220, 240),     // primaryTextColor - Pale Blue
+        sf::Color(120, 180, 200),     // secondaryTextColor - Muted Cyan
+        sf::Color(30, 50, 70),        // notMutedColor
+        sf::Color(40, 90, 120),       // middleColor - Blue Gray
+        sf::Color(80, 180, 200),      // altButtonColor - Aqua
+        sf::Color::White,             // white
+        sf::Color(10, 20, 30),        // black - Deepest Blue
+        sf::Color(60, 180, 200),      // sliderKnobColor - Aqua
+        sf::Color(30, 90, 120),       // sliderBarColor - Blue Gray
+        sf::Color(80, 180, 220),      // clipColor - Light Aqua
+        sf::Color(100, 160, 200),     // lineColor - Soft Blue
+        sf::Color(120, 200, 240)      // waveformColor - Bright Blue
+    );
+    
+    // Sunset Theme
+    const UITheme Sunset = UITheme(
+        sf::Color(255, 120, 60),      // buttonColor - Orange
+        sf::Color(200, 90, 60),       // trackColor - Burnt Orange
+        sf::Color(255, 180, 120),     // trackRowColor - Peach
+        sf::Color(255, 140, 80),      // masterTrackColor - Light Orange
+        sf::Color(200, 60, 60),       // muteColor - Red
+        sf::Color(120, 60, 40),       // foregroundColor - Brown
+        sf::Color(255, 240, 220),     // primaryTextColor - Cream
+        sf::Color(255, 200, 160),     // secondaryTextColor - Light Peach
+        sf::Color(120, 60, 40),       // notMutedColor
+        sf::Color(255, 170, 100),     // middleColor - Light Orange
+        sf::Color(255, 200, 120),     // altButtonColor - Yellow Peach
+        sf::Color::White,             // white
+        sf::Color(60, 30, 20),        // black - Deep Brown
+        sf::Color(255, 180, 80),      // sliderKnobColor - Gold
+        sf::Color(200, 120, 60),      // sliderBarColor - Orange Brown
+        sf::Color(255, 160, 80),      // clipColor - Orange
+        sf::Color(255, 200, 120),     // lineColor - Light Yellow
+        sf::Color(255, 180, 120)      // waveformColor - Peach
+    );
+    
+    // Monochrome Theme
+    const UITheme Monochrome = UITheme(
+        sf::Color(120, 120, 120),     // buttonColor - Gray
+        sf::Color(80, 80, 80),        // trackColor - Dark Gray
+        sf::Color(100, 100, 100),     // trackRowColor - Medium Gray
+        sf::Color(150, 150, 150),     // masterTrackColor - Light Gray
+        sf::Color(200, 80, 80),       // muteColor - Red
+        sf::Color(60, 60, 60),        // foregroundColor - Dark Gray
+        sf::Color(230, 230, 230),     // primaryTextColor - White
+        sf::Color(230, 230, 230),     // secondaryTextColor - Light Gray
+        sf::Color(40, 40, 40),        // notMutedColor
+        sf::Color(120, 120, 120),     // middleColor - Gray
+        sf::Color(50, 50, 50),        // altButtonColor - Light Gray
+        sf::Color::White,             // white
+        sf::Color(20, 20, 20),        // black - Very Dark
+        sf::Color(180, 180, 180),     // sliderKnobColor - Light Gray
+        sf::Color(100, 100, 100),     // sliderBarColor - Medium Gray
+        sf::Color(150, 150, 150),     // clipColor - Light Gray
+        sf::Color(120, 120, 120),     // lineColor - Gray
+        sf::Color(50, 50, 50)      // waveformColor - White
+    );
+    
+    // Solarized Theme
+    const UITheme Solarized = UITheme(
+        sf::Color(38, 139, 210),      // buttonColor - Blue
+        sf::Color(101, 123, 131),     // trackColor - Base1
+        sf::Color(131, 148, 150),     // trackRowColor - Base0
+        sf::Color(147, 161, 161),     // masterTrackColor - Base01
+        sf::Color(220, 50, 47),       // muteColor - Red
+        sf::Color(0, 43, 54),         // foregroundColor - Base02
+        sf::Color(253, 246, 227),     // primaryTextColor - Base3
+        sf::Color(238, 232, 213),     // secondaryTextColor - Base2
+        sf::Color(88, 110, 117),      // notMutedColor - Base00
+        sf::Color(133, 153, 0),       // middleColor - Green
+        sf::Color(42, 161, 152),      // altButtonColor - Cyan
+        sf::Color::White,             // white
+        sf::Color(7, 54, 66),         // black - Base03
+        sf::Color(181, 137, 0),       // sliderKnobColor - Yellow
+        sf::Color(203, 75, 22),       // sliderBarColor - Orange
+        sf::Color(38, 139, 210),      // clipColor - Blue
+        sf::Color(42, 161, 152),      // lineColor - Cyan
+        sf::Color(133, 153, 0)        // waveformColor - Green
+    );
+
+    // List of all theme names
+    const std::initializer_list<std::string> AllThemeNames = {
+        "Default",
+        "Dark",
+        "Light",
+        "Cyberpunk",
+        "Forest",
+        "Ocean",
+        "Sunset",
+        "Monochrome",
+        "Solarized"
+    };
 }
 
-// Current active theme (defaults to Default)
-static UITheme currentTheme = Themes::Dark;
-
-// Dynamic color macros (use current theme)
-#define button_color currentTheme.buttonColor
-#define track_color currentTheme.trackColor
-#define track_row_color currentTheme.trackRowColor
-#define master_track_color currentTheme.masterTrackColor
-#define mute_color currentTheme.muteColor
-#define foreground_color currentTheme.foregroundColor
-#define primary_text_color currentTheme.primaryTextColor
-#define secondary_text_color currentTheme.secondaryTextColor
-#define not_muted_color currentTheme.notMutedColor
-#define middle_color currentTheme.middleColor
-#define alt_button_color currentTheme.altButtonColor
-#define white currentTheme.white
-#define black currentTheme.black
-#define slider_knob_color currentTheme.sliderKnobColor
-#define slider_bar_color currentTheme.sliderBarColor
-#define clip_color currentTheme.clipColor
-#define line_color currentTheme.lineColor
-#define waveform_color currentTheme.waveformColor
-
 // Helper function to apply a theme
-inline void applyTheme(const UITheme& theme) {
-    currentTheme = theme;
+inline void applyTheme(UIResources& resources, const std::string& themeName) {
+    if (themeName == "Dark") resources.activeTheme = const_cast<UITheme*>(&Themes::Dark);
+    else if (themeName == "Light") resources.activeTheme = const_cast<UITheme*>(&Themes::Light);
+    else if (themeName == "Cyberpunk") resources.activeTheme = const_cast<UITheme*>(&Themes::Cyberpunk);
+    else if (themeName == "Forest") resources.activeTheme = const_cast<UITheme*>(&Themes::Forest);
+    else if (themeName == "Ocean") resources.activeTheme = const_cast<UITheme*>(&Themes::Ocean);
+    else if (themeName == "Sunset") resources.activeTheme = const_cast<UITheme*>(&Themes::Sunset);
+    else if (themeName == "Monochrome") resources.activeTheme = const_cast<UITheme*>(&Themes::Monochrome);
+    else if (themeName == "Solarized") resources.activeTheme = const_cast<UITheme*>(&Themes::Solarized);
+    else resources.activeTheme = const_cast<UITheme*>(&Themes::Default);
 }
