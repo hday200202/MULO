@@ -243,7 +243,6 @@ void Application::rebuildUI() {
     applyTheme(resources, uiState.selectedTheme);
 
     cleanup();
-    initUIResources();
     initUI();
     loadComponents();
 
