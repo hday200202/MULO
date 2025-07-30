@@ -206,9 +206,6 @@ void Application::loadComponents() {
              continue;
         }
         component->setAppRef(this);
-        component->setEngineRef(&engine);
-        component->setResourcesRef(&resources);
-        component->setUIStateRef(&uiState);
     }
 
     // Init MULO Components: loop until all are initialized or hit 15 attempts
@@ -237,6 +234,8 @@ void Application::loadComponents() {
 void Application::rebuildUI() {
     unloadAllPlugins();
     // Clear everything
+    muloComponents.clear();
+
     applyTheme(resources, uiState.selectedTheme);
 
     cleanup();
@@ -267,7 +266,8 @@ void Application::cleanup() {
 // Plugin System Implementation
 void Application::scanAndLoadPlugins() {
     std::vector<std::string> pluginDirs = {
-        "./extensions/"
+        "extensions/",
+        "../extensions/"
     };
 
     for (const auto& dir : pluginDirs) {
@@ -397,7 +397,10 @@ void Application::unloadPlugin(const std::string& pluginName) {
     // Remove from components map first - this destroys the wrapper and calls plugin cleanup
     auto componentIt = muloComponents.find(pluginName);
     if (componentIt != muloComponents.end()) {
-        // Explicitly reset the component to trigger cleanup
+        // Defensive: set plugin pointer to nullptr before erasing
+        if (auto* wrapper = dynamic_cast<PluginComponentWrapper*>(componentIt->second.get())) {
+            wrapper->plugin = nullptr;
+        }
         componentIt->second.reset();
         muloComponents.erase(componentIt);
     }
@@ -443,4 +446,13 @@ void Application::unloadAllPlugins() {
     for (const auto& name : pluginNames) {
         unloadPlugin(name);
     }
+
+    sliders.clear();
+    containers.clear();
+    texts.clear();
+    spacers.clear();
+    buttons.clear();
+    dropdowns.clear();
+    uilo_owned_elements.clear();
+    high_priority_elements.clear();
 }

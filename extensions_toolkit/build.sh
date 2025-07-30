@@ -3,10 +3,7 @@
 # Exit the script immediately if any command fails
 set -e
 
-echo "Updating Git submodules..."
-git submodule update --init --recursive
-
-BUILD_TYPE="Debug"
+BUILD_TYPE="Release"
 BUILD_DIR="build"
 DO_CLEAN=0
 
@@ -14,13 +11,12 @@ DO_CLEAN=0
 UNAME_OUT="$(uname -s)"
 case "${UNAME_OUT}" in
     Linux*)     PLATFORM="Linux";;
-    Darwin*)    PLATFORM="Mac";;
+    Darwin*)    PLATFORM="Darwin";;
     CYGWIN*|MINGW*|MSYS*) PLATFORM="Windows";;
     *)          PLATFORM="Unknown";;
 esac
 
 # Parse arguments
-
 for arg in "$@"; do
     case "$arg" in
         release|Release)
@@ -47,9 +43,8 @@ if [ $DO_CLEAN -eq 1 ]; then
 fi
 
 echo "Platform detected: $PLATFORM"
-echo "Configuring build ($BUILD_TYPE)..."
+echo "Configuring extensions build ($BUILD_TYPE)..."
 
-# Use Ninja if available for faster builds, otherwise use default generator
 if command -v ninja &> /dev/null; then
     echo "Using Ninja generator for faster builds"
     cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DCMAKE_LINKER=lld -G Ninja
@@ -57,36 +52,24 @@ else
     cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=$BUILD_TYPE
 fi
 
-echo "Building ($BUILD_TYPE)..."
+echo "Building extensions ($BUILD_TYPE)..."
 cmake --build "$BUILD_DIR" --config $BUILD_TYPE -j $(nproc 2>/dev/null || sysctl -n hw.ncpu)
 
-echo "Done building."
+echo "Done building extensions."
 
-# Determine executable path
-case "$PLATFORM" in
-    Windows)
-        EXE_PATH="bin/Windows/$BUILD_TYPE/MULO.exe"
-        ;;
-    Mac)
-        EXE_PATH="bin/Mac/$BUILD_TYPE/MULO"
-        ;;
-    Linux)
-        EXE_PATH="bin/Linux/$BUILD_TYPE/MULO"
-        ;;
-    *)
-        echo "Unknown platform, cannot determine executable path."
-        exit 1
-        ;;
-esac
-
-if [[ -f "$EXE_PATH" ]]; then
-    echo "Running $EXE_PATH"
-    EXE_DIR=$(dirname "$EXE_PATH")
-    EXE_FILE=$(basename "$EXE_PATH")
-    pushd "$EXE_DIR" > /dev/null
-    chmod +x "$EXE_FILE"
-    "./$EXE_FILE"
-    popd > /dev/null
+# Show built extensions
+EXTENSIONS_PATH="bin/$PLATFORM/$BUILD_TYPE"
+if [[ -d "$EXTENSIONS_PATH" ]]; then
+    echo "Extensions built in: $EXTENSIONS_PATH"
+    ls -la "$EXTENSIONS_PATH"
 else
-    echo "Executable not found: $EXE_PATH"
+    echo "Extensions directory not found: $EXTENSIONS_PATH"
 fi
+
+# Copy extensions to ../bin/$PLATFORM/$BUILD_TYPE/extensions
+DEST_DIR="../bin/$PLATFORM/$BUILD_TYPE/extensions"
+echo "Copying extensions to $DEST_DIR"
+mkdir -p "$DEST_DIR"
+find "$EXTENSIONS_PATH" -maxdepth 1 -type f -name "*.so" -exec cp {} "$DEST_DIR" \;
+
+echo "Extensions copied to $DEST_DIR"

@@ -42,6 +42,8 @@ public:
     bool shouldForceUpdate = false;
     bool freshRebuild = false;
     std::unique_ptr<UILO> ui = nullptr;
+    UIState uiState;
+    UIResources resources;
 
     Application();
     ~Application();
@@ -62,13 +64,8 @@ public:
         return (it != muloComponents.end()) ? it->second.get() : nullptr;
     }
     
-    // Get base container for a specific page
     inline Container* getPageBaseContainer() { return baseContainer; }
-    
-    // Get main content row for component layout
     inline Row* getMainContentRow() { return mainContentRow; }
-    
-    // Helper to set parent container for components during initialization
     void setComponentParentContainer(const std::string& componentName, Container* parent);
 
     std::string selectDirectory();
@@ -77,6 +74,47 @@ public:
     inline const sf::RenderWindow& getWindow() const { return window; }
     inline void requestUIRebuild() { pendingUIRebuild = true; }
     inline void requestFullscreenToggle() { pendingFullscreenToggle = true; }
+
+    // Engine interface
+    inline Track* getMasterTrack() 
+    { return engine.getMasterTrack(); }
+
+    inline Track* getTrack(const std::string& name)
+    { return engine.getTrackByName(name); }
+
+    inline std::vector<std::unique_ptr<Track>>& getAllTracks()
+    { return engine.getAllTracks(); }
+
+    inline void addTrack(const std::string& name, const std::string& samplePath)
+    { engine.addTrack(name, samplePath); }
+
+    inline void removeTrack(const std::string& name) 
+    { engine.removeTrackByName(name); }
+
+    inline void play() { engine.play(); }
+    inline void pause() { engine.pause(); }
+    inline void setSavedPosition(double seconds) { engine.setPosition(seconds); }
+    inline bool isPlaying() const { return engine.isPlaying(); }
+
+    inline void setBpm(float bpm) { engine.setBpm(bpm); }
+    inline float getBpm() const { return engine.getBpm(); }
+    inline double getPosition() const { return engine.getPosition(); }
+    inline void setPosition(double seconds) { engine.setPosition(seconds); }
+
+    inline AudioClip* getReferenceClip(const std::string& trackName) 
+    { return engine.getTrackByName(trackName)->getReferenceClip(); }
+
+    inline void addClipToTrack(const std::string& trackName, const AudioClip& clip) 
+    { engine.getTrackByName(trackName)->addClip(clip); }
+
+    inline void removeClipFromTrack(const std::string& trackName, size_t index) 
+    { engine.getTrackByName(trackName)->removeClip(index); }
+
+    inline double getSampleRate() const { return engine.getSampleRate(); }
+    inline void setSampleRate(const double newSampleRate) { engine.setSampleRate(newSampleRate); }
+    inline void loadComposition(const std::string& path) { engine.loadComposition(path); }
+    inline std::string getCurrentCompositionName() const { return engine.getCurrentCompositionName(); }
+    inline bool saveState(const std::string& saveDirectory) const { return engine.saveState(saveDirectory); }
 
 private:
     sf::Clock deltaClock;
@@ -89,8 +127,6 @@ private:
 
     // Core engine and UI
     Engine engine;
-    UIState uiState;
-    UIResources resources;
 
     bool running = false;
     bool fullscreen = false;
