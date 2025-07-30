@@ -25,13 +25,14 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_MINSIZEREL    ${CMAKE_SOURCE_DIR}/bin/${CMAKE
 
 # Platform-specific JUCE (using relative paths for self-contained toolkit)
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    add_subdirectory(external/linux/JUCE JUCE)
+    # Build full JUCE for extensions 
+    add_subdirectory(external/linux/JUCE)
     set(JUCE_MODULE_DIR "${CMAKE_SOURCE_DIR}/external/linux/JUCE/modules")
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
-    add_subdirectory(external/mac/JUCE JUCE)
+    add_subdirectory(external/mac/JUCE)
     set(JUCE_MODULE_DIR "${CMAKE_SOURCE_DIR}/external/mac/JUCE/modules")
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Windows")
-    add_subdirectory(external/windows/JUCE JUCE)
+    add_subdirectory(external/windows/JUCE)
     set(JUCE_MODULE_DIR "${CMAKE_SOURCE_DIR}/external/windows/JUCE/modules")
 endif()
 
@@ -133,16 +134,14 @@ endforeach()
 set(COMMON_COMPILE_DEFINITIONS
     JUCE_GLOBAL_MODULE_SETTINGS_INCLUDED=1
     JUCE_STANDALONE_APPLICATION=1
-    JUCE_SHARED_CODE=1
     JUCE_MODAL_LOOPS_PERMITTED=1
 )
 
 # Link libraries for all extensions
 foreach(target ${EXTENSION_TARGETS})
     target_link_libraries(${target} PRIVATE
-        # JUCE libraries (minimal set)
+        # JUCE libraries
         juce::juce_core
-        juce::juce_data_structures
         juce::juce_events
         juce::juce_graphics
         juce::juce_gui_basics

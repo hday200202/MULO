@@ -22,14 +22,14 @@ private:
     bool wasPlaying = false;
 };
 
-#include "AppControls.hpp"
 #include "Application.hpp"
 
-AppControls::AppControls() {}
+AppControls::AppControls() {
+    name = "app_controls";
+}
 
 AppControls::~AppControls() {
-    // Don't try to clean up buttons here - they're managed by UILO
-    // and may already be destroyed when this destructor runs
+    
 }
 
 void AppControls::init() {
@@ -190,7 +190,7 @@ bool AppControls::handleEvents() {
     return forceUpdate;
 }
 
-// Plugin interface for TimelineComponent
+// Plugin interface for AppControls
 extern "C" {
     __attribute__((visibility("default"))) PluginVTable* getPluginInterface();
 }

@@ -1,6 +1,18 @@
 cmake_minimum_required(VERSION 3.20)
 project(MULO)
 
+# Build optimizations for faster compilation
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# Use ccache if available for faster rebuilds
+find_program(CCACHE_PROGRAM ccache)
+if(CCACHE_PROGRAM)
+    set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+    set(CMAKE_C_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+    message(STATUS "Using ccache for faster builds")
+endif()
+
 # Export compile_commands.json for IDEs
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -10,14 +22,27 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE       ${CMAKE_SOURCE_DIR}/bin/${CMAKE
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${CMAKE_SOURCE_DIR}/bin/${CMAKE_SYSTEM_NAME}/RelWithDebInfo)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL    ${CMAKE_SOURCE_DIR}/bin/${CMAKE_SYSTEM_NAME}/MinSizeRel)
 
-# Platform-specific JUCE
+# Platform-specific JUCE - Optimized build
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # JUCE build optimizations
+    set(JUCE_BUILD_EXTRAS OFF CACHE BOOL "Disable JUCE extras")
+    set(JUCE_BUILD_EXAMPLES OFF CACHE BOOL "Disable JUCE examples") 
+    set(JUCE_ENABLE_MODULE_SOURCE_GROUPS OFF CACHE BOOL "Disable source groups")
+    
     add_subdirectory(external/linux/JUCE)
     set(JUCE_MODULE_DIR "${CMAKE_SOURCE_DIR}/external/linux/JUCE/modules")
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    set(JUCE_BUILD_EXTRAS OFF CACHE BOOL "Disable JUCE extras")
+    set(JUCE_BUILD_EXAMPLES OFF CACHE BOOL "Disable JUCE examples")
+    set(JUCE_ENABLE_MODULE_SOURCE_GROUPS OFF CACHE BOOL "Disable source groups")
+    
     add_subdirectory(external/mac/JUCE)
     set(JUCE_MODULE_DIR "${CMAKE_SOURCE_DIR}/external/mac/JUCE/modules")
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Windows")
+    set(JUCE_BUILD_EXTRAS OFF CACHE BOOL "Disable JUCE extras")
+    set(JUCE_BUILD_EXAMPLES OFF CACHE BOOL "Disable JUCE examples")
+    set(JUCE_ENABLE_MODULE_SOURCE_GROUPS OFF CACHE BOOL "Disable source groups")
+    
     add_subdirectory(external/windows/JUCE)
     set(JUCE_MODULE_DIR "${CMAKE_SOURCE_DIR}/external/windows/JUCE/modules")
 endif()

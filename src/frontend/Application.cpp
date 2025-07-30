@@ -21,6 +21,9 @@ Application::~Application() {
     // Unload all plugins before destroying the application
     unloadAllPlugins();
     
+    // Give some time for cleanup
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    
     // Destroy JUCE components and handle any cleanup here
 }
 
@@ -232,6 +235,7 @@ void Application::loadComponents() {
 }
 
 void Application::rebuildUI() {
+    unloadAllPlugins();
     // Clear everything
     applyTheme(resources, uiState.selectedTheme);
 
@@ -374,6 +378,7 @@ bool Application::loadPlugin(const std::string& pluginPath) {
         loadedPlugin.path = pluginPath;
         loadedPlugin.handle = handle;
         loadedPlugin.plugin = vtable;
+        loadedPlugin.name = name;
         loadedPlugins[name] = std::move(loadedPlugin);
 
         // Add to components map
@@ -389,19 +394,27 @@ bool Application::loadPlugin(const std::string& pluginPath) {
 }
 
 void Application::unloadPlugin(const std::string& pluginName) {
-    // Remove from components map
+    // Remove from components map first - this destroys the wrapper and calls plugin cleanup
     auto componentIt = muloComponents.find(pluginName);
     if (componentIt != muloComponents.end()) {
+        // Explicitly reset the component to trigger cleanup
+        componentIt->second.reset();
         muloComponents.erase(componentIt);
     }
+
+    // Give a moment for any async cleanup
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
     // Find and unload the plugin
     auto it = loadedPlugins.find(pluginName);
     if (it != loadedPlugins.end()) {
-        // Call destroy if available
+        // Call destroy if available - this should clean up all JUCE objects
         if (it->second.plugin && it->second.plugin->destroy) {
             it->second.plugin->destroy(it->second.plugin->instance);
         }
+
+        // Give time for destructor cleanup
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
         // Unload the library
 #ifdef _WIN32

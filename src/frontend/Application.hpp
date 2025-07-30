@@ -14,6 +14,8 @@
 
 #include <juce_core/juce_core.h>
 #include <nlohmann/json.hpp>
+#include <chrono>
+#include <thread>
 
 // Platform-specific includes for dynamic loading
 #ifdef _WIN32
@@ -102,6 +104,7 @@ private:
         void* handle;           // Library handle
         PluginVTable* plugin;   // Plugin interface
         std::string path;       // Plugin file path
+        std::string name;       // Plugin name (cached)
     };
     
     std::unordered_map<std::string, LoadedPlugin> loadedPlugins;

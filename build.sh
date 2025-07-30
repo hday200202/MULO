@@ -48,7 +48,14 @@ fi
 
 echo "Platform detected: $PLATFORM"
 echo "Configuring build ($BUILD_TYPE)..."
-cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=$BUILD_TYPE
+
+# Use Ninja if available for faster builds, otherwise use default generator
+if command -v ninja &> /dev/null; then
+    echo "Using Ninja generator for faster builds"
+    cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DCMAKE_LINKER=lld -G Ninja
+else
+    cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=$BUILD_TYPE
+fi
 
 echo "Building ($BUILD_TYPE)..."
 cmake --build "$BUILD_DIR" --config $BUILD_TYPE -j $(nproc 2>/dev/null || sysctl -n hw.ncpu)

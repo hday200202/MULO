@@ -44,7 +44,13 @@ fi
 
 echo "Platform detected: $PLATFORM"
 echo "Configuring extensions build ($BUILD_TYPE)..."
-cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=$BUILD_TYPE
+
+if command -v ninja &> /dev/null; then
+    echo "Using Ninja generator for faster builds"
+    cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DCMAKE_LINKER=lld -G Ninja
+else
+    cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=$BUILD_TYPE
+fi
 
 echo "Building extensions ($BUILD_TYPE)..."
 cmake --build "$BUILD_DIR" --config $BUILD_TYPE -j $(nproc 2>/dev/null || sysctl -n hw.ncpu)
@@ -58,19 +64,4 @@ if [[ -d "$EXTENSIONS_PATH" ]]; then
     ls -la "$EXTENSIONS_PATH"
 else
     echo "Extensions directory not found: $EXTENSIONS_PATH"
-fiO Extensions Build Script
-echo "Building MULO Extensions..."
-
-# Create build directory if it doesn't exist
-mkdir -p build
-
-# Navigate to build directory
-cd build
-
-# Configure with CMake
-echo "Configuring with CMake..."
-cmake -DCMAKE_BUILD_TYPE=Release ..
-
-# Build the extensions
-echo "Building extensions..."
-make -j$(nproc)
+fi

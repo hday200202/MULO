@@ -187,7 +187,7 @@ private:
         } \
         \
         const char* plugin_getName(void* instance) { \
-            static std::string name = static_cast<ClassName*>(instance)->getName(); \
+            static thread_local std::string name = static_cast<ClassName*>(instance)->getName(); \
             return name.c_str(); \
         } \
         \
