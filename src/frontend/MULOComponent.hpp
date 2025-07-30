@@ -1,7 +1,7 @@
 #pragma once
 
 #include "UILO/UILO.hpp"
-#include <juce_gui_basics/juce_gui_basics.h>
+// #include <juce_gui_basics/juce_gui_basics.h>
 
 class Application;
 class Engine;
@@ -9,6 +9,27 @@ struct UIState;
 struct UIResources;
 
 using namespace uilo;
+
+// Plugin interface for dynamic loading
+extern "C" {
+    typedef struct {
+        void* instance;
+        void (*init)(void* instance, Application* app, Engine* engine, UIResources* resources, UIState* uiState);
+        void (*update)(void* instance);
+        bool (*handleEvents)(void* instance);
+        bool (*isInitialized)(void* instance);
+        void (*destroy)(void* instance);
+        const char* (*getName)(void* instance);
+        void (*show)(void* instance);
+        void (*hide)(void* instance);
+        bool (*isVisible)(void* instance);
+        void (*setVisible)(void* instance, bool visible);
+        void (*toggle)(void* instance);
+        void* (*getLayout)(void* instance);  // Returns Container*
+    } PluginVTable;
+    
+    typedef PluginVTable* (*CreatePluginFunc)();
+}
 
 class MULOComponent {
 public:    
@@ -37,7 +58,7 @@ public:
     inline void setParentContainer(Container* parent) { parentContainer = parent; }
 
     inline std::string getName() const { return name; }
-    inline bool isInitialized() const { return initialized; }
+    virtual bool isInitialized() const { return initialized; }
 
 protected:
     Engine* engine = nullptr;
@@ -52,3 +73,164 @@ protected:
     bool initialized = false;
     bool forceUpdate = false;
 };
+
+// Wrapper class for plugin components
+class PluginComponentWrapper : public MULOComponent {
+public:
+    explicit PluginComponentWrapper(PluginVTable* pluginVTable) 
+        : plugin(pluginVTable) {
+        if (plugin && plugin->getName) {
+            name = plugin->getName(plugin->instance);
+        }
+    }
+    
+    ~PluginComponentWrapper() override {
+        // Plugin cleanup is handled by Application
+    }
+    
+    void init() override {
+        if (plugin && plugin->init) {
+            plugin->init(plugin->instance, app, engine, resources, uiState);
+            initialized = true;
+        }
+    }
+    
+    void update() override {
+        if (plugin && plugin->update) {
+            plugin->update(plugin->instance);
+        }
+    }
+    
+    bool handleEvents() override {
+        if (plugin && plugin->handleEvents) {
+            return plugin->handleEvents(plugin->instance);
+        }
+        return false;
+    }
+    
+    Container* getLayout() override {
+        if (plugin && plugin->getLayout) {
+            return static_cast<Container*>(plugin->getLayout(plugin->instance));
+        }
+        return nullptr;
+    }
+    
+    void show() override {
+        if (plugin && plugin->show) {
+            plugin->show(plugin->instance);
+        }
+    }
+    
+    void hide() override {
+        if (plugin && plugin->hide) {
+            plugin->hide(plugin->instance);
+        }
+    }
+    
+    bool isVisible() const override {
+        if (plugin && plugin->isVisible) {
+            return plugin->isVisible(plugin->instance);
+        }
+        return false;
+    }
+    
+    void setVisible(bool visible) override {
+        if (plugin && plugin->setVisible) {
+            plugin->setVisible(plugin->instance, visible);
+        }
+    }
+    
+    void toggle() override {
+        if (plugin && plugin->toggle) {
+            plugin->toggle(plugin->instance);
+        }
+    }
+    
+    bool isInitialized() const override {
+        if (plugin && plugin->isInitialized) {
+            return plugin->isInitialized(plugin->instance);
+        }
+        return initialized;
+    }
+
+private:
+    PluginVTable* plugin = nullptr;
+};
+
+// Helper macros for creating plugins
+#define DECLARE_PLUGIN(ClassName) \
+    extern "C" { \
+        static ClassName* g_instance = nullptr; \
+        \
+        void plugin_init(void* instance, Application* app, Engine* engine, UIResources* resources, UIState* uiState) { \
+            static_cast<ClassName*>(instance)->setAppRef(app); \
+            static_cast<ClassName*>(instance)->setEngineRef(engine); \
+            static_cast<ClassName*>(instance)->setResourcesRef(resources); \
+            static_cast<ClassName*>(instance)->setUIStateRef(uiState); \
+            static_cast<ClassName*>(instance)->init(); \
+        } \
+        \
+        void plugin_update(void* instance) { \
+            static_cast<ClassName*>(instance)->update(); \
+        } \
+        \
+        bool plugin_handleEvents(void* instance) { \
+            return static_cast<ClassName*>(instance)->handleEvents(); \
+        } \
+        \
+        bool plugin_isInitialized(void* instance) { \
+            return static_cast<ClassName*>(instance)->isInitialized(); \
+        } \
+        \
+        void plugin_destroy(void* instance) { \
+            delete static_cast<ClassName*>(instance); \
+        } \
+        \
+        const char* plugin_getName(void* instance) { \
+            static std::string name = static_cast<ClassName*>(instance)->getName(); \
+            return name.c_str(); \
+        } \
+        \
+        void plugin_show(void* instance) { \
+            static_cast<ClassName*>(instance)->show(); \
+        } \
+        \
+        void plugin_hide(void* instance) { \
+            static_cast<ClassName*>(instance)->hide(); \
+        } \
+        \
+        bool plugin_isVisible(void* instance) { \
+            return static_cast<ClassName*>(instance)->isVisible(); \
+        } \
+        \
+        void plugin_setVisible(void* instance, bool visible) { \
+            static_cast<ClassName*>(instance)->setVisible(visible); \
+        } \
+        \
+        void plugin_toggle(void* instance) { \
+            static_cast<ClassName*>(instance)->toggle(); \
+        } \
+        \
+        void* plugin_getLayout(void* instance) { \
+            return static_cast<void*>(static_cast<ClassName*>(instance)->getLayout()); \
+        } \
+        \
+        PluginVTable* getPluginInterface() { \
+            static PluginVTable vtable = { \
+                new ClassName(), \
+                plugin_init, \
+                plugin_update, \
+                plugin_handleEvents, \
+                plugin_isInitialized, \
+                plugin_destroy, \
+                plugin_getName, \
+                plugin_show, \
+                plugin_hide, \
+                plugin_isVisible, \
+                plugin_setVisible, \
+                plugin_toggle, \
+                plugin_getLayout \
+            }; \
+            return &vtable; \
+        } \
+    }

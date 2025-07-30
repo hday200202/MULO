@@ -500,6 +500,51 @@ void Track::process(double playheadSeconds,
     }
 }
 
+std::vector<float> Engine::generateWaveformPeaks(const juce::File& audioFile, float duration, float peakResolution) {
+    if (!audioFile.existsAsFile()) return {};
+    
+    std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(audioFile));
+    if (!reader) return {};
+
+    const long long totalSamples = reader->lengthInSamples;
+    if (totalSamples == 0) return {};
+    
+    // Calculate peak generation parameters
+    const int desiredPeaks = std::max(1, static_cast<int>(std::ceil(duration / peakResolution)));
+    const long long samplesPerPeak = std::max(1LL, totalSamples / desiredPeaks);
+
+    std::vector<float> peaks;
+    peaks.reserve(desiredPeaks);
+
+    // Buffer for reading audio data
+    const int bufferSize = static_cast<int>(std::min(samplesPerPeak, 8192LL));
+    juce::AudioBuffer<float> buffer(reader->numChannels, bufferSize);
+
+    for (int i = 0; i < desiredPeaks; ++i) {
+        const long long startSample = static_cast<long long>(i) * samplesPerPeak;
+        if (startSample >= totalSamples) break;
+
+        const int numSamplesToRead = static_cast<int>(
+            std::min(static_cast<long long>(bufferSize), 
+                    std::min(samplesPerPeak, totalSamples - startSample))
+        );
+        
+        reader->read(&buffer, 0, numSamplesToRead, startSample, true, true);
+
+        // Find peak in this segment
+        float peak = 0.0f;
+        for (int channel = 0; channel < buffer.getNumChannels(); ++channel) {
+            const float* channelData = buffer.getReadPointer(channel);
+            for (int sample = 0; sample < numSamplesToRead; ++sample) {
+                peak = std::max(peak, std::abs(channelData[sample]));
+            }
+        }
+        peaks.push_back(peak);
+    }
+    
+    return peaks;
+}
+
 //==============================================================================
 // AUDIO CLIP 
 //==============================================================================

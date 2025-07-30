@@ -18,13 +18,10 @@ Application::Application() {
 }
 
 Application::~Application() {
-    // Clean up MULOComponents
-    if (baseContainer)
-        baseContainer->m_markedForDeletion = true;
+    // Unload all plugins before destroying the application
+    unloadAllPlugins();
     
-    cleanupMarkedElements();
-    
-    muloComponents.clear();
+    // Destroy JUCE components and handle any cleanup here
 }
 
 void Application::update() {
@@ -196,14 +193,10 @@ void Application::createWindow() {
 }
 
 void Application::loadComponents() {
-    muloComponents["keyboard_shortcuts"]    = std::make_unique<KBShortcuts>();
-    muloComponents["app_controls"]          = std::make_unique<AppControls>();
-    muloComponents["timeline"]              = std::make_unique<TimelineComponent>();
-    muloComponents["file_browser"]          = std::make_unique<FileBrowserComponent>();
-    muloComponents["settings"]              = std::make_unique<SettingsComponent>();
-    muloComponents["mixer"]                 = std::make_unique<MixerComponent>();
+    // Scan and load plugin components
+    scanAndLoadPlugins();
 
-    // Load MULO Components
+    // Initialize all components (built-in + plugins)
     for (auto& [name, component] : muloComponents) {
         if (!component) {
              std::cerr << "Error: Null component created for key: " << name << std::endl;
@@ -265,4 +258,176 @@ void Application::cleanup() {
     componentsToDestroy.clear();
 
     uiloPages.clear();
+}
+
+// Plugin System Implementation
+void Application::scanAndLoadPlugins() {
+    std::vector<std::string> pluginDirs = {
+        "./extensions/"
+    };
+
+    for (const auto& dir : pluginDirs) {
+        if (dir.empty()) continue;
+        
+        juce::File pluginDir(dir);
+        if (!pluginDir.exists() || !pluginDir.isDirectory()) {
+            continue;
+        }
+
+        auto files = pluginDir.findChildFiles(juce::File::findFiles, false, "*" PLUGIN_EXT);
+        
+        for (const auto& file : files) {
+            std::string pluginPath = file.getFullPathName().toStdString();
+            std::cout << "Found plugin: " << pluginPath << std::endl;
+            
+            if (loadPlugin(pluginPath)) {
+                std::cout << "Successfully loaded plugin: " << pluginPath << std::endl;
+            } else {
+                std::cerr << "Failed to load plugin: " << pluginPath << std::endl;
+            }
+        }
+    }
+}
+
+bool Application::loadPlugin(const std::string& pluginPath) {
+    try {
+#ifdef _WIN32
+        HMODULE handle = LoadLibraryA(pluginPath.c_str());
+        if (!handle) {
+            std::cerr << "Failed to load library: " << pluginPath << " (Error: " << GetLastError() << ")" << std::endl;
+            return false;
+        }
+
+        // Get the plugin interface function
+        typedef PluginVTable* (*GetPluginInterfaceFunc)();
+        GetPluginInterfaceFunc getPluginInterface = (GetPluginInterfaceFunc)GetProcAddress(handle, "getPluginInterface");
+        
+        if (!getPluginInterface) {
+            std::cerr << "Plugin missing getPluginInterface function: " << pluginPath << std::endl;
+            FreeLibrary(handle);
+            return false;
+        }
+#else
+        void* handle = dlopen(pluginPath.c_str(), RTLD_LAZY);
+        if (!handle) {
+            std::cerr << "Failed to load library: " << pluginPath << " (" << dlerror() << ")" << std::endl;
+            return false;
+        }
+
+        // Clear any existing error
+        dlerror();
+
+        // Get the plugin interface function
+        typedef PluginVTable* (*GetPluginInterfaceFunc)();
+        GetPluginInterfaceFunc getPluginInterface = (GetPluginInterfaceFunc)dlsym(handle, "getPluginInterface");
+        
+        const char* dlsym_error = dlerror();
+        if (dlsym_error) {
+            std::cerr << "Plugin missing getPluginInterface function: " << pluginPath << " (" << dlsym_error << ")" << std::endl;
+            dlclose(handle);
+            return false;
+        }
+#endif
+
+        // Get the plugin interface
+        PluginVTable* vtable = getPluginInterface();
+        if (!vtable || !vtable->init || !vtable->getName) {
+            std::cerr << "Invalid plugin interface: " << pluginPath << std::endl;
+#ifdef _WIN32
+            FreeLibrary(handle);
+#else
+            dlclose(handle);
+#endif
+            return false;
+        }
+
+        // Get plugin name (getName needs instance parameter)
+        const char* pluginName = vtable->getName(vtable->instance);
+        if (!pluginName) {
+            std::cerr << "Plugin name is null: " << pluginPath << std::endl;
+#ifdef _WIN32
+            FreeLibrary(handle);
+#else
+            dlclose(handle);
+#endif
+            return false;
+        }
+
+        std::string name(pluginName);
+        
+        // Check if plugin with this name is already loaded
+        if (muloComponents.find(name) != muloComponents.end()) {
+            std::cout << "Plugin with name '" << name << "' already loaded, skipping" << std::endl;
+#ifdef _WIN32
+            FreeLibrary(handle);
+#else
+            dlclose(handle);
+#endif
+            return false;
+        }
+
+        // Create wrapper component
+        auto wrapper = std::make_unique<PluginComponentWrapper>(vtable);
+        
+        // Store the loaded plugin info
+        LoadedPlugin loadedPlugin;
+        loadedPlugin.path = pluginPath;
+        loadedPlugin.handle = handle;
+        loadedPlugin.plugin = vtable;
+        loadedPlugins[name] = std::move(loadedPlugin);
+
+        // Add to components map
+        muloComponents[name] = std::move(wrapper);
+        
+        std::cout << "Plugin '" << name << "' loaded successfully" << std::endl;
+        return true;
+
+    } catch (const std::exception& e) {
+        std::cerr << "Exception loading plugin " << pluginPath << ": " << e.what() << std::endl;
+        return false;
+    }
+}
+
+void Application::unloadPlugin(const std::string& pluginName) {
+    // Remove from components map
+    auto componentIt = muloComponents.find(pluginName);
+    if (componentIt != muloComponents.end()) {
+        muloComponents.erase(componentIt);
+    }
+
+    // Find and unload the plugin
+    auto it = loadedPlugins.find(pluginName);
+    if (it != loadedPlugins.end()) {
+        // Call destroy if available
+        if (it->second.plugin && it->second.plugin->destroy) {
+            it->second.plugin->destroy(it->second.plugin->instance);
+        }
+
+        // Unload the library
+#ifdef _WIN32
+        if (it->second.handle) {
+            FreeLibrary((HMODULE)it->second.handle);
+        }
+#else
+        if (it->second.handle) {
+            dlclose(it->second.handle);
+        }
+#endif
+
+        loadedPlugins.erase(it);
+        std::cout << "Plugin '" << pluginName << "' unloaded successfully" << std::endl;
+    }
+}
+
+void Application::unloadAllPlugins() {
+    // Create a copy of plugin names to avoid iterator invalidation
+    std::vector<std::string> pluginNames;
+    for (const auto& plugin : loadedPlugins) {
+        pluginNames.push_back(plugin.first);  // first is the key (name)
+    }
+
+    // Unload each plugin
+    for (const auto& name : pluginNames) {
+        unloadPlugin(name);
+    }
 }

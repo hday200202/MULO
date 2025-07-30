@@ -5,16 +5,33 @@
 #include "UIData.hpp"
 #include "FileTree.hpp"
 #include "MULOComponent.hpp"
-#include "Components/KBShortcuts.hpp"
-#include "Components/TimelineComponent.hpp"
-#include "Components/AppControls.hpp"
-#include "Components/FileBrowserComponent.hpp"
-#include "Components/SettingsComponent.hpp"
-#include "Components/MixerComponent.hpp"
+// #include "Components/KBShortcuts.hpp"
+// #include "Components/TimelineComponent.hpp"
+// #include "Components/AppControls.hpp"
+// #include "Components/FileBrowserComponent.hpp"
+// #include "Components/SettingsComponent.hpp"
+// #include "Components/MixerComponent.hpp"
 
 #include <juce_core/juce_core.h>
-#include <juce_gui_basics/juce_gui_basics.h>
 #include <nlohmann/json.hpp>
+
+// Platform-specific includes for dynamic loading
+#ifdef _WIN32
+    #include <windows.h>
+    #define PLUGIN_EXT ".dll"
+#elif __APPLE__
+    #include <dlfcn.h>
+    #define PLUGIN_EXT ".dylib"
+#else
+    #include <dlfcn.h>
+    #define PLUGIN_EXT ".so"
+#endif
+
+// Forward declarations
+class Application;
+class Engine;
+struct UIResources;
+struct UIState;
 
 class Application {
 public:
@@ -80,6 +97,15 @@ private:
 
     size_t forceUpdatePoll = 0;
 
+    // Plugin management
+    struct LoadedPlugin {
+        void* handle;           // Library handle
+        PluginVTable* plugin;   // Plugin interface
+        std::string path;       // Plugin file path
+    };
+    
+    std::unordered_map<std::string, LoadedPlugin> loadedPlugins;
+
     void initUI();
     void initUIResources();
     void createWindow();
@@ -87,4 +113,10 @@ private:
     void rebuildUI();
     void toggleFullscreen();
     void cleanup();
+    
+    // Plugin loading methods
+    void scanAndLoadPlugins();
+    bool loadPlugin(const std::string& path);
+    void unloadPlugin(const std::string& name);
+    void unloadAllPlugins();
 };

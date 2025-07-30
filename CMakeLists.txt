@@ -129,6 +129,14 @@ target_compile_definitions(MULO PRIVATE
     JUCE_MODAL_LOOPS_PERMITTED=1
 )
 
+# Enable symbol export for plugins on Linux
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set_target_properties(MULO PROPERTIES
+        ENABLE_EXPORTS ON
+        LINK_FLAGS "-Wl,--export-dynamic"
+    )
+endif()
+
 # Compiler definitions
 target_compile_definitions(MULO PRIVATE
     JUCE_SHARED_CODE=1

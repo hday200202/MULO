@@ -83,6 +83,9 @@ public:
     inline void setSampleRate(double newSampleRate)
     { sampleRate = newSampleRate; std::cout << "[Engine] Sample rate set to " << newSampleRate << std::endl;}
 
+    // Waveform generation for UI
+    std::vector<float> generateWaveformPeaks(const juce::File& audioFile, float duration, float peakResolution = 0.05f);
+
     void undo();
     void redo();
 
