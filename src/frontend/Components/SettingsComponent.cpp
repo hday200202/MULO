@@ -175,8 +175,6 @@ void SettingsComponent::applySettings() {
     }
     applying = true;
     
-    std::cout << "DEBUG: applySettings() called" << std::endl;
-    
     double sampleRate = std::stod(getDropdown("sample_rate_dropdown")->getSelected());
 
     if (engine->getSampleRate() != sampleRate)
@@ -184,7 +182,6 @@ void SettingsComponent::applySettings() {
 
     if (getDropdown("ui_theme_dropdown")->getSelected() != uiState->selectedTheme) {
         std::string newTheme = getDropdown("ui_theme_dropdown")->getSelected();
-        std::cout << "DEBUG: Theme change from " << uiState->selectedTheme << " to " << newTheme << std::endl;
         uiState->selectedTheme = newTheme;
 
         app->requestUIRebuild();

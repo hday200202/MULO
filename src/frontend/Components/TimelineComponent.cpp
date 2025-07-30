@@ -60,8 +60,8 @@ TimelineComponent::~TimelineComponent() {
 }
 
 void TimelineComponent::init() {
-    if (app->baseContainer)
-        parentContainer = app->baseContainer;
+    if (app->mainContentRow)
+        parentContainer = app->mainContentRow;
     masterTrackElement = masterTrack();
     // Create scrollableColumn and add all track rows
     ScrollableColumn* timelineScrollable = scrollableColumn(
@@ -101,6 +101,7 @@ void TimelineComponent::init() {
 }
 
 void TimelineComponent::update() {
+    if (!isVisible()) return;
     // Calculate delta time for frame-rate independent updates
     auto currentTime = std::chrono::steady_clock::now();
     
@@ -124,6 +125,14 @@ void TimelineComponent::update() {
 bool TimelineComponent::handleEvents() {
     bool forceUpdate = engine->isPlaying();
 
+    // Sync sliders to engine when component becomes visible
+    if (isVisible() && !wasVisible) {
+        syncSlidersToEngine();
+        wasVisible = true;
+    } else if (!isVisible()) {
+        wasVisible = false;
+    }
+
     // Master track controls - optimized
     if (muteMasterButton && muteMasterButton->isClicked()) {
         auto* masterTrack = engine->getMasterTrack();
@@ -134,14 +143,16 @@ bool TimelineComponent::handleEvents() {
         return true;
     }
     
-    // Master volume handling with tolerance check - optimized
-    const float newMasterVolDb = floatToDecibels(masterVolumeSlider->getValue());
-    auto* masterTrack = engine->getMasterTrack();
-    constexpr float volumeTolerance = 0.001f;
-    
-    if (std::abs(masterTrack->getVolume() - newMasterVolDb) > volumeTolerance) {
-        masterTrack->setVolume(newMasterVolDb);
-        forceUpdate = true;
+    // Master volume handling with tolerance check - only if timeline is visible
+    if (isVisible()) {
+        const float newMasterVolDb = floatToDecibels(masterVolumeSlider->getValue());
+        auto* masterTrack = engine->getMasterTrack();
+        constexpr float volumeTolerance = 0.001f;
+        
+        if (std::abs(masterTrack->getVolume() - newMasterVolDb) > volumeTolerance) {
+            masterTrack->setVolume(newMasterVolDb);
+            forceUpdate = true;
+        }
     }
 
     // Track synchronization - optimized with set operations
@@ -202,13 +213,16 @@ bool TimelineComponent::handleEvents() {
             forceUpdate = true;
         }
         
-        // Handle volume slider changes
-        if (auto sliderIt = trackVolumeSliders.find(name); 
-            sliderIt != trackVolumeSliders.end() && sliderIt->second) {
-            const float sliderDb = floatToDecibels(sliderIt->second->getValue());
-            if (std::abs(t->getVolume() - sliderDb) > volumeTolerance) {
-                t->setVolume(sliderDb);
-                forceUpdate = true;
+        // Handle volume slider changes - only if timeline is visible (not hidden by mixer)
+        if (isVisible()) {
+            if (auto sliderIt = trackVolumeSliders.find(name); 
+                sliderIt != trackVolumeSliders.end() && sliderIt->second) {
+                const float sliderDb = floatToDecibels(sliderIt->second->getValue());
+                constexpr float volumeTolerance = 0.001f;
+                if (std::abs(t->getVolume() - sliderDb) > volumeTolerance) {
+                    t->setVolume(sliderDb);
+                    forceUpdate = true;
+                }
             }
         }
     }
@@ -252,7 +266,45 @@ bool TimelineComponent::handleEvents() {
     if (ctrl && plus && !prevPlus) {
         const float newZoom = std::min(maxZoom, uiState->timelineZoomLevel + zoomSpeed);
         if (newZoom != uiState->timelineZoomLevel) {
+            // Get current scroll offset
+            const float currentOffset = timelineOffset;
+            
+            // Get mouse position relative to timeline
+            const sf::Vector2f mousePos = app->ui->getMousePosition();
+            
+            // Find a timeline row to get position reference
+            sf::Vector2f timelineRowPos(0.f, 0.f);
+            for (const auto& track : engine->getAllTracks()) {
+                const std::string rowKey = track->getName() + "_scrollable_row";
+                auto rowIt = containers.find(rowKey);
+                if (rowIt != containers.end() && rowIt->second) {
+                    timelineRowPos = rowIt->second->getPosition();
+                    break;
+                }
+            }
+            
+            // Calculate mouse position relative to timeline content
+            const float mouseXInTimeline = mousePos.x - timelineRowPos.x;
+            
+            // Apply zoom
             uiState->timelineZoomLevel = newZoom;
+            
+            // Calculate zoom factor ratio
+            const float zoomRatio = newZoom / (newZoom - zoomSpeed);
+            
+            // Calculate new offset to keep mouse position fixed
+            timelineOffset = mouseXInTimeline - (mouseXInTimeline - currentOffset) * zoomRatio;
+            
+            // Immediately apply the new offset to all scrollable rows
+            for (const auto& track : engine->getAllTracks()) {
+                const std::string rowKey = track->getName() + "_scrollable_row";
+                auto rowIt = containers.find(rowKey);
+                if (rowIt != containers.end() && rowIt->second) {
+                    auto* scrollableRow = static_cast<ScrollableRow*>(rowIt->second);
+                    scrollableRow->setOffset(std::min(0.f, timelineOffset));
+                }
+            }
+            
             forceUpdate = true;
         }
     }
@@ -260,7 +312,47 @@ bool TimelineComponent::handleEvents() {
     if (ctrl && minus && !prevMinus) {
         const float newZoom = std::max(minZoom, uiState->timelineZoomLevel - zoomSpeed);
         if (newZoom != uiState->timelineZoomLevel) {
+            // Get current scroll offset
+            const float currentOffset = timelineOffset;
+            
+            // Get mouse position relative to timeline
+            const sf::Vector2f mousePos = app->ui->getMousePosition();
+            
+            // Find a timeline row to get position reference
+            sf::Vector2f timelineRowPos(0.f, 0.f);
+            for (const auto& track : engine->getAllTracks()) {
+                const std::string rowKey = track->getName() + "_scrollable_row";
+                auto rowIt = containers.find(rowKey);
+                if (rowIt != containers.end() && rowIt->second) {
+                    timelineRowPos = rowIt->second->getPosition();
+                    break;
+                }
+            }
+            
+            // Calculate mouse position relative to timeline content
+            const float mouseXInTimeline = mousePos.x - timelineRowPos.x;
+            
+            // Apply zoom
             uiState->timelineZoomLevel = newZoom;
+            
+            // Calculate zoom factor ratio
+            const float zoomRatio = newZoom / (newZoom + zoomSpeed);
+            
+            // Calculate new offset to keep mouse position fixed
+            timelineOffset = mouseXInTimeline - (mouseXInTimeline - currentOffset) * zoomRatio;
+            
+            // Immediately apply the new offset to all scrollable rows
+            for (const auto& track : engine->getAllTracks()) {
+                const std::string rowKey = track->getName() + "_scrollable_row";
+                auto rowIt = containers.find(rowKey);
+                if (rowIt != containers.end() && rowIt->second) {
+                    auto* scrollableRow = static_cast<ScrollableRow*>(rowIt->second);
+                    scrollableRow->setOffset(std::min(0.f, timelineOffset));
+                }
+            }
+
+            
+            
             forceUpdate = true;
         }
     }
@@ -268,8 +360,62 @@ bool TimelineComponent::handleEvents() {
     // Scroll handling - optimized
     const int vertScroll = app->ui->getVerticalScrollDelta();
     const int horizScroll = app->ui->getHorizontalScrollDelta();
-    if (vertScroll != 0 || horizScroll != 0) {
-        forceUpdate = true;
+    
+    // if (ctrl) app->ui->setInputBlocked(true);
+    // else app->ui->setInputBlocked(false);
+    
+    // Handle Ctrl+scroll for zooming
+    if (ctrl && vertScroll != 0) {
+        constexpr float zoomSpeed = 0.1f;
+        constexpr float maxZoom = 20.0f;
+        constexpr float minZoom = 0.1f;
+        
+        // Scroll up = zoom in, scroll down = zoom out
+        const float zoomDelta = (vertScroll < 0) ? zoomSpeed : -zoomSpeed;
+        const float newZoom = std::clamp(uiState->timelineZoomLevel + zoomDelta, minZoom, maxZoom);
+        
+        if (newZoom != uiState->timelineZoomLevel) {
+            const float currentOffset = timelineOffset;
+            const float oldZoom = uiState->timelineZoomLevel;
+            
+            // Get mouse position relative to timeline
+            const sf::Vector2f mousePos = app->ui->getMousePosition();
+            
+            // Find a timeline row to get position reference
+            sf::Vector2f timelineRowPos(0.f, 0.f);
+            for (const auto& track : engine->getAllTracks()) {
+                const std::string rowKey = track->getName() + "_scrollable_row";
+                auto rowIt = containers.find(rowKey);
+                if (rowIt != containers.end() && rowIt->second) {
+                    timelineRowPos = rowIt->second->getPosition();
+                    break;
+                }
+            }
+            
+            // Calculate mouse position relative to timeline content
+            const float mouseXInTimeline = mousePos.x - timelineRowPos.x;
+            
+            // Apply zoom
+            uiState->timelineZoomLevel = newZoom;
+            
+            // Calculate zoom factor ratio
+            const float zoomRatio = newZoom / oldZoom;
+            
+            // Calculate new offset to keep mouse position fixed
+            timelineOffset = mouseXInTimeline - (mouseXInTimeline - currentOffset) * zoomRatio;
+            
+            // Immediately apply the new offset to all scrollable rows
+            for (const auto& track : engine->getAllTracks()) {
+                const std::string rowKey = track->getName() + "_scrollable_row";
+                auto rowIt = containers.find(rowKey);
+                if (rowIt != containers.end() && rowIt->second) {
+                    auto* scrollableRow = static_cast<ScrollableRow*>(rowIt->second);
+                    scrollableRow->setOffset(std::min(0.f, timelineOffset));
+                }
+            }
+            
+            forceUpdate = true;
+        }
     }
 
     // Update state for next frame
@@ -537,7 +683,7 @@ void TimelineComponent::handleCustomUIElements() {
 
     float newMasterOffset = timelineOffset;
 
-    // Cache commonly used values
+            // Cache commonly used values
     const double bpm = engine->getBpm();
     const float zoomLevel = uiState->timelineZoomLevel;
     const float beatWidth = 100.f * zoomLevel;
@@ -609,6 +755,9 @@ void TimelineComponent::handleCustomUIElements() {
 
     const float clampedOffset = std::min(0.f, newMasterOffset);
 
+    // Check if Ctrl is held for scroll speed control
+    const bool ctrlHeld = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) || sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RControl);
+    
     // Process each track
     for (const auto& track : allTracks) {
         const std::string rowKey = track->getName() + "_scrollable_row";
@@ -618,19 +767,28 @@ void TimelineComponent::handleCustomUIElements() {
         auto* trackRow = rowIt->second;
         auto* scrollableRow = static_cast<ScrollableRow*>(trackRow);
 
-        // Frame-rate independent scroll speed (pixels per second)
+        // Frame-rate independent scroll speed (pixels per second) - disable when Ctrl is held
         constexpr float baseScrollSpeedPerSecond = 1800.0f;
-        const float frameRateIndependentScrollSpeed = baseScrollSpeedPerSecond * deltaTime;
+        const float frameRateIndependentScrollSpeed = ctrlHeld ? 0.0f : baseScrollSpeedPerSecond * deltaTime;
         scrollableRow->setScrollSpeed(frameRateIndependentScrollSpeed);
         timelineElement->setScrollSpeed(frameRateIndependentScrollSpeed);
         scrollableRow->setOffset(clampedOffset);
+
+        // Skip track if it's not visible on screen
+        const sf::Vector2f trackRowPos = trackRow->getPosition();
+        const sf::Vector2f trackRowSize = trackRow->getSize();
+        const float timelineBottom = timelineElement->getPosition().y + timelineElement->getSize().y;
+        const float timelineTop = timelineElement->getPosition().y;
+        
+        // Check if track is completely outside the visible timeline area
+        if (trackRowPos.y + trackRowSize.y < timelineTop || trackRowPos.y > timelineBottom)
+            continue;
 
         // Generate timeline measures (reuse for performance)
         auto lines = generateTimelineMeasures(beatWidth, clampedOffset, trackRow->getSize(), 4, 4, resources);
 
         // Clip selection logic - optimized with track-based selection
         const auto& clipsVec = track->getClips();
-        const sf::Vector2f trackRowPos = trackRow->getPosition();
         const sf::Vector2f localMousePos = mousePos - trackRowPos;
         
         for (size_t i = 0; i < clipsVec.size(); ++i) {
@@ -645,7 +803,7 @@ void TimelineComponent::handleCustomUIElements() {
                     selectedClip = const_cast<AudioClip*>(&clipsVec[i]);
                     selectedTrack = track->getName(); // Set the selected track
                     if (!isPlaying)
-                        engine->setPosition(ac.startTime);
+                        engine->setSavedPosition(ac.startTime);
                 }
             }
         }
@@ -675,28 +833,31 @@ void TimelineComponent::handleCustomUIElements() {
             playheadYOffset = firstTrackRow->getPosition().y - timelineElement->getPosition().y;
         }
     }
-    auto playhead = getPlayHead(
-        engine->getBpm(), 
-        100.f * uiState->timelineZoomLevel,
-        clampedOffset,
-        engine->getPosition(), 
-        sf::Vector2f(4.f, (engine->getAllTracks().size()) * (masterTrackElement->getSize().y + 4))
-    );
-    // Offset playhead y-position
-    if (auto playheadRect = std::dynamic_pointer_cast<sf::RectangleShape>(playhead)) {
-        sf::Vector2f pos = playheadRect->getPosition();
-        pos.y += playheadYOffset;
-        playheadRect->setPosition(pos);
+
+    if (engine->getAllTracks().size() > 1) {
+        auto playhead = getPlayHead(
+            engine->getBpm(), 
+            100.f * uiState->timelineZoomLevel,
+            clampedOffset,
+            engine->getPosition(), 
+            sf::Vector2f(4.f, (engine->getAllTracks().size()) * (masterTrackElement->getSize().y + 4))
+        );
+        // Offset playhead y-position
+        if (auto playheadRect = std::dynamic_pointer_cast<sf::RectangleShape>(playhead)) {
+            sf::Vector2f pos = playheadRect->getPosition();
+            pos.y += playheadYOffset;
+            playheadRect->setPosition(pos);
+        }
+        std::vector<std::shared_ptr<sf::Drawable>> timelineGeometry;
+        timelineGeometry.push_back(playhead);
+        timelineElement->setCustomGeometry(timelineGeometry);
+        timelineOffset = clampedOffset;
     }
-    std::vector<std::shared_ptr<sf::Drawable>> timelineGeometry;
-    timelineGeometry.push_back(playhead);
-    timelineElement->setCustomGeometry(timelineGeometry);
-    timelineOffset = clampedOffset;
 
     if (selectedClip && !engine->isPlaying() && engine->getPosition() != selectedClip->startTime) {
-        // Only set position if we have a valid selected track
+        // Only set saved position if we have a valid selected track
         if (!selectedTrack.empty()) {
-            engine->setPosition(selectedClip->startTime);
+            engine->setSavedPosition(selectedClip->startTime);
         }
     }
 }
@@ -704,7 +865,7 @@ void TimelineComponent::handleCustomUIElements() {
 void TimelineComponent::rebuildUI() {
     getColumn("base_timeline_column")->clear();
 
-    parentContainer = app->baseContainer;
+    parentContainer = app->mainContentRow;
     masterTrackElement = masterTrack();
     
     // Create scrollableColumn with optimal setup
@@ -745,6 +906,29 @@ void TimelineComponent::rebuildUI() {
 }
 
 void TimelineComponent::rebuildUIFromEngine() {}
+
+void TimelineComponent::syncSlidersToEngine() {
+    if (!engine) return;
+    
+    // Sync master track slider
+    if (engine->getMasterTrack() && masterVolumeSlider) {
+        float engineVol = engine->getMasterTrack()->getVolume();
+        float sliderValue = decibelsToFloat(engineVol);
+        masterVolumeSlider->setValue(sliderValue);
+    }
+    
+    // Sync regular track sliders
+    for (const auto& track : engine->getAllTracks()) {
+        if (track->getName() == "Master") continue;
+        
+        auto volumeSlider = trackVolumeSliders.find(track->getName());
+        if (volumeSlider != trackVolumeSliders.end() && volumeSlider->second) {
+            float engineVol = track->getVolume();
+            float sliderValue = decibelsToFloat(engineVol);
+            volumeSlider->second->setValue(sliderValue);
+        }
+    }
+}
 
 inline std::unordered_map<std::string, std::vector<float>>& getWaveformCache() {
     static std::unordered_map<std::string, std::vector<float>> s_waveformCache;
@@ -1067,7 +1251,7 @@ inline std::vector<std::shared_ptr<sf::Drawable>> generateWaveformData(
         
         if (peakValue > peakThreshold) {
             const float lineHeight = peakValue * lineHeightScale;
-            const float lineX = std::fma(i * invNumSamples, clipSize.x, clipPosition.x);
+            const float lineX = std::fma(i * invNumSamples, clipSize.x, clipPosition.x) + 4.0f; // Push 2 pixels to the right
             const float lineYTop = baseLineY - lineHeight * 0.5f;
             const float lineYBottom = baseLineY + lineHeight * 0.5f;
             

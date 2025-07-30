@@ -93,11 +93,18 @@ void AppControls::init() {
             .setfixedWidth(96).setHeight(.75f)
             .setColor(resources->activeTheme->button_color)
             .onLClick([&](){
-                bool showMixer = false;
-                showMixer = !showMixer;
-                const std::string pageToShow = showMixer ? "mixer" : "timeline";
-                app->ui->switchToPage(pageToShow);
-                app->shouldForceUpdate = true;
+                if (app) {
+                    if (app->getComponent("mixer")) {
+                        auto* mixer = app->getComponent("mixer");
+                        if (mixer) {
+                            if (mixer->isVisible())
+                                mixer->hide();
+                            else
+                                mixer->show();
+                        }
+                        app->shouldForceUpdate = true;
+                    }
+                }
             }),
         ButtonStyle::Pill,
         "mixer",

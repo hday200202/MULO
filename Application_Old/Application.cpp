@@ -1,5 +1,7 @@
 #include "Application.hpp"
 
+// OLD APPLICATION
+
 Application::Application() {
     // Initialize auto-save timer from config
     loadConfig();

@@ -10,6 +10,7 @@
 #include "Components/AppControls.hpp"
 #include "Components/FileBrowserComponent.hpp"
 #include "Components/SettingsComponent.hpp"
+#include "Components/MixerComponent.hpp"
 
 #include <juce_core/juce_core.h>
 #include <juce_gui_basics/juce_gui_basics.h>
@@ -18,6 +19,7 @@
 class Application {
 public:
     Column* baseContainer = nullptr;
+    Row* mainContentRow = nullptr;
     bool shouldForceUpdate = false;
     bool freshRebuild = false;
     std::unique_ptr<UILO> ui = nullptr;
@@ -36,8 +38,16 @@ public:
         return nullptr;
     }
     
+    inline MULOComponent* getComponent(const std::string& componentName) {
+        auto it = muloComponents.find(componentName);
+        return (it != muloComponents.end()) ? it->second.get() : nullptr;
+    }
+    
     // Get base container for a specific page
     inline Container* getPageBaseContainer() { return baseContainer; }
+    
+    // Get main content row for component layout
+    inline Row* getMainContentRow() { return mainContentRow; }
     
     // Helper to set parent container for components during initialization
     void setComponentParentContainer(const std::string& componentName, Container* parent);
@@ -70,7 +80,11 @@ private:
 
     size_t forceUpdatePoll = 0;
 
+    void initUI();
     void initUIResources();
+    void createWindow();
+    void loadComponents();
     void rebuildUI();
     void toggleFullscreen();
+    void cleanup();
 };

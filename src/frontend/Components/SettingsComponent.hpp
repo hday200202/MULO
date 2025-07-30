@@ -12,6 +12,9 @@ public:
     Container* getLayout() override { return nullptr; }
     bool handleEvents() override { update(); return false; };
 
+    void show() override;
+    void hide() override;
+
 private:
     sf::RenderWindow window;
     sf::VideoMode resolution;
@@ -26,6 +29,4 @@ private:
 
     Container* buildLayout();
     void applySettings();
-    void show();
-    void hide();
 };

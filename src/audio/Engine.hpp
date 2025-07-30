@@ -38,6 +38,11 @@ public:
     double getPosition() const;
     bool isPlaying() const;
     
+    // Saved Position
+    void setSavedPosition(double seconds);
+    double getSavedPosition() const;
+    bool hasSavedPosition() const;
+    
     // Composition 
     void newComposition(const std::string& name = "untitled");
     void loadComposition(const std::string& path);
@@ -88,6 +93,8 @@ private:
     bool playing = false;
     double sampleRate = 44100.0;
     double positionSeconds = 0.0;
+    double savedPosition = 0.0;
+    bool hasSaved = false;
 
     juce::AudioBuffer<float> tempMixBuffer;
 

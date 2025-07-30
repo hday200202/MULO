@@ -19,6 +19,10 @@ Engine::~Engine() {
 }
 
 void Engine::play() {
+    if (hasSaved) {
+        positionSeconds = savedPosition;
+        hasSaved = false; // Clear saved position after using it
+    }
     playing = true;
 }
 
@@ -41,6 +45,19 @@ double Engine::getPosition() const {
 
 bool Engine::isPlaying() const {
     return playing;
+}
+
+void Engine::setSavedPosition(double seconds) {
+    savedPosition = juce::jmax(0.0, seconds);
+    hasSaved = true;
+}
+
+double Engine::getSavedPosition() const {
+    return savedPosition;
+}
+
+bool Engine::hasSavedPosition() const {
+    return hasSaved;
 }
 
 void Engine::newComposition(const std::string& name) {
@@ -339,13 +356,12 @@ void Engine::processBlock(juce::AudioBuffer<float>& outputBuffer, int numSamples
 
     if (!currentComposition) return;
 
-    bool anyTrackSoloed = masterTrack && masterTrack->isSolo();
-    if (!anyTrackSoloed) {
-        for (const auto& track : currentComposition->tracks) {
-            if (track && track->isSolo()) {
-                anyTrackSoloed = true;
-                break;
-            }
+    // Check if any regular tracks are soloed (master track solo doesn't affect regular track playback)
+    bool anyTrackSoloed = false;
+    for (const auto& track : currentComposition->tracks) {
+        if (track && track->isSolo()) {
+            anyTrackSoloed = true;
+            break;
         }
     }
 
@@ -359,17 +375,18 @@ void Engine::processBlock(juce::AudioBuffer<float>& outputBuffer, int numSamples
         }
     }
 
+    // Apply master track processing (master track always processes the mixed audio unless muted)
     if (masterTrack && !masterTrack->isMuted()) {
         float masterGain = juce::Decibels::decibelsToGain(masterTrack->getVolume());
         float masterPan = masterTrack->getPan();
 
-        // Apply a simple linear pan law for stereo output
-        float panLeft = std::sqrt(0.5f * (1.0f - masterPan));
-        float panRight = std::sqrt(0.5f * (1.0f + masterPan));
+        // Apply the same pan law as regular tracks for consistency
+        float panL = (1.0f - juce::jlimit(-1.f, 1.f, masterPan)) * 0.5f;
+        float panR = (1.0f + juce::jlimit(-1.f, 1.f, masterPan)) * 0.5f;
         
         if (tempMixBuffer.getNumChannels() >= 2) {
-            tempMixBuffer.applyGain(0, 0, numSamples, masterGain * panLeft);
-            tempMixBuffer.applyGain(1, 0, numSamples, masterGain * panRight);
+            tempMixBuffer.applyGain(0, 0, numSamples, masterGain * panL);
+            tempMixBuffer.applyGain(1, 0, numSamples, masterGain * panR);
         } 
         else if (tempMixBuffer.getNumChannels() == 1) {
             tempMixBuffer.applyGain(0, 0, numSamples, masterGain);

@@ -20,6 +20,13 @@ public:
     virtual Container* getLayout() { return layout; }
     virtual bool handleEvents() = 0;
 
+    // Visibility control
+    virtual void show() { if (layout) layout->m_modifier.setVisible(true); }
+    virtual void hide() { if (layout) layout->m_modifier.setVisible(false); }
+    virtual bool isVisible() const { return layout ? layout->m_modifier.isVisible() : false; }
+    virtual void setVisible(bool visible) { if (visible) show(); else hide(); }
+    virtual void toggle() { if (isVisible()) hide(); else show(); }
+
     // Set references to Application, Engine, UIState, and UIResources
     inline void setEngineRef(Engine* engineRef) { engine = engineRef; }
     inline void setAppRef(Application* appRef) { app = appRef; }

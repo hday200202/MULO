@@ -10,8 +10,8 @@ FileBrowserComponent::FileBrowserComponent() {
 FileBrowserComponent::~FileBrowserComponent() {}
 
 void FileBrowserComponent::init() {
-    if (app->getComponentLayout("timeline"))
-        parentContainer = app->getComponentLayout("timeline");
+    if (app->mainContentRow)
+        parentContainer = app->mainContentRow;
     layout = scrollableColumn(
         Modifier()
             .align(Align::LEFT | Align::TOP)
@@ -57,19 +57,30 @@ void FileBrowserComponent::buildFileTreeUI() {
 
     scrollColumn->addElements({
         spacer(Modifier().setfixedHeight(16).align(Align::TOP)),
-        button(
-            Modifier()
-                .setfixedHeight(48)
-                .setfixedWidth(256)
-                .setColor(resources->activeTheme->alt_button_color)
-                .align(Align::CENTER_X)
-                .onLClick([this](){ browseForDirectory(); }),
-            ButtonStyle::Pill,
-            "Browse Files",
-            resources->dejavuSansFont,
-            resources->activeTheme->secondary_text_color,
-            "select_directory"
-        ),
+        row(Modifier().setfixedHeight(48),
+        contains{
+            spacer(Modifier().setfixedWidth(16).align(Align::LEFT)),
+            text(
+                Modifier().align(Align::LEFT | Align::CENTER_Y).setfixedHeight(32).setColor(resources->activeTheme->primary_text_color),
+                "user library",
+                resources->dejavuSansFont
+            ),
+
+            button(
+                Modifier()
+                    .setfixedHeight(48)
+                    .setfixedWidth(96)
+                    .setColor(resources->activeTheme->alt_button_color)
+                    .align(Align::RIGHT | Align::CENTER_Y)
+                    .onLClick([this](){ browseForDirectory(); }),
+                ButtonStyle::Pill,
+                "browse",
+                resources->dejavuSansFont,
+                resources->activeTheme->secondary_text_color,
+                "select_directory"
+            ),
+            spacer(Modifier().setfixedWidth(16).align(Align::RIGHT)),
+        }),
         spacer(Modifier().setfixedHeight(16)),
     });
 
