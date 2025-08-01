@@ -124,6 +124,7 @@ private:
     sf::RenderWindow window;
     sf::View windowView;
     sf::VideoMode screenResolution;
+    sf::Vector2u minWindowSize;
 
     // Core engine and UI
     Engine engine;
@@ -132,6 +133,7 @@ private:
     bool fullscreen = false;
     bool pendingUIRebuild = false;
     bool pendingFullscreenToggle = false;
+    bool prevCtrlShftR;
 
     size_t forceUpdatePoll = 0;
 
@@ -143,6 +145,7 @@ private:
         std::string name;       // Plugin name (cached)
     };
     
+    std::string exeDirectory = "";
     std::unordered_map<std::string, LoadedPlugin> loadedPlugins;
 
     void initUI();

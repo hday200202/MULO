@@ -1,6 +1,49 @@
 #include "Application.hpp"
 
+#include <tinyfiledialogs/tinyfiledialogs.hpp>
+#include <filesystem>
+
+#ifdef __linux__
+#include <X11/Xlib.h>
+#include <X11/Xutil.h>
+#endif
+
+#ifdef _WIN32
+#include <windows.h>
+
+static POINT s_minWindowSize = {800, 600}; // Set this to your minWindowSize
+
+LRESULT CALLBACK MinSizeWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+    if (msg == WM_GETMINMAXINFO) {
+        MINMAXINFO* mmi = (MINMAXINFO*)lParam;
+        mmi->ptMinTrackSize.x = s_minWindowSize.x;
+        mmi->ptMinTrackSize.y = s_minWindowSize.y;
+        return 0;
+    }
+    // Call the original window proc
+    return DefWindowProc(hwnd, msg, wParam, lParam);
+}
+
+void SetMinWindowSize(HWND hwnd, int minWidth, int minHeight)
+{
+    s_minWindowSize.x = minWidth;
+    s_minWindowSize.y = minHeight;
+    SetWindowLongPtr(hwnd, GWLP_WNDPROC, (LONG_PTR)MinSizeWndProc);
+}
+#endif
+
+#ifdef __APPLE__
+#include <objc/objc.h>
+#include <objc/message.h>
+#include <CoreGraphics/CoreGraphics.h>
+#endif
+
+namespace fs = std::filesystem;
+
 Application::Application() {
+    exeDirectory = fs::canonical("/proc/self/exe").parent_path().string();
+    
     // Initialize window, engine, ui
     createWindow();
     applyTheme(resources, uiState.selectedTheme);
@@ -28,6 +71,11 @@ Application::~Application() {
 }
 
 void Application::update() {
+    using namespace sf::Keyboard;
+    using namespace sf::Mouse;
+    using mb = sf::Mouse::Button;
+    using kb = sf::Keyboard::Key;
+    
     running = ui->isRunning();
     shouldForceUpdate = forceUpdatePoll;
 
@@ -37,10 +85,15 @@ void Application::update() {
     // handle all input, determines if shouldForceUpdate
     handleEvents();
 
-    bool rClick = sf::Mouse::isButtonPressed(sf::Mouse::Button::Right);
-    bool lClick = sf::Mouse::isButtonPressed(sf::Mouse::Button::Left);
+    bool rClick = isButtonPressed(mb::Right);
+    bool lClick = isButtonPressed(mb::Left);
+    bool ctrlShftR = isKeyPressed(kb::LControl) && isKeyPressed(kb::LShift) && isKeyPressed(kb::R);
 
     if (lClick || rClick) shouldForceUpdate = true;
+    if (ctrlShftR && !prevCtrlShftR) {
+        std::cout << "Ctrl+Shift+R\n";
+        rebuildUI();
+    }
 
     // (shouldForceUpdate) ? ui->forceUpdate(windowView) : ui->update(windowView);
     ui->forceUpdate(windowView);
@@ -53,6 +106,7 @@ void Application::update() {
     if (forceUpdatePoll > 0) --forceUpdatePoll;
     
     freshRebuild = false;
+    prevCtrlShftR = ctrlShftR;
 }
 
 void Application::render() {
@@ -98,87 +152,49 @@ void Application::initUI() {
 }
 
 void Application::initUIResources() {
-    juce::File fontFile = juce::File::getCurrentWorkingDirectory()
-        .getChildFile("assets/fonts/DejaVuSans.ttf");
-    if (!fontFile.existsAsFile()) {
-        fontFile = juce::File::getSpecialLocation(juce::File::currentExecutableFile)
-            .getParentDirectory().getChildFile("assets/fonts/DejaVuSans.ttf");
-    }
-    resources.dejavuSansFont = fontFile.getFullPathName().toStdString();
+    auto findFont = [&](const std::string& filename) -> std::string {
+        fs::path cwdFont = fs::current_path() / "assets" / "fonts" / filename;
+        if (fs::exists(cwdFont)) return cwdFont.string();
 
-    fontFile = juce::File::getCurrentWorkingDirectory().getChildFile("assets/fonts/SpaceMono-Regular.ttf");
-    if (!fontFile.existsAsFile()) {
-        fontFile = juce::File::getSpecialLocation(juce::File::currentExecutableFile)
-            .getParentDirectory().getChildFile("assets/fonts/SpaceMono-Regular.ttf");
-    }
-    resources.spaceMonoFont = fontFile.getFullPathName().toStdString();
+        fs::path exeFont = fs::path(exeDirectory) / "assets" / "fonts" / filename;
+        if (fs::exists(exeFont)) return exeFont.string();
 
-    fontFile = juce::File::getCurrentWorkingDirectory().getChildFile("assets/fonts/ubuntu.bold.ttf");
-    if (!fontFile.existsAsFile()) {
-        fontFile = juce::File::getSpecialLocation(juce::File::currentExecutableFile)
-            .getParentDirectory().getChildFile("assets/fonts/ubuntu.bold.ttf");
-    }
-    resources.ubuntuBoldFont = fontFile.getFullPathName().toStdString();
+        // Not found
+        return "";
+    };
 
-    fontFile = juce::File::getCurrentWorkingDirectory().getChildFile("assets/fonts/ubuntu.mono.ttf");
-    if (!fontFile.existsAsFile()) {
-        fontFile = juce::File::getSpecialLocation(juce::File::currentExecutableFile)
-            .getParentDirectory().getChildFile("assets/fonts/ubuntu.mono.ttf");
-    }
-    resources.ubuntuMonoFont = fontFile.getFullPathName().toStdString();
-
-    fontFile = juce::File::getCurrentWorkingDirectory().getChildFile("assets/fonts/ubuntu.mono-bold.ttf");
-    if (!fontFile.existsAsFile()) {
-        fontFile = juce::File::getSpecialLocation(juce::File::currentExecutableFile)
-            .getParentDirectory().getChildFile("assets/fonts/ubuntu.mono-bold.ttf");
-    }
-    resources.ubuntuMonoBoldFont = fontFile.getFullPathName().toStdString();
+    resources.dejavuSansFont    = findFont("DejaVuSans.ttf");
+    resources.spaceMonoFont     = findFont("SpaceMono-Regular.ttf");
+    resources.ubuntuBoldFont    = findFont("ubuntu.bold.ttf");
+    resources.ubuntuMonoFont    = findFont("ubuntu.mono.ttf");
+    resources.ubuntuMonoBoldFont= findFont("ubuntu.mono-bold.ttf");
 }
 
 std::string Application::selectDirectory() {
-    if (!juce::MessageManager::getInstance()->isThisTheMessageThread()) {
-        std::cerr << "FileChooser must be called from the message thread" << std::endl;
-        return "";
-    }
-    
-    juce::FileChooser chooser("Select directory", juce::File::getSpecialLocation(juce::File::userHomeDirectory), "*");
-    
-    if (chooser.browseForDirectory()) {
-        juce::File result = chooser.getResult();
-        if (result.exists()) {
-            return result.getFullPathName().toStdString();
-        }
-    }
-    
-    return "";
+    const char* dir = tinyfd_selectFolderDialog("Select Directory", exeDirectory.c_str());
+    return dir ? std::string(dir) : "";
 }
 
 std::string Application::selectFile(std::initializer_list<std::string> filters) {
-    if (!juce::MessageManager::getInstance()->isThisTheMessageThread()) {
-        std::cerr << "FileChooser must be called from the message thread" << std::endl;
-        return "";
-    }
-    
-    juce::String filterString;
-    for (auto it = filters.begin(); it != filters.end(); ++it) {
-        if (it != filters.begin())
-            filterString += ";";
-        filterString += juce::String((*it).c_str());
-    }
-
-    std::cout << "Filter string: " << filterString << std::endl;
-
-    juce::FileChooser chooser("Select audio file", juce::File(), filterString);
-    if (chooser.browseForFileToOpen()) {
-        return chooser.getResult().getFullPathName().toStdString();
-    }
-    return "";
+    std::vector<const char*> patterns;
+    for (const auto& f : filters) patterns.push_back(f.c_str());
+    const char* file = tinyfd_openFileDialog(
+        "Select File",
+        exeDirectory.c_str(),
+        patterns.empty() ? 0 : patterns.size(),
+        patterns.empty() ? nullptr : patterns.data(),
+        nullptr,
+        0
+    );
+    return file ? std::string(file) : "";
 }
 
 void Application::createWindow() {
     screenResolution = sf::VideoMode::getDesktopMode();
     screenResolution.size.x /= 1.5f;
     screenResolution.size.y /= 1.5f;
+    minWindowSize.x = 800;
+    minWindowSize.y = 600;
 
     sf::ContextSettings settings;
     settings.antiAliasingLevel = 8;
@@ -193,6 +209,35 @@ void Application::createWindow() {
         settings
     );
     window.setVerticalSyncEnabled(true);
+
+    #ifdef __linux__
+    Display* display = XOpenDisplay(nullptr);
+    if (display) {
+        XSizeHints hints;
+        hints.flags = PMinSize;
+        hints.min_width = minWindowSize.x;
+        hints.min_height = minWindowSize.y;
+        Window win = static_cast<Window>(window.getNativeHandle());
+        XSetWMNormalHints(display, win, &hints);
+        XCloseDisplay(display);
+    }
+    #endif
+
+    #ifdef _WIN32
+    HWND hwnd = (HWND)window.getSystemHandle();
+    SetMinWindowSize(hwnd, minWindowSize.x, minWindowSize.y);
+    #endif
+
+    #ifdef __APPLE__
+    void* nsWindow = window.getSystemHandle();
+    if (nsWindow) {
+        typedef void (*SetMinSizeFunc)(void*, SEL, CGSize);
+        SetMinSizeFunc setMinSize = (SetMinSizeFunc)objc_msgSend;
+        SEL sel = sel_registerName("setContentMinSize:");
+        CGSize size = CGSizeMake(minWindowSize.x, minWindowSize.y);
+        setMinSize(nsWindow, sel, size);
+    }
+    #endif
 }
 
 void Application::loadComponents() {
@@ -265,25 +310,23 @@ void Application::cleanup() {
 
 // Plugin System Implementation
 void Application::scanAndLoadPlugins() {
-    std::vector<std::string> pluginDirs = {
-        "extensions/",
-        "../extensions/"
-    };
+    std::string pluginDir = exeDirectory + "/extensions";
+    if (!fs::exists(pluginDir) || !fs::is_directory(pluginDir))
+        return;
 
-    for (const auto& dir : pluginDirs) {
-        if (dir.empty()) continue;
-        
-        juce::File pluginDir(dir);
-        if (!pluginDir.exists() || !pluginDir.isDirectory()) {
-            continue;
-        }
+#ifdef _WIN32
+    constexpr const char* pluginExt = ".dll";
+#elif __APPLE__
+    constexpr const char* pluginExt = ".dylib";
+#else
+    constexpr const char* pluginExt = ".so";
+#endif
 
-        auto files = pluginDir.findChildFiles(juce::File::findFiles, false, "*" PLUGIN_EXT);
-        
-        for (const auto& file : files) {
-            std::string pluginPath = file.getFullPathName().toStdString();
+    for (const auto& entry : fs::directory_iterator(pluginDir)) {
+        if (entry.is_regular_file() && entry.path().extension() == pluginExt) {
+            std::string pluginPath = entry.path().string();
+            // if (pluginPath.find("Timeline") != std::string::npos) continue;
             std::cout << "Found plugin: " << pluginPath << std::endl;
-            
             if (loadPlugin(pluginPath)) {
                 std::cout << "Successfully loaded plugin: " << pluginPath << std::endl;
             } else {

@@ -216,3 +216,11 @@ if(ENABLE_SANITIZERS)
     endif()
 endif()
 
+add_library(tinyfiledialogs STATIC external/tinyfiledialogs/tinyfiledialogs.cpp)
+target_include_directories(tinyfiledialogs PUBLIC external/tinyfiledialogs)
+target_link_libraries(MULO PRIVATE tinyfiledialogs)
+
+if(UNIX AND NOT APPLE)
+    target_link_libraries(MULO PRIVATE X11)
+endif()
+

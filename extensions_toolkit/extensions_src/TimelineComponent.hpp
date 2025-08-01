@@ -127,7 +127,9 @@ TimelineComponent::TimelineComponent() {
     firstFrame = true;
 }
 
-TimelineComponent::~TimelineComponent() {}
+TimelineComponent::~TimelineComponent() {
+    selectedClip = nullptr;
+}
 
 void TimelineComponent::init() {
     if (app->mainContentRow)
