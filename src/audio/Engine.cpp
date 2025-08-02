@@ -1,8 +1,49 @@
+
 #include "Engine.hpp"
+#include <iostream>
+#include <iomanip>
 
 Engine::Engine() {
     formatManager.registerBasicFormats();
+    
+    // Initialize with low latency settings for Windows
     deviceManager.initialise(0, 2, nullptr, false);
+    
+    // Configure low-latency audio device setup
+    auto currentSetup = deviceManager.getAudioDeviceSetup();
+    
+    // Set moderate buffer size for stable low latency
+    currentSetup.bufferSize = 256;  // Start with 256 samples (~6ms at 44.1kHz) - more stable
+    currentSetup.sampleRate = 44100.0;  // Standard sample rate
+    
+    // Try to apply the low-latency setup
+    juce::String error = deviceManager.setAudioDeviceSetup(currentSetup, true);
+    
+    // If 256 samples fails, try larger buffer sizes
+    if (error.isNotEmpty()) {
+        currentSetup.bufferSize = 512;  // ~12ms at 44.1kHz
+        error = deviceManager.setAudioDeviceSetup(currentSetup, true);
+        
+        if (error.isNotEmpty()) {
+            currentSetup.bufferSize = 1024;  // ~23ms at 44.1kHz
+            error = deviceManager.setAudioDeviceSetup(currentSetup, true);
+            
+            // If still failing, let JUCE use default
+            if (error.isNotEmpty()) {
+                std::cout << "Warning: Could not set low-latency audio buffer. Using default settings." << std::endl;
+                std::cout << "Audio setup error: " << error.toStdString() << std::endl;
+            }
+        }
+    }
+    
+    // Print the actual audio setup for debugging
+    auto finalSetup = deviceManager.getAudioDeviceSetup();
+    std::cout << "Audio device setup:" << std::endl;
+    std::cout << "  Sample rate: " << finalSetup.sampleRate << " Hz" << std::endl;
+    std::cout << "  Buffer size: " << finalSetup.bufferSize << " samples" << std::endl;
+    std::cout << "  Latency: ~" << std::fixed << std::setprecision(1) 
+              << (finalSetup.bufferSize / finalSetup.sampleRate * 1000.0) << " ms" << std::endl;
+    
     deviceManager.addAudioCallback(this);
 
     masterTrack = std::make_unique<Track>(formatManager);

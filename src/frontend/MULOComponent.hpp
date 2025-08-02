@@ -1,3 +1,4 @@
+
 #pragma once
 
 #include "UILO/UILO.hpp"
@@ -22,7 +23,7 @@ extern "C" {
         bool (*isVisible)(void* instance);
         void (*setVisible)(void* instance, bool visible);
         void (*toggle)(void* instance);
-        void* (*getLayout)(void* instance);  // Returns Container*
+        void* (*getLayout)(void* instance);
     } PluginVTable;
     
     typedef PluginVTable* (*CreatePluginFunc)();
@@ -31,27 +32,35 @@ extern "C" {
 class MULOComponent {
 public:    
     MULOComponent() = default;
+    
     virtual ~MULOComponent() = default;
 
     virtual void init() = 0;
+    
     virtual void update() = 0;
+    
     virtual Container* getLayout() { return layout; }
+    
     virtual bool handleEvents() = 0;
 
     // Visibility control
     virtual void show() { if (layout) layout->m_modifier.setVisible(true); }
+    
     virtual void hide() { if (layout) layout->m_modifier.setVisible(false); }
+    
     virtual bool isVisible() const { return layout ? layout->m_modifier.isVisible() : false; }
+    
     virtual void setVisible(bool visible) { if (visible) show(); else hide(); }
+    
     virtual void toggle() { if (isVisible()) hide(); else show(); }
 
     // Set references to Application, Engine, UIState, and UIResources
     inline void setAppRef(Application* appRef) { app = appRef; }
     
-    // Set parent container reference for layout hierarchy
     inline void setParentContainer(Container* parent) { parentContainer = parent; }
 
     inline std::string getName() const { return name; }
+    
     virtual bool isInitialized() const { return initialized; }
 
 protected:
@@ -65,7 +74,6 @@ protected:
     bool forceUpdate = false;
 };
 
-// Wrapper class for plugin components
 class PluginComponentWrapper : public MULOComponent {
 public:
     explicit PluginComponentWrapper(PluginVTable* pluginVTable) 
@@ -149,6 +157,20 @@ public:
 protected:
     PluginVTable* plugin = nullptr;
 };
+
+#ifdef _WIN32
+#define GET_INTERFACE \
+    extern "C" { \
+        __declspec(dllexport) PluginVTable* getPluginInterface(); \
+    }
+
+#else
+#define GET_INTERFACE \
+    extern "C" { \
+        __attribute__((visibility("default"))) PluginVTable* getPluginInterface(); \
+    }
+
+#endif
 
 // Helper macros for creating plugins
 #define DECLARE_PLUGIN(ClassName) \

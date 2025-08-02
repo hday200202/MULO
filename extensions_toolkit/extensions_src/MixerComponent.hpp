@@ -1,3 +1,4 @@
+
 #pragma once
 
 #include "MULOComponent.hpp"
@@ -5,27 +6,34 @@
 class MixerComponent : public MULOComponent {
 public:
     MixerComponent();
+    
     ~MixerComponent() override;
 
     void init() override;
+    
     void update() override;
+    
     bool handleEvents() override;
+    
     inline Container* getLayout() override { return layout; }
 
     void rebuildUI();
+    
     void setMixerVisible(bool visible);
+    
     bool isMixerVisible() const { return mixerShown; }
     
-    // Override visibility methods to properly handle mixer state
     void show() override { setMixerVisible(true); }
+    
     void hide() override { setMixerVisible(false); }
+    
     bool isVisible() const override { return mixerShown; }
 
 private:
     int displayedTrackCount = 0;
     bool shouldRebuild = false;
     bool mixerShown = false;
-    bool wasVisible = false; // Track previous visibility state
+    bool wasVisible = false;
 
     // UI Elements
     ScrollableRow* mixerScrollable = nullptr;
@@ -36,19 +44,26 @@ private:
     std::unordered_map<std::string, Button*> soloButtons;
     std::unordered_map<std::string, Slider*> volumeSliders;
     std::unordered_map<std::string, Slider*> panSliders;
+    
+    // Button click state tracking to prevent multiple clicks per frame
+    std::unordered_map<std::string, bool> lastSoloButtonStates;
 
     // UI creation methods
     Column* createMixerTrack(const std::string& trackName, float volume = 1.0f, float pan = 0.5f);
+    
     Column* createMasterMixerTrack();
     
     // UI rebuild helpers
     void rebuildUIFromEngine();
+    
     void clearTrackElements();
+    
     void syncSlidersToEngine();
     
     // Pan conversion helpers
-    float enginePanToSlider(float enginePan) const { return (enginePan + 1.0f) * 0.5f; } // -1,+1 to 0,1
-    float sliderPanToEngine(float sliderPan) const { return (sliderPan * 2.0f) - 1.0f; } // 0,1 to -1,+1
+    float enginePanToSlider(float enginePan) const { return (enginePan + 1.0f) * 0.5f; }
+    
+    float sliderPanToEngine(float sliderPan) const { return (sliderPan * 2.0f) - 1.0f; }
 };
 
 #include "Application.hpp"
@@ -171,13 +186,20 @@ bool MixerComponent::handleEvents() {
         auto panIt = panSliders.find(name);
         auto soloIt = soloButtons.find(name);
         
-        // Handle solo button clicks
-        if (soloIt != soloButtons.end() && soloIt->second && soloIt->second->isClicked()) {
-            track->setSolo(!track->isSolo());
-            soloIt->second->m_modifier.setColor(
-                track->isSolo() ? app->resources.activeTheme->mute_color : app->resources.activeTheme->button_color
-            );
-            forceUpdate = true;
+        // Handle solo button clicks with state tracking
+        if (soloIt != soloButtons.end() && soloIt->second) {
+            bool currentSoloState = soloIt->second->isClicked();
+            bool& lastSoloState = lastSoloButtonStates[track->getName()];
+            
+            if (currentSoloState && !lastSoloState) {
+                // Only process on rising edge (button just clicked)
+                track->setSolo(!track->isSolo());
+                soloIt->second->m_modifier.setColor(
+                    track->isSolo() ? app->resources.activeTheme->mute_color : app->resources.activeTheme->button_color
+                );
+                forceUpdate = true;
+            }
+            lastSoloState = currentSoloState;
         }
         
         // Handle volume slider changes
@@ -434,13 +456,7 @@ void MixerComponent::syncSlidersToEngine() {
 }
 
 // Plugin interface for MixerComponent
-extern "C" {
-#ifdef _WIN32
-    __declspec(dllexport) PluginVTable* getPluginInterface();
-#else
-    __attribute__((visibility("default"))) PluginVTable* getPluginInterface();
-#endif
-}
+GET_INTERFACE
 
 // Plugin interface implementation
 DECLARE_PLUGIN(MixerComponent)

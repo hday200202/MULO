@@ -1,3 +1,5 @@
+
+
 #include "Application.hpp"
 
 #include <tinyfiledialogs/tinyfiledialogs.hpp>
@@ -11,7 +13,7 @@
 #ifdef _WIN32
 #include <windows.h>
 
-static POINT s_minWindowSize = {800, 600}; // Set this to your minWindowSize
+static POINT s_minWindowSize = {800, 600};
 
 LRESULT CALLBACK MinSizeWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {

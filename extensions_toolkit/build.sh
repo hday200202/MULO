@@ -58,7 +58,7 @@ cmake --build "$BUILD_DIR" --config $BUILD_TYPE -j $(nproc 2>/dev/null || sysctl
 echo "Done building extensions."
 
 # Show built extensions
-EXTENSIONS_PATH="bin/$PLATFORM/$BUILD_TYPE"
+EXTENSIONS_PATH="build/$BUILD_TYPE"
 if [[ -d "$EXTENSIONS_PATH" ]]; then
     echo "Extensions built in: $EXTENSIONS_PATH"
     ls -la "$EXTENSIONS_PATH"
@@ -70,6 +70,20 @@ fi
 DEST_DIR="../bin/$PLATFORM/$BUILD_TYPE/extensions"
 echo "Copying extensions to $DEST_DIR"
 mkdir -p "$DEST_DIR"
-find "$EXTENSIONS_PATH" -maxdepth 1 -type f -name "*.so" -exec cp {} "$DEST_DIR" \;
+
+# Copy platform-specific extension files
+if [[ "$PLATFORM" == "Windows" ]]; then
+    # Copy .dll files on Windows
+    find "$EXTENSIONS_PATH" -maxdepth 1 -type f -name "*.dll" -exec cp {} "$DEST_DIR" \;
+    echo "Copied .dll files to $DEST_DIR"
+elif [[ "$PLATFORM" == "Darwin" ]]; then
+    # Copy .dylib files on macOS
+    find "$EXTENSIONS_PATH" -maxdepth 1 -type f -name "*.dylib" -exec cp {} "$DEST_DIR" \;
+    echo "Copied .dylib files to $DEST_DIR"
+else
+    # Copy .so files on Linux
+    find "$EXTENSIONS_PATH" -maxdepth 1 -type f -name "*.so" -exec cp {} "$DEST_DIR" \;
+    echo "Copied .so files to $DEST_DIR"
+fi
 
 echo "Extensions copied to $DEST_DIR"

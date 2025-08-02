@@ -1,3 +1,4 @@
+
 #pragma once
 
 #include <filesystem>
@@ -9,27 +10,37 @@
 class FileTree {
 public:
     FileTree() = default;
+    
     FileTree(const std::string& rootDirectoryPath);
 
     // Tree state
     bool isOpen() const;
+    
     void setOpen(bool open);
+    
     void toggleOpen();
 
     // Directory operations
     void setRootDirectory(const std::string& path);
+    
     void refresh();
+    
     void loadChildren();
 
     // Getters
     const std::string& getPath() const;
+    
     const std::string& getName() const;
+    
     bool isDirectory() const;
+    
     bool isAudioFile() const;
     
     // Tree navigation
     const std::vector<std::shared_ptr<FileTree>>& getSubDirectories() const;
+    
     const std::vector<std::shared_ptr<FileTree>>& getFiles() const;
+    
     FileTree* getParent() const;
     
     // File filtering
@@ -49,5 +60,6 @@ private:
     
     // Helper methods
     void loadFromPath(const std::string& directoryPath);
+    
     std::string getFileExtension(const std::string& filename) const;
 };

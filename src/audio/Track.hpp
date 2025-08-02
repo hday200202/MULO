@@ -1,3 +1,4 @@
+
 #pragma once
 
 #include <juce_core/juce_core.h>
@@ -8,28 +9,32 @@
 
 #include "AudioClip.hpp"
 
-/**
- * @brief Represents a single track in a composition.
- */
 class Track {
 public:
     Track(juce::AudioFormatManager& formatManager);
+    
     ~Track();
 
     void setName(const std::string& name);
+    
     std::string getName() const;
 
     void setVolume(float db);
+    
     float getVolume() const;
 
     void setPan(float pan);
+    
     float getPan() const;
 
     void addClip(const AudioClip& clip);
+    
     void removeClip(int index);
+    
     const std::vector<AudioClip>& getClips() const;
 
     void setReferenceClip(const AudioClip& clip);
+    
     AudioClip* getReferenceClip();
 
     void process(
@@ -40,9 +45,11 @@ public:
     );
 
     void toggleMute() { muted = !muted; }
+    
     bool isMuted() const { return muted; }
 
     void setSolo(bool solo) { soloed = solo; }
+    
     bool isSolo() const { return soloed; }
 
 private:
@@ -53,7 +60,7 @@ private:
     bool soloed = false;
 
     std::vector<AudioClip> clips;
-    std::unique_ptr<AudioClip> referenceClip; // Changed to unique_ptr
+    std::unique_ptr<AudioClip> referenceClip;
 
     juce::AudioFormatManager& formatManager;
 };

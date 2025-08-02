@@ -1,3 +1,4 @@
+
 #pragma once
 
 #include <string>
@@ -26,7 +27,7 @@ struct UIState {
     std::string selectedTheme = "Dark";
     int trackCount = 0;
     float timelineZoomLevel = 1.f;
-    int autoSaveIntervalSeconds = 300; // default 5 minutes
+    int autoSaveIntervalSeconds = 300;
 
     bool settingsShown = false;
 
@@ -44,7 +45,6 @@ struct UIResources {
     // Add more resources as needed
 };
 
-// Theme Structure
 struct UITheme {
     sf::Color button_color;
     sf::Color track_color;

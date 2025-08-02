@@ -41,11 +41,15 @@ public:
     UIResources resources;
 
     Application();
+
     ~Application();
 
     void update();
+
     void render();
+
     void handleEvents();
+
     inline bool isRunning() const { return running; }
 
     inline Container* getComponentLayout(const std::string& componentName) { 
@@ -53,21 +57,26 @@ public:
             return muloComponents[componentName]->getLayout(); 
         return nullptr;
     }
-    
+
     inline MULOComponent* getComponent(const std::string& componentName) {
         auto it = muloComponents.find(componentName);
         return (it != muloComponents.end()) ? it->second.get() : nullptr;
     }
     
     inline Container* getPageBaseContainer() { return baseContainer; }
+    
     inline Row* getMainContentRow() { return mainContentRow; }
+    
     void setComponentParentContainer(const std::string& componentName, Container* parent);
 
     std::string selectDirectory();
+    
     std::string selectFile(std::initializer_list<std::string> filters);
 
     inline const sf::RenderWindow& getWindow() const { return window; }
+    
     inline void requestUIRebuild() { pendingUIRebuild = true; }
+    
     inline void requestFullscreenToggle() { pendingFullscreenToggle = true; }
 
     // Engine interface
@@ -87,13 +96,19 @@ public:
     { engine.removeTrackByName(name); }
 
     inline void play() { engine.play(); }
+    
     inline void pause() { engine.pause(); }
+    
     inline void setSavedPosition(double seconds) { engine.setPosition(seconds); }
+    
     inline bool isPlaying() const { return engine.isPlaying(); }
 
     inline void setBpm(float bpm) { engine.setBpm(bpm); }
+    
     inline float getBpm() const { return engine.getBpm(); }
+    
     inline double getPosition() const { return engine.getPosition(); }
+    
     inline void setPosition(double seconds) { engine.setPosition(seconds); }
 
     inline AudioClip* getReferenceClip(const std::string& trackName) 
@@ -106,9 +121,13 @@ public:
     { engine.getTrackByName(trackName)->removeClip(index); }
 
     inline double getSampleRate() const { return engine.getSampleRate(); }
+    
     inline void setSampleRate(const double newSampleRate) { engine.setSampleRate(newSampleRate); }
+    
     inline void loadComposition(const std::string& path) { engine.loadComposition(path); }
+    
     inline std::string getCurrentCompositionName() const { return engine.getCurrentCompositionName(); }
+    
     inline bool saveState(const std::string& saveDirectory) const { return engine.saveState(saveDirectory); }
 
 private:
@@ -121,7 +140,6 @@ private:
     sf::VideoMode screenResolution;
     sf::Vector2u minWindowSize;
 
-    // Core engine and UI
     Engine engine;
 
     bool running = false;
@@ -132,28 +150,36 @@ private:
 
     size_t forceUpdatePoll = 0;
 
-    // Plugin management
     struct LoadedPlugin {
-        void* handle;           // Library handle
-        PluginVTable* plugin;   // Plugin interface
-        std::string path;       // Plugin file path
-        std::string name;       // Plugin name (cached)
+        void* handle;
+        PluginVTable* plugin;
+        std::string path;
+        std::string name;
     };
     
     std::string exeDirectory = "";
     std::unordered_map<std::string, LoadedPlugin> loadedPlugins;
 
     void initUI();
+    
     void initUIResources();
+    
     void createWindow();
+    
     void loadComponents();
+    
     void rebuildUI();
+    
     void toggleFullscreen();
+    
     void cleanup();
     
     // Plugin loading methods
     void scanAndLoadPlugins();
+    
     bool loadPlugin(const std::string& path);
+    
     void unloadPlugin(const std::string& name);
+    
     void unloadAllPlugins();
 };

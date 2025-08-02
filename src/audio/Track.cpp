@@ -1,3 +1,4 @@
+
 #include "Track.hpp"
 
 Track::Track(juce::AudioFormatManager& fm) : formatManager(fm) {}

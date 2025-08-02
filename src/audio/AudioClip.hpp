@@ -2,9 +2,6 @@
 
 #include <juce_core/juce_core.h>
 
-/**
- * @brief Represents a single audio clip on a track.
- */
 struct AudioClip {
     juce::File sourceFile;
     double startTime;
@@ -13,6 +10,7 @@ struct AudioClip {
     float volume;
 
     AudioClip();
+    
     AudioClip(
         const juce::File& sourceFile, 
         double startTime, 

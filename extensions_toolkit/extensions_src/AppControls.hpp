@@ -1,3 +1,4 @@
+
 #pragma once
 
 #include "MULOComponent.hpp"
@@ -5,10 +6,13 @@
 class AppControls : public MULOComponent {
 public:
     AppControls();
+    
     ~AppControls();
 
     void init() override;
+    
     bool handleEvents() override;
+    
     inline void update() override {}
 
 private:
@@ -18,7 +22,6 @@ private:
     Button* mixerButton;
     Button* settingsButton;
     
-    // Track play state to avoid reading button text
     bool wasPlaying = false;
 };
 
@@ -190,14 +193,6 @@ bool AppControls::handleEvents() {
     return forceUpdate;
 }
 
-// Plugin interface for AppControls
-extern "C" {
-#ifdef _WIN32
-    __declspec(dllexport) PluginVTable* getPluginInterface();
-#else
-    __attribute__((visibility("default"))) PluginVTable* getPluginInterface();
-#endif
-}
 
-// Declare this class as a plugin
+GET_INTERFACE
 DECLARE_PLUGIN(AppControls)

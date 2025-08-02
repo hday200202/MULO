@@ -1,3 +1,4 @@
+
 #pragma once
 
 #include "MULOComponent.hpp"
@@ -5,14 +6,19 @@
 class SettingsComponent : public MULOComponent {
 public:
     SettingsComponent();
+    
     ~SettingsComponent() override;
 
     void init() override;
+    
     void update() override;
+    
     Container* getLayout() override { return nullptr; }
+    
     bool handleEvents() override { update(); return false; };
 
     void show() override;
+    
     void hide() override;
 
 private:
@@ -23,11 +29,12 @@ private:
     bool pendingClose = false;
     bool pendingUIRebuild = false;
 
-    // Temporary settings, before application
+    // Temporary settings before application
     std::string tempSampleRate = "44100";
     std::string tempTheme = "Dark";
 
     Container* buildLayout();
+    
     void applySettings();
 };
 
@@ -226,13 +233,7 @@ void SettingsComponent::applySettings() {
 }
 
 // Plugin interface for SettingsComponent
-extern "C" {
-#ifdef _WIN32
-    __declspec(dllexport) PluginVTable* getPluginInterface();
-#else
-    __attribute__((visibility("default"))) PluginVTable* getPluginInterface();
-#endif
-}
+GET_INTERFACE
 
 // Declare this class as a plugin
 DECLARE_PLUGIN(SettingsComponent)
