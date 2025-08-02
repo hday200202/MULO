@@ -43,9 +43,13 @@ bool KBShortcuts::handleEvents() {
     return forceUpdate;
 }
 
-// Plugin interface for SettingsComponent
+// Plugin interface for KBShortcuts
 extern "C" {
+#ifdef _WIN32
+    __declspec(dllexport) PluginVTable* getPluginInterface();
+#else
     __attribute__((visibility("default"))) PluginVTable* getPluginInterface();
+#endif
 }
 
 // Declare this class as a plugin

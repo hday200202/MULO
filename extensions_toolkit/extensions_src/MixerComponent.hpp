@@ -433,9 +433,13 @@ void MixerComponent::syncSlidersToEngine() {
     }
 }
 
-// Plugin interface for TimelineComponent
+// Plugin interface for MixerComponent
 extern "C" {
+#ifdef _WIN32
+    __declspec(dllexport) PluginVTable* getPluginInterface();
+#else
     __attribute__((visibility("default"))) PluginVTable* getPluginInterface();
+#endif
 }
 
 // Plugin interface implementation

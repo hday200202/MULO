@@ -5,12 +5,7 @@
 #include "UIData.hpp"
 #include "FileTree.hpp"
 #include "MULOComponent.hpp"
-// #include "Components/KBShortcuts.hpp"
-// #include "Components/TimelineComponent.hpp"
-// #include "Components/AppControls.hpp"
-// #include "Components/FileBrowserComponent.hpp"
-// #include "Components/SettingsComponent.hpp"
-// #include "Components/MixerComponent.hpp"
+#include <iostream>
 
 #include <juce_core/juce_core.h>
 #include <nlohmann/json.hpp>

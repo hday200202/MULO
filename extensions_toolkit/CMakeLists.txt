@@ -40,6 +40,8 @@ add_compile_definitions(JUCE_MODAL_LOOPS_PERMITTED=1)
 
 # SFML Setup
 set(SFML_INCLUDE_DIRS "")
+set(SFML_FOUND FALSE)
+
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(SFML_PC REQUIRED IMPORTED_TARGET
@@ -51,16 +53,43 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_library(SFML::Window   ALIAS PkgConfig::SFML_PC)
     add_library(SFML::System   ALIAS PkgConfig::SFML_PC)
     set(SFML_INCLUDE_DIRS ${SFML_PC_INCLUDE_DIRS})
+    set(SFML_FOUND TRUE)
     find_package(CURL REQUIRED)
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Windows")
-    set(SFML_DIR "${CMAKE_SOURCE_DIR}/external/windows/SFML-3.0.0-MSVC/lib/cmake/SFML")
-    find_package(SFML 3.0.0 COMPONENTS Graphics Window System REQUIRED)
+    set(SFML_DIR "${CMAKE_SOURCE_DIR}/../external/windows/SFML-3.0.0-MSVC/lib/cmake/SFML")
+    
+    # Check if SFML installation exists and has required files
+    if(EXISTS "${CMAKE_SOURCE_DIR}/../external/windows/SFML-3.0.0-MSVC/lib/cmake/SFML/SFMLConfig.cmake")
+        find_package(SFML 3.0.0 COMPONENTS Graphics Window System QUIET)
+        if(SFML_FOUND)
+            set(SFML_FOUND TRUE)
+        else()
+            message(WARNING "SFML found but configuration failed. This might be due to missing library files.")
+            message(WARNING "Please ensure SFML is properly installed in: ${CMAKE_SOURCE_DIR}/../external/windows/SFML-3.0.0-MSVC")
+            message(WARNING "Continuing build without SFML...")
+        endif()
+    else()
+        message(WARNING "SFML not found at: ${CMAKE_SOURCE_DIR}/../external/windows/SFML-3.0.0-MSVC")
+        message(WARNING "Please install SFML 3.0.0 for Windows (MSVC) to enable SFML features.")
+        message(WARNING "Continuing build without SFML...")
+    endif()
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
     find_package(SFML 3.0.1 COMPONENTS Graphics Window System REQUIRED)
+    set(SFML_FOUND TRUE)
 endif()
 
 # JSON for config handling
-find_package(nlohmann_json CONFIG REQUIRED)
+find_package(nlohmann_json CONFIG QUIET)
+if(NOT nlohmann_json_FOUND)
+    message(STATUS "nlohmann_json not found via package manager, using FetchContent")
+    include(FetchContent)
+    FetchContent_Declare(
+        nlohmann_json
+        URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz
+        URL_HASH SHA256=d6c65aca6b1ed68e7a182f4757257b107ae403032760ed6ef121c9d55e81757d
+    )
+    FetchContent_MakeAvailable(nlohmann_json)
+endif()
 
 # Linux-only GTK/WebKit (if needed) - same as main CMakeLists.txt
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -72,6 +101,11 @@ endif()
 # Engine source files for extensions (using local structure)
 set(ENGINE_SOURCES
     "${CMAKE_SOURCE_DIR}/../src/audio/Engine.cpp"
+    "${CMAKE_SOURCE_DIR}/../src/audio/AudioClip.cpp"
+    "${CMAKE_SOURCE_DIR}/../src/audio/Composition.cpp"
+    "${CMAKE_SOURCE_DIR}/../src/audio/Track.cpp"
+    "${CMAKE_SOURCE_DIR}/../src/frontend/Application.cpp"
+    "${CMAKE_SOURCE_DIR}/../src/frontend/FileTree.cpp"
 )
 
 set(COMMON_INCLUDE_DIRS
@@ -80,6 +114,7 @@ set(COMMON_INCLUDE_DIRS
     ${CMAKE_SOURCE_DIR}/../src/frontend
     ${CMAKE_SOURCE_DIR}/../external
     ${CMAKE_SOURCE_DIR}/../external/UILO
+    ${CMAKE_SOURCE_DIR}/../external/tinyfiledialogs
     ${SFML_INCLUDE_DIRS}
     
     # Platform-specific includes
@@ -133,7 +168,12 @@ set(COMMON_COMPILE_DEFINITIONS
     JUCE_GLOBAL_MODULE_SETTINGS_INCLUDED=1
     JUCE_STANDALONE_APPLICATION=1
     JUCE_MODAL_LOOPS_PERMITTED=1
+    JUCE_SHARED_CODE=1
 )
+
+# Add tinyfiledialogs library for extensions
+add_library(tinyfiledialogs STATIC ${CMAKE_SOURCE_DIR}/../external/tinyfiledialogs/tinyfiledialogs.cpp)
+target_include_directories(tinyfiledialogs PUBLIC ${CMAKE_SOURCE_DIR}/../external/tinyfiledialogs)
 
 # Link libraries for all extensions
 foreach(target ${EXTENSION_TARGETS})
@@ -150,19 +190,46 @@ foreach(target ${EXTENSION_TARGETS})
         juce::juce_audio_utils
         juce::juce_dsp
         
-        # SFML
-        SFML::Graphics
-        SFML::Window
-        SFML::System
-        
         # JSON library
         nlohmann_json::nlohmann_json
+        
+        # tinyfiledialogs
+        tinyfiledialogs
         
         # Platform-specific libraries
         $<$<STREQUAL:${CMAKE_SYSTEM_NAME},Linux>:curl>
         $<$<STREQUAL:${CMAKE_SYSTEM_NAME},Linux>:${GTK3_LIBRARIES}>
         $<$<STREQUAL:${CMAKE_SYSTEM_NAME},Linux>:${WEBKIT2GTK_LIBRARIES}>
+        $<$<AND:$<BOOL:${UNIX}>,$<NOT:$<BOOL:${APPLE}>>>:X11>
     )
+    
+    # Apply common compile definitions
+    target_compile_definitions(${target} PRIVATE ${COMMON_COMPILE_DEFINITIONS})
+    
+    # Link SFML if found
+    if(SFML_FOUND)
+        target_link_libraries(${target} PRIVATE
+            SFML::Graphics
+            SFML::Window
+            SFML::System
+        )
+        target_compile_definitions(${target} PRIVATE SFML_AVAILABLE=1)
+    else()
+        message(STATUS "Building ${target} without SFML support")
+    endif()
+    
+    # Platform-specific settings
+    if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        # Enable symbol export for plugins on Linux
+        set_target_properties(${target} PROPERTIES
+            ENABLE_EXPORTS ON
+            LINK_FLAGS "-Wl,--export-dynamic"
+        )
+        target_compile_definitions(${target} PRIVATE 
+            ${GTK3_CFLAGS_OTHER} 
+            ${WEBKIT2GTK_CFLAGS_OTHER}
+        )
+    endif()
 endforeach()
 
 # Remove 'lib' prefix from all extension shared libraries

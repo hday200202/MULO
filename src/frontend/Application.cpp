@@ -42,7 +42,14 @@ void SetMinWindowSize(HWND hwnd, int minWidth, int minHeight)
 namespace fs = std::filesystem;
 
 Application::Application() {
+#ifdef _WIN32
+    // Get executable path on Windows
+    char path[MAX_PATH];
+    GetModuleFileNameA(NULL, path, MAX_PATH);
+    exeDirectory = fs::path(path).parent_path().string();
+#else
     exeDirectory = fs::canonical("/proc/self/exe").parent_path().string();
+#endif
     
     // Initialize window, engine, ui
     createWindow();
@@ -210,6 +217,7 @@ void Application::createWindow() {
     );
     window.setVerticalSyncEnabled(true);
 
+    // Set minimum window size
     #ifdef __linux__
     Display* display = XOpenDisplay(nullptr);
     if (display) {
@@ -223,13 +231,13 @@ void Application::createWindow() {
     }
     #endif
 
-    #ifdef _WIN32
-    HWND hwnd = (HWND)window.getSystemHandle();
-    SetMinWindowSize(hwnd, minWindowSize.x, minWindowSize.y);
-    #endif
+    // #ifdef _WIN32
+    // HWND hwnd = (HWND)window.getNativeHandle();
+    // SetMinWindowSize(hwnd, minWindowSize.x, minWindowSize.y);
+    // #endif
 
     #ifdef __APPLE__
-    void* nsWindow = window.getSystemHandle();
+    void* nsWindow = window.getNativeHandle();
     if (nsWindow) {
         typedef void (*SetMinSizeFunc)(void*, SEL, CGSize);
         SetMinSizeFunc setMinSize = (SetMinSizeFunc)objc_msgSend;

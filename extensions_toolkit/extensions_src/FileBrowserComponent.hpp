@@ -208,9 +208,13 @@ void FileBrowserComponent::toggleTreeNodeByPath(const std::string& path) {
     findAndToggle(fileTree);
 }
 
-// Plugin interface for TimelineComponent
+// Plugin interface for FileBrowserComponent
 extern "C" {
+#ifdef _WIN32
+    __declspec(dllexport) PluginVTable* getPluginInterface();
+#else
     __attribute__((visibility("default"))) PluginVTable* getPluginInterface();
+#endif
 }
 
 // Declare this class as a plugin

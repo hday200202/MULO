@@ -1349,7 +1349,11 @@ inline std::vector<std::shared_ptr<sf::Drawable>> generateWaveformData(
 
 // Plugin interface for TimelineComponent
 extern "C" {
+#ifdef _WIN32
+    __declspec(dllexport) PluginVTable* getPluginInterface();
+#else
     __attribute__((visibility("default"))) PluginVTable* getPluginInterface();
+#endif
 }
 
 // Declare this class as a plugin
