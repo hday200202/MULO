@@ -3,36 +3,132 @@
 
 #include <string>
 #include <vector>
+#include <fstream>
 #include <unordered_map>
+#include <iostream>
+#include <filesystem>
 #include <SFML/Graphics/Color.hpp>
 #include "Engine.hpp"
+#include "../DebugConfig.hpp"
 
-// Forward declaration
 struct UITheme;
-
-struct TrackData {
-    std::string name;
-    float volume = 1.0f;
-    float pan = 0.0f;
-    std::vector<AudioClip> clips;
-
-    TrackData(const std::string& trackName = "Master")
-        : name(trackName) {}
-};
 
 struct UIState {
     std::string fileBrowserDirectory = "";
+    std::string vstDirecory = "";
     std::string saveDirectory = "";
-    std::string selectedTrackName = "Master";
     std::string selectedTheme = "Dark";
-    int trackCount = 0;
+
     float timelineZoomLevel = 1.f;
     int autoSaveIntervalSeconds = 300;
-
     bool settingsShown = false;
 
-    TrackData masterTrack{"Master"};
-    std::unordered_map<std::string, TrackData> tracks;
+    inline void printUIState() {
+        DEBUG_PRINT("  [File Browser Dir] " << fileBrowserDirectory);
+        DEBUG_PRINT("     [VST Directory] " << vstDirecory);
+        DEBUG_PRINT("          [Save Dir] " << saveDirectory);
+        DEBUG_PRINT("          [UI Theme] " << selectedTheme);
+        DEBUG_PRINT("[Auto Save Interval] " << autoSaveIntervalSeconds);
+    }
+
+    inline std::string getExecutableDirectory() {
+        try {
+            std::filesystem::path exePath = std::filesystem::current_path();
+            return exePath.string();
+        } catch (const std::exception& e) {
+            DEBUG_PRINT("Error getting executable directory: " << e.what());
+            return "."; // Fallback to current directory
+        }
+    }
+
+    inline void saveConfig() {
+        try {
+            std::string configPath = getExecutableDirectory() + "/config.json";
+            std::ofstream file(configPath);
+            
+            if (!file.is_open()) {
+                DEBUG_PRINT("Failed to open config file for writing: " << configPath);
+                return;
+            }
+
+            // Write JSON manually (simple format)
+            file << "{\n";
+            file << "  \"fileBrowserDirectory\": \"" << fileBrowserDirectory << "\",\n";
+            file << "  \"vstDirectory\": \"" << vstDirecory << "\",\n";
+            file << "  \"saveDirectory\": \"" << saveDirectory << "\",\n";
+            file << "  \"selectedTheme\": \"" << selectedTheme << "\",\n";
+            file << "  \"timelineZoomLevel\": " << timelineZoomLevel << ",\n";
+            file << "  \"autoSaveIntervalSeconds\": " << autoSaveIntervalSeconds << ",\n";
+            file << "  \"settingsShown\": " << (settingsShown ? "true" : "false") << "\n";
+            file << "}\n";
+            
+            file.close();
+            DEBUG_PRINT("Configuration saved to: " << configPath);
+        } catch (const std::exception& e) {
+            DEBUG_PRINT("Error saving config: " << e.what());
+        }
+    }
+
+    inline void loadConfig() {
+        try {
+            std::string configPath = getExecutableDirectory() + "/config.json";
+            std::ifstream file(configPath);
+            
+            if (!file.is_open()) {
+                DEBUG_PRINT("Config file not found, using defaults: " << configPath);
+                return;
+            }
+
+            std::string line;
+            while (std::getline(file, line)) {
+                // Simple JSON parsing (look for key-value pairs)
+                size_t colonPos = line.find(':');
+                if (colonPos == std::string::npos) continue;
+                
+                std::string key = line.substr(0, colonPos);
+                std::string value = line.substr(colonPos + 1);
+                
+                // Remove quotes, spaces, and commas
+                auto cleanString = [](std::string& str) {
+                    str.erase(std::remove_if(str.begin(), str.end(), [](char c) {
+                        return c == '"' || c == ' ' || c == ',' || c == '\t';
+                    }), str.end());
+                };
+                
+                cleanString(key);
+                cleanString(value);
+                
+                if (key == "fileBrowserDirectory") {
+                    fileBrowserDirectory = value;
+                } else if (key == "vstDirectory") {
+                    vstDirecory = value;
+                } else if (key == "saveDirectory") {
+                    saveDirectory = value;
+                } else if (key == "selectedTheme") {
+                    selectedTheme = value;
+                } else if (key == "timelineZoomLevel") {
+                    try {
+                        timelineZoomLevel = std::stof(value);
+                    } catch (...) {
+                        DEBUG_PRINT("Invalid timelineZoomLevel in config, using default");
+                    }
+                } else if (key == "autoSaveIntervalSeconds") {
+                    try {
+                        autoSaveIntervalSeconds = std::stoi(value);
+                    } catch (...) {
+                        DEBUG_PRINT("Invalid autoSaveIntervalSeconds in config, using default");
+                    }
+                } else if (key == "settingsShown") {
+                    settingsShown = (value == "true");
+                }
+            }
+            
+            file.close();
+            DEBUG_PRINT("Configuration loaded from: " << configPath);
+        } catch (const std::exception& e) {
+            DEBUG_PRINT("Error loading config: " << e.what());
+        }
+    }
 };
 
 struct UIResources {

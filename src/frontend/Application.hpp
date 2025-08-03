@@ -124,6 +124,12 @@ public:
     
     inline void setSampleRate(const double newSampleRate) { engine.setSampleRate(newSampleRate); }
     
+    // Selected Track Management
+    inline void setSelectedTrack(const std::string& trackName) { engine.setSelectedTrack(trackName); }
+    inline std::string getSelectedTrack() const { return engine.getSelectedTrack(); }
+    inline Track* getSelectedTrackPtr() { return engine.getSelectedTrackPtr(); }
+    inline bool hasSelectedTrack() const { return engine.hasSelectedTrack(); }
+    
     inline void loadComposition(const std::string& path) { engine.loadComposition(path); }
     
     inline std::string getCurrentCompositionName() const { return engine.getCurrentCompositionName(); }

@@ -9,6 +9,13 @@ install_manifest.txt
 CTestTestfile.cmake
 .cmake/
 test_project_files/
+test_vsts/
+bin/Linux/Release/config.json
+bin/Linux/Debug/config.json
+bin/Windows/Release/config.json
+bin/Windows/Debug/config.json
+bin/Darwin/Release/config.json
+bin/Darwin/Debug/config.json
 
 # Executables and Libraries (for cross-platform output in bin/)
 # We set CMAKE_RUNTIME_OUTPUT_DIRECTORY to bin/${CMAKE_SYSTEM_NAME}/${CMAKE_BUILD_TYPE}

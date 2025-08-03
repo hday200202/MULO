@@ -18,15 +18,23 @@ public:
 
 private:
     FileTree fileTree;
+    FileTree vstTree;
     bool fileTreeNeedsRebuild = false;
+    bool vstTreeNeedsRebuild = false;
     
     void buildFileTreeUI();
     
     void buildFileTreeUIRecursive(const FileTree& tree, int indentLevel);
+    
+    void buildVSTTreeUIRecursive(const FileTree& tree, int indentLevel);
 
     void toggleTreeNodeByPath(const std::string& path);
     
+    void toggleVSTTreeNodeByPath(const std::string& path);
+    
     void browseForDirectory();
+    
+    void browseForVSTDirectory();
 };
 
 #include "Application.hpp"
@@ -48,6 +56,19 @@ void FileBrowserComponent::init() {
         contains{},
         "file_browser_scroll_column"
     );
+    
+    // Load directory from UI state if available
+    if (!app->uiState.fileBrowserDirectory.empty() && 
+        std::filesystem::is_directory(app->uiState.fileBrowserDirectory)) {
+        fileTree.setRootDirectory(app->uiState.fileBrowserDirectory);
+    }
+    
+    // Load VST directory from UI state if available
+    if (!app->uiState.vstDirecory.empty() && 
+        std::filesystem::is_directory(app->uiState.vstDirecory)) {
+        vstTree.setRootDirectory(app->uiState.vstDirecory);
+    }
+    
     buildFileTreeUI();
     if (parentContainer) {
         parentContainer->addElement(layout);
@@ -60,9 +81,10 @@ void FileBrowserComponent::update() {
 }
 
 bool FileBrowserComponent::handleEvents() {
-    if (fileTreeNeedsRebuild) {
+    if (fileTreeNeedsRebuild || vstTreeNeedsRebuild) {
         buildFileTreeUI();
         fileTreeNeedsRebuild = false;
+        vstTreeNeedsRebuild = false;
         forceUpdate = true;
     }
 
@@ -74,6 +96,22 @@ void FileBrowserComponent::browseForDirectory() {
     if (!selectedDir.empty() && std::filesystem::is_directory(selectedDir)) {
         fileTree.setRootDirectory(selectedDir);
         fileTreeNeedsRebuild = true;
+        
+        // Save the selected directory to UI state and persist to config
+        app->uiState.fileBrowserDirectory = selectedDir;
+        app->uiState.saveConfig();
+    }
+}
+
+void FileBrowserComponent::browseForVSTDirectory() {
+    std::string selectedDir = app->selectDirectory();
+    if (!selectedDir.empty() && std::filesystem::is_directory(selectedDir)) {
+        vstTree.setRootDirectory(selectedDir);
+        vstTreeNeedsRebuild = true;
+        
+        // Save the selected VST directory to UI state and persist to config
+        app->uiState.vstDirecory = selectedDir;
+        app->uiState.saveConfig();
     }
 }
 
@@ -83,6 +121,7 @@ void FileBrowserComponent::buildFileTreeUI() {
 
     scrollColumn->clear();
 
+    // User Library Section
     scrollColumn->addElements({
         spacer(Modifier().setfixedHeight(16).align(Align::TOP)),
         row(Modifier().setfixedHeight(48),
@@ -102,7 +141,7 @@ void FileBrowserComponent::buildFileTreeUI() {
                     .align(Align::RIGHT | Align::CENTER_Y)
                     .onLClick([this](){ browseForDirectory(); }),
                 ButtonStyle::Pill,
-                "browse",
+                ". . .",
                 app->resources.dejavuSansFont,
                 app->resources.activeTheme->secondary_text_color,
                 "select_directory"
@@ -146,6 +185,71 @@ void FileBrowserComponent::buildFileTreeUI() {
             }
         }
     }
+
+    // VST3 Plugins Section
+    scrollColumn->addElements({
+        spacer(Modifier().setfixedHeight(24)),
+        row(Modifier().setfixedHeight(48),
+        contains{
+            spacer(Modifier().setfixedWidth(16).align(Align::LEFT)),
+            text(
+                Modifier().align(Align::LEFT | Align::CENTER_Y).setfixedHeight(32).setColor(app->resources.activeTheme->primary_text_color),
+                "vst3 plugins",
+                app->resources.dejavuSansFont
+            ),
+
+            button(
+                Modifier()
+                    .setfixedHeight(48)
+                    .setfixedWidth(96)
+                    .setColor(app->resources.activeTheme->alt_button_color)
+                    .align(Align::RIGHT | Align::CENTER_Y)
+                    .onLClick([this](){ browseForVSTDirectory(); }),
+                ButtonStyle::Pill,
+                ". . .",
+                app->resources.dejavuSansFont,
+                app->resources.activeTheme->secondary_text_color,
+                "select_vst_directory"
+            ),
+            spacer(Modifier().setfixedWidth(16).align(Align::RIGHT)),
+        }),
+        spacer(Modifier().setfixedHeight(16)),
+    });
+
+    if (!vstTree.getPath().empty()) {
+        std::string displayName = vstTree.getName();
+        std::string symbol = vstTree.isOpen() ? "[-] " : "[+] ";
+        displayName = symbol + displayName;
+
+        auto vstRootTextElement = text(
+            Modifier()
+                .setfixedHeight(28)
+                .setColor(app->resources.activeTheme->primary_text_color)
+                .onLClick([this](){
+                    vstTree.toggleOpen();
+                    vstTreeNeedsRebuild = true;
+            }),
+            displayName,
+            app->resources.dejavuSansFont
+        );
+
+        scrollColumn->addElements({
+            row(Modifier().setfixedHeight(28), contains{
+                spacer(Modifier().setfixedWidth(20.f)),
+                vstRootTextElement,
+            }),
+            spacer(Modifier().setfixedHeight(12))
+        });
+
+        if (vstTree.isOpen()) {
+            for (const auto& subDir : vstTree.getSubDirectories()) {
+                buildVSTTreeUIRecursive(*subDir, 2);
+            }
+            for (const auto& file : vstTree.getFiles()) {
+                buildVSTTreeUIRecursive(*file, 2);
+            }
+        }
+    }
 }
 
 void FileBrowserComponent::buildFileTreeUIRecursive(const FileTree& tree, int indentLevel) {
@@ -177,6 +281,20 @@ void FileBrowserComponent::buildFileTreeUIRecursive(const FileTree& tree, int in
 
             app->addTrack(trackName, filePath);
         });
+    } else if (tree.isVSTFile()) {
+        displayName = "[v] " + displayName;
+        std::string filePath = tree.getPath();
+        
+        // Add VST to currently selected track
+        textModifier.onLClick([this, filePath](){
+            Track* selectedTrack = app->getSelectedTrackPtr();
+            if (selectedTrack) {
+                selectedTrack->addEffect(filePath);
+            } else {
+                // Could show a message or notification that no track is selected
+                // For now, just do nothing if no track is selected
+            }
+        });
     }
 
     auto textElement = text(textModifier, displayName, app->resources.dejavuSansFont);
@@ -199,6 +317,59 @@ void FileBrowserComponent::buildFileTreeUIRecursive(const FileTree& tree, int in
     }
 }
 
+void FileBrowserComponent::buildVSTTreeUIRecursive(const FileTree& tree, int indentLevel) {
+    auto* scrollColumn = static_cast<ScrollableColumn*>(layout);
+    if (!scrollColumn) return;
+
+    float indent = indentLevel * 20.f;
+    std::string displayName = tree.getName();
+    Modifier textModifier = Modifier().setfixedHeight(28).setColor(app->resources.activeTheme->primary_text_color);
+    
+    if (tree.isDirectory()) {
+        std::string symbol = tree.isOpen() ? "[-] " : "[+] ";
+        displayName = symbol + displayName;
+        std::string treePath = tree.getPath();
+        
+        textModifier.onLClick([this, treePath](){
+            toggleVSTTreeNodeByPath(treePath);
+            vstTreeNeedsRebuild = true;
+        });
+    } else if (tree.isVSTFile()) {
+        displayName = "[v] " + displayName;
+        std::string filePath = tree.getPath();
+        
+        // Add VST to currently selected track
+        textModifier.onLClick([this, filePath](){
+            Track* selectedTrack = app->getSelectedTrackPtr();
+            if (selectedTrack) {
+                selectedTrack->addEffect(filePath);
+            } else {
+                // Could show a message or notification that no track is selected
+                // For now, just do nothing if no track is selected
+            }
+        });
+    }
+
+    auto textElement = text(textModifier, displayName, app->resources.dejavuSansFont);
+
+    scrollColumn->addElements({
+        row(Modifier().setfixedHeight(28), contains{
+            spacer(Modifier().setfixedWidth(indent)),
+            textElement,
+        }),
+        spacer(Modifier().setfixedHeight(12))
+    });
+
+    if (tree.isDirectory() && tree.isOpen()) {
+        for (const auto& subDir : tree.getSubDirectories()) {
+            buildVSTTreeUIRecursive(*subDir, indentLevel + 1);
+        }
+        for (const auto& file : tree.getFiles()) {
+            buildVSTTreeUIRecursive(*file, indentLevel + 1);
+        }
+    }
+}
+
 void FileBrowserComponent::toggleTreeNodeByPath(const std::string& path) {
     std::function<bool(FileTree&)> findAndToggle = 
         [&](FileTree& node) -> bool {
@@ -212,6 +383,21 @@ void FileBrowserComponent::toggleTreeNodeByPath(const std::string& path) {
         return false;
     };
     findAndToggle(fileTree);
+}
+
+void FileBrowserComponent::toggleVSTTreeNodeByPath(const std::string& path) {
+    std::function<bool(FileTree&)> findAndToggle = 
+        [&](FileTree& node) -> bool {
+        if (node.getPath() == path) {
+            node.toggleOpen();
+            return true;
+        }
+        for (auto& subDir : node.getSubDirectories()) {
+            if (findAndToggle(*subDir)) return true;
+        }
+        return false;
+    };
+    findAndToggle(vstTree);
 }
 
 // Plugin interface for FileBrowserComponent

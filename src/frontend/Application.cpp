@@ -54,6 +54,7 @@ Application::Application() {
 #endif
     
     // Initialize window, engine, ui
+    uiState.loadConfig();
     createWindow();
     applyTheme(resources, uiState.selectedTheme);
     initUIResources();
@@ -336,11 +337,11 @@ void Application::scanAndLoadPlugins() {
         if (entry.is_regular_file() && entry.path().extension() == pluginExt) {
             std::string pluginPath = entry.path().string();
             // if (pluginPath.find("Timeline") != std::string::npos) continue;
-            std::cout << "Found plugin: " << pluginPath << std::endl;
+            DEBUG_PRINT("Found plugin: " << pluginPath);
             if (loadPlugin(pluginPath)) {
-                std::cout << "Successfully loaded plugin: " << pluginPath << std::endl;
+                DEBUG_PRINT("Successfully loaded plugin: " << pluginPath);
             } else {
-                std::cerr << "Failed to load plugin: " << pluginPath << std::endl;
+                DEBUG_PRINT("Failed to load plugin: " << pluginPath);
             }
         }
     }
@@ -414,7 +415,7 @@ bool Application::loadPlugin(const std::string& pluginPath) {
         
         // Check if plugin with this name is already loaded
         if (muloComponents.find(name) != muloComponents.end()) {
-            std::cout << "Plugin with name '" << name << "' already loaded, skipping" << std::endl;
+            DEBUG_PRINT("Plugin with name '" << name << "' already loaded, skipping");
 #ifdef _WIN32
             FreeLibrary(handle);
 #else

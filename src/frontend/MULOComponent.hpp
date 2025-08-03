@@ -2,6 +2,7 @@
 #pragma once
 
 #include "UILO/UILO.hpp"
+#include "../DebugConfig.hpp"
 // #include <juce_gui_basics/juce_gui_basics.h>
 
 class Application;
@@ -84,7 +85,7 @@ public:
     }
     
     ~PluginComponentWrapper() override {
-        std::cout << "Destroying PluginComponentWrapper for: " << name << " (" << this << ")" << std::endl;
+        DEBUG_PRINT("Destroying PluginComponentWrapper for: " << name << " (" << this << ")");
     }
     
     void init() override {

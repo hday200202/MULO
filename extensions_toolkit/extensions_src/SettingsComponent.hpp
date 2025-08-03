@@ -2,6 +2,7 @@
 #pragma once
 
 #include "MULOComponent.hpp"
+#include "../../src/DebugConfig.hpp"
 
 class SettingsComponent : public MULOComponent {
 public:
@@ -209,7 +210,7 @@ void SettingsComponent::hide() {
 void SettingsComponent::applySettings() {
     static bool applying = false;
     if (applying) {
-        std::cout << "WARNING: applySettings called recursively, ignoring" << std::endl;
+        DEBUG_PRINT("WARNING: applySettings called recursively, ignoring");
         return;
     }
     applying = true;
@@ -227,7 +228,7 @@ void SettingsComponent::applySettings() {
     }
 
     app->uiState.settingsShown = false;
-    std::cout << "Settings Applied!\n";
+    DEBUG_PRINT("Settings Applied!");
     
     applying = false;
 }

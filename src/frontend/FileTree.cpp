@@ -58,8 +58,14 @@ void FileTree::loadChildren() {
             child->parent = this; // Set raw pointer to parent
             
             if (entry.is_directory()) {
-                child->isDir = true;
-                subDirectories.push_back(child);
+                // Check if this is a VST3 bundle (directory with .vst3 extension)
+                if (isValidVSTExtension(child->getFileExtension(child->name))) {
+                    child->isDir = false; // Treat VST3 bundles as files
+                    files.push_back(child);
+                } else {
+                    child->isDir = true;
+                    subDirectories.push_back(child);
+                }
             } else if (entry.is_regular_file()) {
                 child->isDir = false;
                 files.push_back(child);
@@ -102,6 +108,13 @@ bool FileTree::isAudioFile() const {
     return isValidAudioExtension(ext);
 }
 
+bool FileTree::isVSTFile() const {
+    if (isDir) return false;
+    
+    std::string ext = getFileExtension(name);
+    return isValidVSTExtension(ext);
+}
+
 const std::vector<std::shared_ptr<FileTree>>& FileTree::getSubDirectories() const {
     return subDirectories;
 }
@@ -123,6 +136,17 @@ bool FileTree::isValidAudioExtension(const std::string& extension) {
     std::transform(lowerExt.begin(), lowerExt.end(), lowerExt.begin(), ::tolower);
     
     return std::find(audioExtensions.begin(), audioExtensions.end(), lowerExt) != audioExtensions.end();
+}
+
+bool FileTree::isValidVSTExtension(const std::string& extension) {
+    static const std::vector<std::string> vstExtensions = {
+        ".vst3"
+    };
+    
+    std::string lowerExt = extension;
+    std::transform(lowerExt.begin(), lowerExt.end(), lowerExt.begin(), ::tolower);
+    
+    return std::find(vstExtensions.begin(), vstExtensions.end(), lowerExt) != vstExtensions.end();
 }
 
 std::string FileTree::getFileExtension(const std::string& filename) const {

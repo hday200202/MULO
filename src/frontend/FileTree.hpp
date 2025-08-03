@@ -36,6 +36,8 @@ public:
     
     bool isAudioFile() const;
     
+    bool isVSTFile() const;
+    
     // Tree navigation
     const std::vector<std::shared_ptr<FileTree>>& getSubDirectories() const;
     
@@ -45,6 +47,8 @@ public:
     
     // File filtering
     static bool isValidAudioExtension(const std::string& extension);
+    
+    static bool isValidVSTExtension(const std::string& extension);
 
 private:
     std::string path;

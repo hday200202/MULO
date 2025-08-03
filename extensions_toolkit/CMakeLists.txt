@@ -174,6 +174,7 @@ set(COMMON_COMPILE_DEFINITIONS
 # Add tinyfiledialogs library for extensions
 add_library(tinyfiledialogs STATIC ${CMAKE_SOURCE_DIR}/../external/tinyfiledialogs/tinyfiledialogs.cpp)
 target_include_directories(tinyfiledialogs PUBLIC ${CMAKE_SOURCE_DIR}/../external/tinyfiledialogs)
+set_target_properties(tinyfiledialogs PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # Link libraries for all extensions
 foreach(target ${EXTENSION_TARGETS})
@@ -187,6 +188,7 @@ foreach(target ${EXTENSION_TARGETS})
         juce::juce_audio_basics
         juce::juce_audio_devices
         juce::juce_audio_formats
+        juce::juce_audio_processors
         juce::juce_audio_utils
         juce::juce_dsp
         
@@ -225,7 +227,7 @@ foreach(target ${EXTENSION_TARGETS})
             ENABLE_EXPORTS ON
             LINK_FLAGS "-Wl,--export-dynamic"
         )
-        target_compile_definitions(${target} PRIVATE 
+        target_compile_options(${target} PRIVATE 
             ${GTK3_CFLAGS_OTHER} 
             ${WEBKIT2GTK_CFLAGS_OTHER}
         )

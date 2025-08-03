@@ -1,7 +1,6 @@
 
 #include "Engine.hpp"
-#include <iostream>
-#include <iomanip>
+#include "../DebugConfig.hpp"
 
 Engine::Engine() {
     formatManager.registerBasicFormats();
@@ -30,24 +29,27 @@ Engine::Engine() {
             
             // If still failing, let JUCE use default
             if (error.isNotEmpty()) {
-                std::cout << "Warning: Could not set low-latency audio buffer. Using default settings." << std::endl;
-                std::cout << "Audio setup error: " << error.toStdString() << std::endl;
+                DEBUG_PRINT("Warning: Could not set low-latency audio buffer. Using default settings.");
+                DEBUG_PRINT("Audio setup error: " << error.toStdString());
             }
         }
     }
     
     // Print the actual audio setup for debugging
     auto finalSetup = deviceManager.getAudioDeviceSetup();
-    std::cout << "Audio device setup:" << std::endl;
-    std::cout << "  Sample rate: " << finalSetup.sampleRate << " Hz" << std::endl;
-    std::cout << "  Buffer size: " << finalSetup.bufferSize << " samples" << std::endl;
-    std::cout << "  Latency: ~" << std::fixed << std::setprecision(1) 
-              << (finalSetup.bufferSize / finalSetup.sampleRate * 1000.0) << " ms" << std::endl;
+    DEBUG_PRINT("Audio device setup:");
+    DEBUG_PRINT("  Sample rate: " << finalSetup.sampleRate << " Hz");
+    DEBUG_PRINT("  Buffer size: " << finalSetup.bufferSize << " samples");
+    DEBUG_PRINT_INLINE("  Latency: ~" << std::fixed << std::setprecision(1) 
+              << (finalSetup.bufferSize / finalSetup.sampleRate * 1000.0) << " ms");
     
     deviceManager.addAudioCallback(this);
 
     masterTrack = std::make_unique<Track>(formatManager);
     masterTrack->setName("Master");
+    
+    // Initialize with Master track selected by default
+    selectedTrackName = "Master";
 }
 
 Engine::~Engine() {
@@ -196,7 +198,7 @@ void Engine::loadComposition(const std::string& path) {
     }
 
     currentComposition = std::move(comp);
-    std::cout << "Loaded composition: " << currentComposition->name << "\n";
+    DEBUG_PRINT("Loaded composition: " << currentComposition->name);
 }
 
 void Engine::saveComposition(const std::string&) {}
@@ -226,6 +228,9 @@ void Engine::addTrack(const std::string& name, const std::string& samplePath) {
 
     auto t = std::make_unique<Track>(formatManager);
     t->setName(uniqueName);
+    
+    // Prepare the track with current audio settings
+    t->prepareToPlay(sampleRate, currentBufferSize);
 
     if (!samplePath.empty() && uniqueName != "Master") {
         juce::File sampleFile(samplePath);
@@ -291,6 +296,56 @@ std::vector<std::unique_ptr<Track>>& Engine::getAllTracks() {
 
 Track* Engine::getMasterTrack() {
     return masterTrack.get();
+}
+
+void Engine::setSelectedTrack(const std::string& trackName) {
+    // Validate that the track exists (including Master track)
+    if (trackName == "Master") {
+        selectedTrackName = trackName;
+        DEBUG_PRINT("[Engine] Selected track: " << trackName);
+        return;
+    }
+    
+    // Check if track exists in composition
+    if (currentComposition) {
+        for (const auto& track : currentComposition->tracks) {
+            if (track->getName() == trackName) {
+                selectedTrackName = trackName;
+                DEBUG_PRINT("[Engine] Selected track: " << trackName);
+                return;
+            }
+        }
+    }
+    
+    std::cerr << "[Engine] Warning: Track '" << trackName << "' does not exist" << std::endl;
+}
+
+std::string Engine::getSelectedTrack() const {
+    return selectedTrackName;
+}
+
+Track* Engine::getSelectedTrackPtr() {
+    if (selectedTrackName.empty()) {
+        return nullptr;
+    }
+    
+    if (selectedTrackName == "Master") {
+        return masterTrack.get();
+    }
+    
+    if (currentComposition) {
+        for (const auto& track : currentComposition->tracks) {
+            if (track->getName() == selectedTrackName) {
+                return track.get();
+            }
+        }
+    }
+    
+    return nullptr;
+}
+
+bool Engine::hasSelectedTrack() const {
+    return !selectedTrackName.empty();
 }
 
 void Engine::audioDeviceIOCallbackWithContext(
@@ -384,10 +439,21 @@ void Engine::loadState(const std::string& state) {
 
 void Engine::audioDeviceAboutToStart(juce::AudioIODevice* device) {
     sampleRate = device->getCurrentSampleRate();
-    tempMixBuffer.setSize(device->getOutputChannelNames().size(), 512);
+    currentBufferSize = device->getCurrentBufferSizeSamples();
+    tempMixBuffer.setSize(device->getOutputChannelNames().size(), currentBufferSize);
     tempMixBuffer.clear();
     positionSeconds = 0.0;
-    DBG("Device about to start with SR: " << sampleRate);
+    
+    // Prepare all tracks with the correct audio settings
+    if (currentComposition) {
+        for (auto& track : currentComposition->tracks) {
+            if (track) {
+                track->prepareToPlay(sampleRate, currentBufferSize);
+            }
+        }
+    }
+    
+    DBG("Device about to start with SR: " << sampleRate << ", buffer: " << currentBufferSize);
 }
 
 void Engine::audioDeviceStopped() {
@@ -415,7 +481,21 @@ void Engine::processBlock(juce::AudioBuffer<float>& outputBuffer, int numSamples
         if (track) {
             bool shouldPlay = !anyTrackSoloed ? !track->isMuted() : track->isSolo();
             if (shouldPlay) {
-                track->process(positionSeconds, tempMixBuffer, numSamples, sampleRate);
+                // Create a separate buffer for this track to avoid effects bleeding between tracks
+                juce::AudioBuffer<float> trackBuffer;
+                trackBuffer.setSize(tempMixBuffer.getNumChannels(), numSamples);
+                trackBuffer.clear();
+                
+                // Process track audio into its own buffer
+                track->process(positionSeconds, trackBuffer, numSamples, sampleRate);
+                
+                // Apply track effects to its own buffer
+                track->processEffects(trackBuffer);
+                
+                // Add the processed track to the mix
+                for (int ch = 0; ch < tempMixBuffer.getNumChannels(); ++ch) {
+                    tempMixBuffer.addFrom(ch, 0, trackBuffer, ch, 0, numSamples);
+                }
             }
         }
     }
@@ -436,6 +516,9 @@ void Engine::processBlock(juce::AudioBuffer<float>& outputBuffer, int numSamples
         else if (tempMixBuffer.getNumChannels() == 1) {
             tempMixBuffer.applyGain(0, 0, numSamples, masterGain);
         }
+
+        // Apply master track effects to the final mix
+        masterTrack->processEffects(tempMixBuffer);
 
         outputBuffer.makeCopyOf(tempMixBuffer);
     }

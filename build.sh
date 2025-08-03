@@ -9,6 +9,7 @@ git submodule update --init --recursive
 BUILD_TYPE="Debug"
 BUILD_DIR="build"
 DO_CLEAN=0
+BUILD_ALL=0
 
 # Detect platform
 UNAME_OUT="$(uname -s)"
@@ -20,9 +21,11 @@ case "${UNAME_OUT}" in
 esac
 
 # Parse arguments
-
 for arg in "$@"; do
     case "$arg" in
+        all|All)
+            BUILD_ALL=1
+            ;;
         release|Release)
             BUILD_TYPE="Release"
             ;;
@@ -38,27 +41,50 @@ for arg in "$@"; do
     esac
 done
 
-if [ $DO_CLEAN -eq 1 ]; then
+# Function to build extensions
+build_extensions() {
+    echo "Building extensions_toolkit ($BUILD_TYPE)..."
+    cd extensions_toolkit/
+    ./build.sh $BUILD_TYPE $([ $DO_CLEAN -eq 1 ] && echo "clean")
+    cd ..
+}
+
+# Function to build main project
+build_main() {
+    if [ $DO_CLEAN -eq 1 ]; then
+        echo "Cleaning main build directory..."
+        rm -rf "$BUILD_DIR"
+    fi
+
+    echo "Platform detected: $PLATFORM"
+    echo "Configuring build ($BUILD_TYPE)..."
+
+    # Use Ninja if available for faster builds, otherwise use default generator
+    if command -v ninja &> /dev/null; then
+        echo "Using Ninja generator for faster builds"
+        cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DCMAKE_LINKER=lld -G Ninja
+    else
+        cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=$BUILD_TYPE
+    fi
+
+    echo "Building main project ($BUILD_TYPE)..."
+    cmake --build "$BUILD_DIR" --config $BUILD_TYPE -j $(nproc 2>/dev/null || sysctl -n hw.ncpu)
+}
+
+# Handle build logic
+if [ $BUILD_ALL -eq 1 ]; then
+    echo "Building all projects..."
+    build_extensions
+    build_main
+elif [ $DO_CLEAN -eq 1 ] && [ $# -eq 1 ]; then
+    # Only clean was requested
     echo "Cleaning build directory..."
     rm -rf "$BUILD_DIR"
-    if [ $# -eq 1 ]; then
-        exit 0
-    fi
-fi
-
-echo "Platform detected: $PLATFORM"
-echo "Configuring build ($BUILD_TYPE)..."
-
-# Use Ninja if available for faster builds, otherwise use default generator
-if command -v ninja &> /dev/null; then
-    echo "Using Ninja generator for faster builds"
-    cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DCMAKE_LINKER=lld -G Ninja
+    exit 0
 else
-    cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=$BUILD_TYPE
+    # Build only main project
+    build_main
 fi
-
-echo "Building ($BUILD_TYPE)..."
-cmake --build "$BUILD_DIR" --config $BUILD_TYPE -j $(nproc 2>/dev/null || sysctl -n hw.ncpu)
 
 echo "Done building."
 

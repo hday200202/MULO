@@ -9,6 +9,7 @@
 #include <iomanip>
 
 #include "Composition.hpp"
+#include "../DebugConfig.hpp"
 
 class Engine : public juce::AudioIODeviceCallback {
 public:
@@ -65,6 +66,12 @@ public:
     
     Track* getMasterTrack();
     
+    // Selected Track Management
+    void setSelectedTrack(const std::string& trackName);
+    std::string getSelectedTrack() const;
+    Track* getSelectedTrackPtr();
+    bool hasSelectedTrack() const;
+    
     // Project State Management
     bool saveState(const std::string& path = "untitled.mpf") const;
     
@@ -93,7 +100,7 @@ public:
     inline double getSampleRate() const { return sampleRate; }
     
     inline void setSampleRate(double newSampleRate)
-    { sampleRate = newSampleRate; std::cout << "[Engine] Sample rate set to " << newSampleRate << std::endl;}
+    { sampleRate = newSampleRate; DEBUG_PRINT("[Engine] Sample rate set to " << newSampleRate);}
 
     std::vector<float> generateWaveformPeaks(const juce::File& audioFile, float duration, float peakResolution = 0.05f);
 
@@ -107,6 +114,7 @@ private:
 
     bool playing = false;
     double sampleRate = 44100.0;
+    int currentBufferSize = 256;
     double positionSeconds = 0.0;
     double savedPosition = 0.0;
     bool hasSaved = false;
@@ -114,6 +122,8 @@ private:
     juce::AudioBuffer<float> tempMixBuffer;
 
     std::unique_ptr<Track> masterTrack;
+    
+    std::string selectedTrackName;
 
     void processBlock(juce::AudioBuffer<float>& outputBuffer, int numSamples);
 };

@@ -144,6 +144,7 @@ target_link_libraries(MULO PRIVATE
     juce::juce_audio_basics
     juce::juce_audio_devices
     juce::juce_audio_formats
+    juce::juce_audio_processors
     juce::juce_audio_utils
     juce::juce_dsp
 
@@ -162,6 +163,11 @@ target_link_libraries(MULO PRIVATE
 # Pass modal-loops define to MULO too
 target_compile_definitions(MULO PRIVATE
     JUCE_MODAL_LOOPS_PERMITTED=1
+    
+    # Enable VST plugin support
+    JUCE_PLUGINHOST_VST3=1
+    # JUCE_PLUGINHOST_VST=1         # Disabled - VST2 SDK headers not available
+    # JUCE_PLUGINHOST_LADSPA=1     # Disabled - requires ladspa-dev package
 )
 
 # Enable symbol export for plugins on Linux

@@ -2,17 +2,15 @@
 #pragma once
 
 #include "MULOComponent.hpp"
+#include "../../src/DebugConfig.hpp"
 
 class AppControls : public MULOComponent {
 public:
     AppControls();
-    
     ~AppControls();
-
+    
     void init() override;
-    
     bool handleEvents() override;
-    
     inline void update() override {}
 
 private:
@@ -65,7 +63,7 @@ void AppControls::init() {
             .onLClick([&](){
                 app->uiState.saveDirectory = app->selectDirectory();
                 if (app->saveState(app->uiState.saveDirectory + "/" + app->getCurrentCompositionName() + ".mpf"))
-                    std::cout << "Project saved successfully." << std::endl;
+                    DEBUG_PRINT("Project saved successfully.");
                 else
                     std::cerr << "Failed to save project." << std::endl;
             }),
@@ -105,7 +103,7 @@ void AppControls::init() {
             .setColor(app->resources.activeTheme->button_color)
             .onLClick([&](){
                 app->uiState.settingsShown = !app->uiState.settingsShown;
-                std::cout << (app->uiState.settingsShown ? "Show Settings" : "Hide Settings") << std::endl;
+                DEBUG_PRINT((app->uiState.settingsShown ? "Show Settings" : "Hide Settings"));
             }),
         ButtonStyle::Pill,
         "settings",

@@ -58,7 +58,7 @@ cmake --build "$BUILD_DIR" --config $BUILD_TYPE -j $(nproc 2>/dev/null || sysctl
 echo "Done building extensions."
 
 # Show built extensions
-EXTENSIONS_PATH="build/$BUILD_TYPE"
+EXTENSIONS_PATH="bin/$PLATFORM/$BUILD_TYPE"
 if [[ -d "$EXTENSIONS_PATH" ]]; then
     echo "Extensions built in: $EXTENSIONS_PATH"
     ls -la "$EXTENSIONS_PATH"
