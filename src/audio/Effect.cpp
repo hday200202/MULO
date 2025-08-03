@@ -192,134 +192,81 @@ void Effect::processAudio(juce::AudioBuffer<float>& buffer) {
 }
 
 void Effect::openWindow() {
-    DEBUG_PRINT("=== VST Window Open Debug ===");
-    DEBUG_PRINT("Effect: " << getName());
-    DEBUG_PRINT("Plugin pointer: " << (plugin ? "Valid" : "NULL"));
-    DEBUG_PRINT("Message thread: " << (juce::MessageManager::getInstance()->isThisTheMessageThread() ? "Yes" : "No"));
-    
     if (!plugin) {
-        DEBUG_PRINT("ERROR: No plugin loaded for effect '" << getName() << "'");
         return;
-    }
-    
-    DEBUG_PRINT("Plugin has editor (cached): " << (hasEditorCached ? "Yes" : "No"));
-    DEBUG_PRINT("Plugin has editor (current): " << (plugin->hasEditor() ? "Yes" : "No"));
-    
-    // Check for inconsistency between cached and current values
-    if (hasEditorCached != plugin->hasEditor()) {
-        DEBUG_PRINT("WARNING: Editor capability changed since plugin load!");
-        DEBUG_PRINT("This indicates potential VST3 plugin corruption or JUCE wrapper issues.");
     }
     
     // Use the cached value as the authoritative source
     if (!hasEditorCached) {
-        DEBUG_PRINT("ERROR: Plugin '" << getName() << "' does not have an editor (using cached value)");
         return;
     }
     
-    DEBUG_PRINT("Existing window: " << (pluginWindow ? "Yes" : "No"));
     if (pluginWindow) {
-        DEBUG_PRINT("Window already exists for '" << getName() << "'");
-        DEBUG_PRINT("Window visible: " << (pluginWindow->isVisible() ? "Yes" : "No"));
-        DEBUG_PRINT("Window on desktop: " << (pluginWindow->isOnDesktop() ? "Yes" : "No"));
-        
         // Simply show the existing window
         pluginWindow->setVisible(true);
         pluginWindow->toFront(true);
-        
-        DEBUG_PRINT("Showed existing window for '" << getName() << "'");
-        DEBUG_PRINT("=== Window Open Debug End ===");
         return;
     }
     
     // Ensure we're on the message thread for GUI operations
     if (!juce::MessageManager::getInstance()->isThisTheMessageThread()) {
-        DEBUG_PRINT("Not on message thread, dispatching to message thread...");
         juce::MessageManager::callAsync([this]() {
             openWindow();
         });
-        DEBUG_PRINT("=== Window Open Debug End ===");
         return;
     }
     
     try {
-        DEBUG_PRINT("Creating VST editor...");
-        
         // Create the VST editor
         auto vstEditor = plugin->createEditor();
         if (!vstEditor) {
-            DEBUG_PRINT("ERROR: Failed to create editor for plugin '" << getName() << "'");
-            DEBUG_PRINT("=== Window Open Debug End ===");
             return;
         }
-        
-        DEBUG_PRINT("VST editor created successfully");
         
         // Get the proper size from the VST editor
         int editorWidth = vstEditor->getWidth();
         int editorHeight = vstEditor->getHeight();
-        
-        DEBUG_PRINT("Initial editor size: " << editorWidth << "x" << editorHeight);
         
         // Some VST plugins don't report proper initial size, so we need to handle this
         if (editorWidth <= 0 || editorHeight <= 0) {
             editorWidth = 400;  // Fallback width
             editorHeight = 300; // Fallback height
             vstEditor->setSize(editorWidth, editorHeight);
-            DEBUG_PRINT("Applied fallback size: " << editorWidth << "x" << editorHeight);
         }
-        
-        DEBUG_PRINT("Creating VSTEditorComponent wrapper...");
         
         // Wrap editor in our custom component - createEditor returns a raw pointer so we need to wrap it
         std::unique_ptr<juce::AudioProcessorEditor> editorPtr(vstEditor);
         auto editorComponent = std::make_unique<VSTEditorComponent>(std::move(editorPtr));
         
-        DEBUG_PRINT("Creating VSTPluginWindow...");
-        
         // Create our custom DocumentWindow for better Linux compatibility and close handling
         pluginWindow = std::make_unique<VSTPluginWindow>(juce::String(getName()), this);
-        
-        DEBUG_PRINT("Setting window content...");
         
         // Configure the window and set content
         pluginWindow->setContentOwned(editorComponent.release(), true);
         
-        DEBUG_PRINT("Setting window size...");
-        
         // Set the window to match the VST editor size exactly
         pluginWindow->setSize(editorWidth, editorHeight);
-        
-        DEBUG_PRINT("Centering and showing window...");
         
         // Center the window first
         pluginWindow->centreWithSize(editorWidth, editorHeight);
         
-        // Show the window immediately - this is safer than async
+        // Show the window
         pluginWindow->setVisible(true);
         pluginWindow->toFront(true);
         
-        DEBUG_PRINT("Final window state:");
-        DEBUG_PRINT("  Visible: " << (pluginWindow->isVisible() ? "Yes" : "No"));
-        DEBUG_PRINT("  On desktop: " << (pluginWindow->isOnDesktop() ? "Yes" : "No"));
-        DEBUG_PRINT("  Size: " << pluginWindow->getWidth() << "x" << pluginWindow->getHeight());
-        DEBUG_PRINT("SUCCESS: VST window shown for '" << getName() << "'");
-        
     }
     catch (const std::exception& e) {
-        std::cerr << "EXCEPTION while opening VST window for '" << getName() << "': " << e.what() << std::endl;
+        std::cerr << "Exception while opening VST window for '" << getName() << "': " << e.what() << std::endl;
         if (pluginWindow) {
             pluginWindow.reset();
         }
     }
     catch (...) {
-        std::cerr << "UNKNOWN EXCEPTION while opening VST window for '" << getName() << "'" << std::endl;
+        std::cerr << "Unknown exception while opening VST window for '" << getName() << "'" << std::endl;
         if (pluginWindow) {
             pluginWindow.reset();
         }
     }
-    
-    DEBUG_PRINT("=== Window Open Debug End ===");
 }
 
 void Effect::closeWindow() {
@@ -327,14 +274,10 @@ void Effect::closeWindow() {
         return; // No window to close
     }
     
-    DEBUG_PRINT("Closing VST window for '" << getName() << "'");
-    
     try {
         // Instead of destroying the window completely, just hide it
         // This prevents VST3 plugin corruption issues
         pluginWindow->setVisible(false);
-        
-        DEBUG_PRINT("Successfully hid VST window for '" << getName() << "'");
         
         // Note: We don't reset the window pointer - we keep it for reuse
         // This prevents the VST3 plugin editor corruption that causes crashes
