@@ -25,48 +25,43 @@ extern "C" {
         void (*setVisible)(void* instance, bool visible);
         void (*toggle)(void* instance);
         void* (*getLayout)(void* instance);
+        void* (*getParentContainer)(void* instance);
+        void (*setParentContainer)(void* instance, Container* parent);
     } PluginVTable;
     
     typedef PluginVTable* (*CreatePluginFunc)();
 }
 
 class MULOComponent {
-public:    
+public:
+    std::string relativeTo = "";
+
     MULOComponent() = default;
-    
     virtual ~MULOComponent() = default;
 
     virtual void init() = 0;
-    
     virtual void update() = 0;
-    
     virtual Container* getLayout() { return layout; }
-    
     virtual bool handleEvents() = 0;
 
     // Visibility control
     virtual void show() { if (layout) layout->m_modifier.setVisible(true); }
-    
     virtual void hide() { if (layout) layout->m_modifier.setVisible(false); }
-    
     virtual bool isVisible() const { return layout ? layout->m_modifier.isVisible() : false; }
-    
     virtual void setVisible(bool visible) { if (visible) show(); else hide(); }
-    
     virtual void toggle() { if (isVisible()) hide(); else show(); }
 
     // Set references to Application, Engine, UIState, and UIResources
     inline void setAppRef(Application* appRef) { app = appRef; }
-    
-    inline void setParentContainer(Container* parent) { parentContainer = parent; }
-
+    virtual inline void setParentContainer(Container* parent) { parentContainer = parent; }
+    virtual Container* getParentContainer() const { return parentContainer; }
     inline std::string getName() const { return name; }
-    
+    virtual inline std::string getRelativeTo() const { return relativeTo; }
+    virtual inline void setRelativeTo(const std::string& relative) { relativeTo = relative; }
     virtual bool isInitialized() const { return initialized; }
 
 protected:
     Application* app = nullptr;
-
     Container* layout = nullptr;
     Container* parentContainer = nullptr;
 
@@ -153,6 +148,39 @@ public:
         return initialized;
     }
 
+    Container* getParentContainer() const override {
+        if (plugin && plugin->instance) {
+            MULOComponent* pluginInstance = static_cast<MULOComponent*>(plugin->instance);
+            return pluginInstance->getParentContainer();
+        }
+        return parentContainer;
+    }
+
+    std::string getRelativeTo() const override {
+        if (plugin && plugin->instance) {
+            MULOComponent* pluginInstance = static_cast<MULOComponent*>(plugin->instance);
+            return pluginInstance->getRelativeTo();
+        }
+        return relativeTo;
+    }
+
+    void setRelativeTo(const std::string& relative) override {
+        if (plugin && plugin->instance) {
+            MULOComponent* pluginInstance = static_cast<MULOComponent*>(plugin->instance);
+            pluginInstance->setRelativeTo(relative);
+        } else {
+            relativeTo = relative;
+        }
+    }
+
+    void setParentContainer(Container* parent) override {
+        if (plugin && plugin->setParentContainer) {
+            plugin->setParentContainer(plugin->instance, parent);
+        } else {
+            parentContainer = parent;
+        }
+    }
+
     friend class Application;
 
 protected:
@@ -232,6 +260,15 @@ protected:
             if (instance) \
                 return static_cast<void*>(static_cast<ClassName*>(instance)->getLayout()); \
             return nullptr; \
+        } \
+        void* plugin_getParentContainer(void* instance) { \
+            if (instance) \
+                return static_cast<void*>(static_cast<ClassName*>(instance)->getParentContainer()); \
+            return nullptr; \
+        } \
+        void plugin_setParentContainer(void* instance, Container* parent) { \
+            if (instance) \
+                static_cast<ClassName*>(instance)->setParentContainer(parent); \
         } \
         PluginVTable* getPluginInterface() { \
             static PluginVTable vtable = { \

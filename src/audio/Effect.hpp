@@ -15,6 +15,12 @@ public:
     void prepareToPlay(double sampleRate, int bufferSize);
     void processAudio(juce::AudioBuffer<float>& buffer);
     void openWindow();
+    void closeWindow() {
+        if (editorWindow) {
+            editorWindow->setVisible(false);
+        }
+    }
+    bool hasEditor() const { return hasEditorCached; }
     
     void updateEditor() {
         if (editorWindow && editorWindow->isVisible()) {
@@ -31,6 +37,7 @@ public:
     inline bool enabled() const { return isEnabled; }
 
     const std::string& getName() const { return name; }
+    const std::string& getVSTPath() const { return vstPath; }
     
     void setIndex(int idx) { index = idx; }
     int getIndex() const { return index; }

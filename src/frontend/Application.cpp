@@ -55,6 +55,10 @@ void Application::initialise(const juce::String& commandLine) {
     
     uiState.loadConfig();
     
+    // Configure engine directories from UI state
+    engine.setVSTDirectory(uiState.vstDirecory);
+    engine.setSampleDirectory(uiState.fileBrowserDirectory);
+    
     if (uiState.sampleRate > 0) {
         engine.configureAudioDevice(uiState.sampleRate);
         DEBUG_PRINT("Configured engine with sample rate from config: " << uiState.sampleRate << " Hz");
@@ -178,6 +182,78 @@ void Application::handleEvents() {
         }
         hasPendingEffectWindow = false;
         pendingEffectWindowIndex = SIZE_MAX;
+    }
+
+    // Process deferred effects from save file loading (one per frame to spread load)
+    if (hasDeferredEffects && !deferredEffects.empty()) {
+        auto deferredEffect = deferredEffects.front();
+        deferredEffects.erase(deferredEffects.begin());
+        
+        Track* targetTrack = nullptr;
+        if (deferredEffect.trackName == "Master") {
+            targetTrack = getMasterTrack();
+        } else {
+            targetTrack = getTrack(deferredEffect.trackName);
+        }
+        
+        if (targetTrack) {
+            Effect* effect = targetTrack->addEffect(deferredEffect.vstPath);
+            if (effect) {
+                // Apply saved effect settings
+                if (!deferredEffect.enabled) {
+                    effect->disable();
+                }
+                if (deferredEffect.index >= 0) {
+                    effect->setIndex(deferredEffect.index);
+                }
+                
+                // Apply saved parameters
+                for (const auto& paramPair : deferredEffect.parameters) {
+                    effect->setParameter(paramPair.first, paramPair.second);
+                }
+                
+                // Prime the VST window to prevent blank window issues
+                // by opening it briefly then closing it
+                if (effect->hasEditor()) {
+                    effect->openWindow();
+                    std::this_thread::sleep_for(std::chrono::milliseconds(50)); // Give it time to fully initialize
+                    effect->closeWindow();
+                }
+                
+                std::cout << "Loaded deferred effect: " << effect->getName() << " for track: " << deferredEffect.trackName << std::endl;
+            }
+        } else {
+            std::cout << "Track not found for deferred effect: " << deferredEffect.trackName << std::endl;
+        }
+        
+        if (deferredEffects.empty()) {
+            hasDeferredEffects = false;
+            std::cout << "All deferred effects loaded" << std::endl;
+        }
+    }
+
+    // Check for pending effects from engine state loading
+    const auto& enginePendingEffects = engine.getPendingEffects();
+    if (!enginePendingEffects.empty()) {
+        for (const auto& pendingEffect : enginePendingEffects) {
+            // Convert engine pending effect to application deferred effect
+            DeferredEffect def;
+            def.trackName = pendingEffect.trackName;
+            def.vstPath = pendingEffect.vstPath;
+            def.shouldOpenWindow = false;  // Don't auto-open windows from save file loading
+            def.enabled = pendingEffect.enabled;
+            def.index = pendingEffect.index;
+            def.parameters = pendingEffect.parameters;
+            
+            deferredEffects.push_back(def);
+        }
+        
+        hasDeferredEffects = !deferredEffects.empty();
+        engine.clearPendingEffects();
+        
+        if (hasDeferredEffects) {
+            std::cout << "Processing " << deferredEffects.size() << " pending effects from save file" << std::endl;
+        }
     }
 }
 
@@ -317,6 +393,24 @@ void Application::loadComponents() {
         }
         ++attempts;
     }
+
+    for (auto& [name, component] : muloComponents) {
+        componentLayouts[name] = { 
+            (component->getParentContainer()) ? component->getParentContainer() : nullptr, 
+            (component->getLayout()) ? component->getLayout()->m_modifier.getAlignment() : Align::NONE, 
+            component->getRelativeTo() 
+        };
+    }
+
+    DEBUG_PRINT("\nComponent Layout Data: ");
+    DEBUG_PRINT("=========================================");
+    for (const auto& [name, layoutData] : componentLayouts) {
+        DEBUG_PRINT("Component: " << name);
+        DEBUG_PRINT("  Parent Container: " << (layoutData.parent ? layoutData.parent->m_name : "NULL"));
+        DEBUG_PRINT("  Alignment: " << getAlignmentString(layoutData.alignment));
+        DEBUG_PRINT("  Relative To: " << layoutData.relativeTo << "\n");
+    }
+    DEBUG_PRINT("=========================================\n");
 
     if (!allInitialized) {
         std::cout << "Couldn't Initialize Components: \n";

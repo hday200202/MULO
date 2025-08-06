@@ -10,6 +10,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <chrono>
 #include <thread>
+#include <list>
 
 #ifdef _WIN32
     #include <windows.h>
@@ -96,6 +97,21 @@ public:
         std::cout << "Queued effect window opening for index: " << effectIndex << std::endl;
     }
 
+    // Method to defer VST loading for save file restoration
+    inline void deferEffectLoading(const std::string& trackName, const std::string& vstPath, bool openWindow = false, bool enabled = true, int index = -1, const std::vector<std::pair<int, float>>& parameters = {}) {
+        DeferredEffect def;
+        def.trackName = trackName;
+        def.vstPath = vstPath;
+        def.shouldOpenWindow = openWindow;
+        def.enabled = enabled;
+        def.index = index;
+        def.parameters = parameters;
+        
+        deferredEffects.push_back(def);
+        hasDeferredEffects = true;
+        std::cout << "Deferred effect loading: " << vstPath << " for track: " << trackName << std::endl;
+    }
+
     // Playback control
     inline void play() { engine.play(); }
     inline void pause() { engine.pause(); }
@@ -130,7 +146,8 @@ public:
     // Composition management
     inline void loadComposition(const std::string& path) { engine.loadComposition(path); }
     inline std::string getCurrentCompositionName() const { return engine.getCurrentCompositionName(); }
-    inline bool saveState(const std::string& saveDirectory) const { return engine.saveState(saveDirectory); }
+    inline void saveState() { engine.saveState(); }
+    inline void saveToFile(const std::string& path) const { engine.save(path); }
 
 private:
     sf::Clock deltaClock;
@@ -155,6 +172,18 @@ private:
     bool hasPendingEffect = false;
     bool hasPendingEffectWindow = false;
 
+    // Deferred effect loading structure for save file restoration
+    struct DeferredEffect {
+        std::string trackName;
+        std::string vstPath;
+        bool shouldOpenWindow;
+        bool enabled = true;
+        int index = -1;
+        std::vector<std::pair<int, float>> parameters;  // parameter index, value pairs
+    };
+    std::vector<DeferredEffect> deferredEffects;
+    bool hasDeferredEffects = false;
+
     size_t forceUpdatePoll = 0;
 
     struct LoadedPlugin {
@@ -166,6 +195,7 @@ private:
     
     std::string exeDirectory = "";
     std::unordered_map<std::string, LoadedPlugin> loadedPlugins;
+    std::unordered_map<std::string, ComponentLayoutData> componentLayouts;
 
     void initUI();
     void initUIResources();

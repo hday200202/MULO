@@ -94,3 +94,4 @@ Builds/
 .DS_Store # macOS specific
 Thumbs.db # Windows specific
 test_project_files/untitled.mpf
+*.mpf

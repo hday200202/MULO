@@ -1,5 +1,11 @@
 #include "Engine.hpp"
 #include "../DebugConfig.hpp"
+#include <chrono>
+#include <algorithm>
+#include <cctype>
+#include <nlohmann/json.hpp>
+
+using json = nlohmann::json;
 
 Engine::Engine() {
     formatManager.registerBasicFormats();
@@ -11,7 +17,6 @@ Engine::Engine() {
     auto currentSetup = deviceManager.getAudioDeviceSetup();
     
     currentSetup.bufferSize = 256;
-    // Note: Sample rate will be set by application after config is loaded
     
     juce::String error = deviceManager.setAudioDeviceSetup(currentSetup, true);
     
@@ -96,6 +101,127 @@ Engine::~Engine() {
     deviceManager.removeAudioCallback(this);
 }
 
+// Directory management
+void Engine::setVSTDirectory(const std::string& directory) {
+    vstDirectory = directory;
+    DEBUG_PRINT("VST directory set to: " + directory);
+}
+
+void Engine::setSampleDirectory(const std::string& directory) {
+    sampleDirectory = directory;
+    DEBUG_PRINT("Sample directory set to: " + directory);
+}
+
+std::string Engine::getVSTDirectory() const {
+    return vstDirectory;
+}
+
+std::string Engine::getSampleDirectory() const {
+    return sampleDirectory;
+}
+
+juce::File Engine::findSampleFile(const std::string& sampleName) const {
+    if (sampleDirectory.empty() || sampleName.empty()) {
+        return juce::File();
+    }
+    
+    juce::File directory(sampleDirectory);
+    if (!directory.exists() || !directory.isDirectory()) {
+        DEBUG_PRINT("Sample directory does not exist: " + sampleDirectory);
+        return juce::File();
+    }
+    
+    // First try exact filename match (with extension)
+    juce::File exactFile = directory.getChildFile(sampleName);
+    if (exactFile.existsAsFile()) {
+        DEBUG_PRINT("Found sample file (exact match): " + exactFile.getFullPathName().toStdString());
+        return exactFile;
+    }
+    
+    // If no exact match, try adding common audio file extensions
+    std::vector<std::string> extensions = {".wav", ".mp3", ".flac", ".ogg", ".aiff", ".m4a"};
+    
+    for (const auto& ext : extensions) {
+        juce::File file = directory.getChildFile(sampleName + ext);
+        if (file.existsAsFile()) {
+            DEBUG_PRINT("Found sample file (with extension): " + file.getFullPathName().toStdString());
+            return file;
+        }
+    }
+    
+    // If still no match, try case-insensitive search
+    juce::Array<juce::File> allFiles;
+    directory.findChildFiles(allFiles, juce::File::findFiles, false);
+    
+    for (const auto& file : allFiles) {
+        std::string fileName = file.getFileName().toStdString();
+        std::string targetName = sampleName;
+        
+        // Convert to lowercase for comparison
+        std::transform(fileName.begin(), fileName.end(), fileName.begin(), ::tolower);
+        std::transform(targetName.begin(), targetName.end(), targetName.begin(), ::tolower);
+        
+        if (fileName == targetName) {
+            DEBUG_PRINT("Found sample file (case-insensitive): " + file.getFullPathName().toStdString());
+            return file;
+        }
+    }
+    
+    DEBUG_PRINT("Sample file not found: " + sampleName + " in directory: " + sampleDirectory);
+    return juce::File();
+}
+
+juce::File Engine::findVSTFile(const std::string& vstName) const {
+    if (vstDirectory.empty() || vstName.empty()) {
+        return juce::File();
+    }
+    
+    juce::File directory(vstDirectory);
+    if (!directory.exists() || !directory.isDirectory()) {
+        DEBUG_PRINT("VST directory does not exist: " + vstDirectory);
+        return juce::File();
+    }
+    
+    // First try exact filename match (with extension)
+    juce::File exactFile = directory.getChildFile(vstName);
+    if (exactFile.existsAsFile()) {
+        DEBUG_PRINT("Found VST file (exact match): " + exactFile.getFullPathName().toStdString());
+        return exactFile;
+    }
+    
+    // If no exact match, try adding common VST file extensions
+    std::vector<std::string> extensions = {".dll", ".vst", ".vst3"};
+    
+    for (const auto& ext : extensions) {
+        juce::File file = directory.getChildFile(vstName + ext);
+        if (file.existsAsFile()) {
+            DEBUG_PRINT("Found VST file (with extension): " + file.getFullPathName().toStdString());
+            return file;
+        }
+    }
+    
+    // If still no match, try case-insensitive search
+    juce::Array<juce::File> allFiles;
+    directory.findChildFiles(allFiles, juce::File::findFiles, false);
+    
+    for (const auto& file : allFiles) {
+        std::string fileName = file.getFileName().toStdString();
+        std::string targetName = vstName;
+        
+        // Convert to lowercase for comparison
+        std::transform(fileName.begin(), fileName.end(), fileName.begin(), ::tolower);
+        std::transform(targetName.begin(), targetName.end(), targetName.begin(), ::tolower);
+        
+        if (fileName == targetName) {
+            DEBUG_PRINT("Found VST file (case-insensitive): " + file.getFullPathName().toStdString());
+            return file;
+        }
+    }
+    
+    DEBUG_PRINT("VST file not found: " + vstName + " in directory: " + vstDirectory);
+    return juce::File();
+}
+
 void Engine::play() {
     if (hasSaved) {
         positionSeconds = savedPosition;
@@ -150,107 +276,46 @@ void Engine::loadComposition(const std::string& path) {
         return;
     }
 
-    std::string line;
-    auto comp = std::make_unique<Composition>();
-    std::unique_ptr<Track> currentTrack = nullptr;
-    bool inClips = false;
-    AudioClip currentClip;
-    bool isMasterTrack = false;
-
-    while (std::getline(file, line)) {
-        auto trim = [](std::string s) {
-            const char* ws = " \t\n\r";
-            size_t start = s.find_first_not_of(ws);
-            size_t end = s.find_last_not_of(ws);
-            return (start == std::string::npos) ? "" : s.substr(start, end - start + 1);
-        };
-
-        auto extract = [&](const std::string& l) -> std::string {
-            auto i = l.find(':');
-            if (i == std::string::npos) return "";
-            auto val = trim(l.substr(i + 1));
-            if (!val.empty() && val.back() == ',') val.pop_back();
-            if (!val.empty() && val.front() == '"') val = val.substr(1, val.size() - 2);
-            return val;
-        };
-
-        line = trim(line);
-
-        if (line.find("\"name\"") != std::string::npos && !inClips && !currentTrack) {
-            comp->name = extract(line);
-        } else if (line.find("\"bpm\"") != std::string::npos) {
-            comp->bpm = std::stod(extract(line));
-        } else if (line.find("\"numerator\"") != std::string::npos) {
-            comp->timeSigNumerator = std::stoi(extract(line));
-        } else if (line.find("\"denominator\"") != std::string::npos) {
-            comp->timeSigDenominator = std::stoi(extract(line));
-        } else if (line.find("\"tracks\"") != std::string::npos) {
-            continue;
-        } else if (line.find('{') != std::string::npos && !inClips) {
-            currentTrack = std::make_unique<Track>(formatManager);
-            isMasterTrack = false;
-        } else if (line.find("\"name\"") != std::string::npos && currentTrack && !inClips) {
-            std::string name = extract(line);
-            currentTrack->setName(name);
-            if (name == "Master") {
-                isMasterTrack = true;
-            }
-        } else if (line.find("\"volume\"") != std::string::npos && currentTrack && !inClips) {
-            currentTrack->setVolume(std::stof(extract(line)));
-        } else if (line.find("\"pan\"") != std::string::npos && currentTrack && !inClips) {
-            currentTrack->setPan(std::stof(extract(line)));
-        } else if (line.find("\"clips\"") != std::string::npos) {
-            inClips = true;
-        } else if (inClips && line.find("\"file\"") != std::string::npos) {
-            currentClip.sourceFile = juce::File(extract(line));
-        } else if (inClips && line.find("\"start\"") != std::string::npos) {
-            currentClip.startTime = std::stod(extract(line));
-        } else if (inClips && line.find("\"offset\"") != std::string::npos) {
-            currentClip.offset = std::stod(extract(line));
-        } else if (inClips && line.find("\"duration\"") != std::string::npos) {
-            currentClip.duration = std::stod(extract(line));
-        } else if (inClips && line.find("\"volume\"") != std::string::npos) {
-            currentClip.volume = std::stof(extract(line));
-        } else if (inClips && line.find('}') != std::string::npos) {
-            if (!isMasterTrack && currentTrack) {
-                currentTrack->addClip(currentClip);
-            }
-            currentClip = AudioClip(); // reset
-        } else if (!inClips && line.find('}') != std::string::npos && currentTrack) {
-            if (isMasterTrack) {
-                masterTrack->setName(currentTrack->getName());
-                masterTrack->setVolume(currentTrack->getVolume());
-                masterTrack->setPan(currentTrack->getPan());
-            } else {
-                if (!currentTrack->getName().empty()) {
-                    if (!currentTrack->getClips().empty()) {
-                        currentTrack->setReferenceClip(currentTrack->getClips()[0]);
-                    }
-                    comp->tracks.push_back(std::move(currentTrack));
-                }
-            }
-            currentTrack = nullptr;
-            isMasterTrack = false;
-        } else if (inClips && line.find(']') != std::string::npos) {
-            inClips = false;
-        }
-    }
-
-    currentComposition = std::move(comp);
-    DEBUG_PRINT("Loaded composition: " << currentComposition->name);
+    // Read entire file content
+    std::ostringstream buffer;
+    buffer << file.rdbuf();
+    file.close();
+    
+    std::string content = buffer.str();
+    
+    // Use loadState to parse the JSON format
+    DEBUG_PRINT("Loading project file: " << path);
+    loadState(content);
 }
 
 void Engine::saveComposition(const std::string&) {}
 
 std::pair<int, int> Engine::getTimeSignature() const {
+    if (!currentComposition) {
+        return {4, 4}; // Default time signature
+    }
     return {currentComposition->timeSigNumerator, currentComposition->timeSigDenominator};
 }
 
-double Engine::getBpm() const { return currentComposition->bpm; }
+double Engine::getBpm() const { 
+    if (!currentComposition) {
+        return 120.0; // Default BPM
+    }
+    return currentComposition->bpm; 
+}
 
-void Engine::setBpm(double newBpm) { currentComposition->bpm = newBpm; }
+void Engine::setBpm(double newBpm) { 
+    if (currentComposition) {
+        currentComposition->bpm = newBpm; 
+    }
+}
 
 void Engine::addTrack(const std::string& name, const std::string& samplePath) {
+    if (!currentComposition) {
+        currentComposition = std::make_unique<Composition>();
+        currentComposition->name = "untitled";
+    }
+    
     std::string baseName = name;
     std::string uniqueName = baseName;
     int suffix = 1;
@@ -328,6 +393,11 @@ Track* Engine::getTrackByName(const std::string& name) {
 }
 
 std::vector<std::unique_ptr<Track>>& Engine::getAllTracks() {
+    if (!currentComposition) {
+        // Create empty composition if none exists to avoid null pointer access
+        static std::vector<std::unique_ptr<Track>> emptyTracks;
+        return emptyTracks;
+    }
     return currentComposition->tracks;
 }
 
@@ -397,79 +467,474 @@ void Engine::audioDeviceIOCallbackWithContext(
     }
 }
 
-std::string escapeMpfString(const std::string& s) {
-    std::string out;
-    for (char c : s) {
-        if (c == '\\' || c == '"') out += '\\';
-        out += c;
+void Engine::saveState() {
+    if (!currentComposition) {
+        currentState = "";
+        return;
     }
-    return out;
+    
+    json engineState;
+    engineState["engineState"]["version"] = "1.0";
+    engineState["engineState"]["timestamp"] = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    
+    // Playback state
+    auto& playbackState = engineState["engineState"]["playbackState"];
+    playbackState["playing"] = playing;
+    playbackState["positionSeconds"] = positionSeconds;
+    playbackState["savedPosition"] = savedPosition;
+    playbackState["hasSaved"] = hasSaved;
+    playbackState["selectedTrackName"] = selectedTrackName;
+    
+    // Audio device settings
+    auto& audioSettings = engineState["engineState"]["audioSettings"];
+    audioSettings["sampleRate"] = sampleRate;
+    audioSettings["currentBufferSize"] = currentBufferSize;
+    
+    // Composition data
+    auto& composition = engineState["engineState"]["composition"];
+    composition["name"] = currentComposition->name;
+    composition["bpm"] = currentComposition->bpm;
+    composition["timeSignature"]["numerator"] = currentComposition->timeSigNumerator;
+    composition["timeSignature"]["denominator"] = currentComposition->timeSigDenominator;
+    
+    // Master track
+    auto& masterTrackJson = composition["masterTrack"];
+    if (masterTrack) {
+        masterTrackJson["name"] = masterTrack->getName();
+        masterTrackJson["volume"] = masterTrack->getVolume();
+        masterTrackJson["pan"] = masterTrack->getPan();
+        masterTrackJson["muted"] = masterTrack->isMuted();
+        masterTrackJson["soloed"] = masterTrack->isSolo();
+        
+        // Master track effects
+        auto& masterEffects = masterTrackJson["effects"];
+        const auto& masterEffectsList = masterTrack->getEffects();
+        for (const auto& effect : masterEffectsList) {
+            if (effect) {
+                json effectJson;
+                effectJson["name"] = effect->getName();
+                // Extract filename with extension from the VST path
+                juce::File vstFile(effect->getVSTPath());
+                effectJson["vstName"] = vstFile.getFileName().toStdString();
+                effectJson["enabled"] = effect->enabled();
+                effectJson["index"] = effect->getIndex();
+                
+                // Effect parameters
+                auto& parameters = effectJson["parameters"];
+                int numParams = effect->getNumParameters();
+                for (int p = 0; p < numParams; ++p) {
+                    json paramJson;
+                    paramJson["index"] = p;
+                    paramJson["value"] = effect->getParameter(p);
+                    parameters.push_back(paramJson);
+                }
+                masterEffects.push_back(effectJson);
+            }
+        }
+    } else {
+        masterTrackJson["name"] = "Master";
+        masterTrackJson["volume"] = 0.0;
+        masterTrackJson["pan"] = 0.0;
+        masterTrackJson["muted"] = false;
+        masterTrackJson["soloed"] = false;
+        masterTrackJson["effects"] = json::array();
+    }
+    
+    // All tracks
+    auto& tracks = composition["tracks"];
+    for (const auto& track : currentComposition->tracks) {
+        if (!track) continue;
+        
+        json trackJson;
+        trackJson["name"] = track->getName();
+        trackJson["volume"] = track->getVolume();
+        trackJson["pan"] = track->getPan();
+        trackJson["muted"] = track->isMuted();
+        trackJson["soloed"] = track->isSolo();
+        
+        // Reference clip
+        auto* nonConstTrack = const_cast<Track*>(track.get());
+        if (nonConstTrack->getReferenceClip()) {
+            const auto* refClip = nonConstTrack->getReferenceClip();
+            auto& refClipJson = trackJson["referenceClip"];
+            refClipJson["file"] = refClip->sourceFile.getFileName().toStdString();
+            refClipJson["startTime"] = refClip->startTime;
+            refClipJson["offset"] = refClip->offset;
+            refClipJson["duration"] = refClip->duration;
+            refClipJson["volume"] = refClip->volume;
+        } else {
+            trackJson["referenceClip"] = nullptr;
+        }
+        
+        // Track clips
+        auto& clipsJson = trackJson["clips"];
+        const auto& clips = track->getClips();
+        for (const auto& clip : clips) {
+            json clipJson;
+            clipJson["file"] = clip.sourceFile.getFileName().toStdString();
+            clipJson["startTime"] = clip.startTime;
+            clipJson["offset"] = clip.offset;
+            clipJson["duration"] = clip.duration;
+            clipJson["volume"] = clip.volume;
+            clipsJson.push_back(clipJson);
+        }
+        
+        // Track effects
+        auto& trackEffects = trackJson["effects"];
+        const auto& trackEffectsList = const_cast<Track*>(track.get())->getEffects();
+        for (const auto& effect : trackEffectsList) {
+            if (effect) {
+                json effectJson;
+                effectJson["name"] = effect->getName();
+                // Extract filename with extension from the VST path
+                juce::File vstFile(effect->getVSTPath());
+                effectJson["vstName"] = vstFile.getFileName().toStdString();
+                effectJson["enabled"] = effect->enabled();
+                effectJson["index"] = effect->getIndex();
+                
+                // Effect parameters
+                auto& parameters = effectJson["parameters"];
+                int numParams = effect->getNumParameters();
+                for (int p = 0; p < numParams; ++p) {
+                    json paramJson;
+                    paramJson["index"] = p;
+                    paramJson["value"] = effect->getParameter(p);
+                    parameters.push_back(paramJson);
+                }
+                trackEffects.push_back(effectJson);
+            }
+        }
+        
+        tracks.push_back(trackJson);
+    }
+
+    currentState = engineState.dump(2); // Pretty print with 2-space indentation
+    DEBUG_PRINT("Engine state serialized to currentState string");
 }
 
-bool Engine::saveState(const std::string& path) const {
-    if (!currentComposition) return false;
-    std::ostringstream ss;
-    ss << "{\n";
-    ss << "  \"composition\": {\n";
-    ss << "    \"name\": \"" << escapeMpfString(currentComposition->name) << "\",\n";
-    ss << "    \"bpm\": " << currentComposition->bpm << ",\n";
-    ss << "    \"timeSignature\": {\n";
-    ss << "      \"numerator\": " << currentComposition->timeSigNumerator << ",\n";
-    ss << "      \"denominator\": " << currentComposition->timeSigDenominator << "\n";
-    ss << "    },\n";
-    ss << "    \"tracks\": [\n";
-    if (masterTrack) {
-        ss << "      {\n";
-        ss << "        \"name\": \"" << escapeMpfString(masterTrack->getName()) << "\",\n";
-        ss << "        \"volume\": " << masterTrack->getVolume() << ",\n";
-        ss << "        \"pan\": " << masterTrack->getPan() << ",\n";
-        ss << "        \"clips\": []\n";
-        ss << "      }" << (currentComposition->tracks.empty() ? "" : ",") << "\n";
+void Engine::save(const std::string& path) const {
+    if (currentState.empty()) {
+        DEBUG_PRINT("Warning: No current state to save. Call saveState() first.");
+        return;
     }
-    for (size_t i = 0; i < currentComposition->tracks.size(); ++i) {
-        const auto* track = currentComposition->tracks[i].get();
-        ss << "      {\n";
-        ss << "        \"name\": \"" << escapeMpfString(track->getName()) << "\",\n";
-        ss << "        \"volume\": " << track->getVolume() << ",\n";
-        ss << "        \"pan\": " << track->getPan() << ",\n";
-        ss << "        \"clips\": [\n";
-        const auto& clips = track->getClips();
-        for (size_t j = 0; j < clips.size(); ++j) {
-            const auto& clip = clips[j];
-            ss << "          {\n";
-            ss << "            \"file\": \"" << escapeMpfString(clip.sourceFile.getFullPathName().toStdString()) << "\",\n";
-            ss << "            \"start\": " << clip.startTime << ",\n";
-            ss << "            \"offset\": " << clip.offset << ",\n";
-            ss << "            \"duration\": " << clip.duration << ",\n";
-            ss << "            \"volume\": " << clip.volume << "\n";
-            ss << "          }" << (j < clips.size() - 1 ? "," : "") << "\n";
-        }
-        ss << "        ]\n";
-        ss << "      }" << (i < currentComposition->tracks.size() - 1 ? "," : "") << "\n";
-    }
-    ss << "    ]\n";
-    ss << "  }\n";
-    ss << "}\n";
-
+    
     std::ofstream out(path);
-    if (!out.is_open()) return false;
-    out << ss.str();
+    if (!out.is_open()) {
+        DEBUG_PRINT("Failed to open file for writing: " << path);
+        return;
+    }
+    
+    out << currentState;
     out.close();
     
-    return true;
+    DEBUG_PRINT("Engine state written to file: " << path);
 }
 
 std::string Engine::getStateString() const {
-    if (!currentComposition) return "";
-    std::ostringstream ss;
-    return ss.str();
+    return currentState;
 }
 
-void Engine::loadState(const std::string& state) {
-    std::istringstream file(state);
-    auto comp = std::make_unique<Composition>();
-    std::unique_ptr<Track> currentTrack = nullptr;
-    currentComposition = std::move(comp);
+void Engine::loadState(const std::string& stateData) {
+    if (stateData.empty()) {
+        DEBUG_PRINT("Engine::loadState called with empty state string");
+        return;
+    }
+    
+    DEBUG_PRINT("Engine::loadState called with state size: " + std::to_string(stateData.size()));
+    
+    try {
+        json parsedState = json::parse(stateData);
+        
+        if (!parsedState.contains("engineState")) {
+            DEBUG_PRINT("ERROR: No engineState section found in JSON");
+            return;
+        }
+        
+        const auto& engineState = parsedState["engineState"];
+        
+        // Load playback state
+        if (engineState.contains("playbackState")) {
+            const auto& playback = engineState["playbackState"];
+            if (playback.contains("playing")) {
+                playing = playback["playing"].get<bool>();
+            }
+            if (playback.contains("positionSeconds")) {
+                positionSeconds = playback["positionSeconds"].get<double>();
+            }
+            if (playback.contains("savedPosition")) {
+                savedPosition = playback["savedPosition"].get<double>();
+            }
+            if (playback.contains("hasSaved")) {
+                hasSaved = playback["hasSaved"].get<bool>();
+            }
+            if (playback.contains("selectedTrackName")) {
+                selectedTrackName = playback["selectedTrackName"].get<std::string>();
+            }
+        }
+        
+        // Load audio settings
+        if (engineState.contains("audioSettings")) {
+            const auto& audio = engineState["audioSettings"];
+            if (audio.contains("sampleRate")) {
+                sampleRate = audio["sampleRate"].get<double>();
+            }
+            if (audio.contains("currentBufferSize")) {
+                currentBufferSize = audio["currentBufferSize"].get<int>();
+            }
+        }
+        
+        // Load composition
+        if (engineState.contains("composition")) {
+            const auto& composition = engineState["composition"];
+            
+            // Create a new composition or reuse existing
+            if (!currentComposition) {
+                currentComposition = std::make_unique<Composition>();
+            }
+            
+            if (composition.contains("name")) {
+                currentComposition->name = composition["name"].get<std::string>();
+            }
+            if (composition.contains("bpm")) {
+                currentComposition->bpm = composition["bpm"].get<double>();
+            }
+            if (composition.contains("timeSignature")) {
+                const auto& timeSig = composition["timeSignature"];
+                if (timeSig.contains("numerator")) {
+                    currentComposition->timeSigNumerator = timeSig["numerator"].get<int>();
+                }
+                if (timeSig.contains("denominator")) {
+                    currentComposition->timeSigDenominator = timeSig["denominator"].get<int>();
+                }
+            }
+            
+            // Load master track
+            if (composition.contains("masterTrack")) {
+                const auto& masterTrackData = composition["masterTrack"];
+                
+                if (!masterTrack) {
+                    masterTrack = std::make_unique<Track>(formatManager);
+                }
+                
+                if (masterTrackData.contains("name")) {
+                    masterTrack->setName(masterTrackData["name"].get<std::string>());
+                }
+                if (masterTrackData.contains("volume")) {
+                    masterTrack->setVolume(masterTrackData["volume"].get<float>());
+                }
+                if (masterTrackData.contains("pan")) {
+                    masterTrack->setPan(masterTrackData["pan"].get<float>());
+                }
+                if (masterTrackData.contains("muted")) {
+                    bool shouldMute = masterTrackData["muted"].get<bool>();
+                    if (shouldMute != masterTrack->isMuted()) {
+                        masterTrack->toggleMute();
+                    }
+                }
+                if (masterTrackData.contains("soloed")) {
+                    masterTrack->setSolo(masterTrackData["soloed"].get<bool>());
+                }
+                
+                // Load master track effects
+                if (masterTrackData.contains("effects") && masterTrackData["effects"].is_array()) {
+                    masterTrack->clearEffects();
+                    for (const auto& effectData : masterTrackData["effects"]) {
+                        if (effectData.contains("vstName")) {
+                            std::string vstName = effectData["vstName"].get<std::string>();
+                            
+                            // Find VST file by name
+                            juce::File vstFile = findVSTFile(vstName);
+                            if (vstFile.existsAsFile()) {
+                                // Store effect for deferred loading to prevent blank window issues
+                                PendingEffect pendingEffect;
+                                pendingEffect.trackName = "Master";
+                                pendingEffect.vstPath = vstFile.getFullPathName().toStdString();
+                                
+                                if (effectData.contains("enabled")) {
+                                    pendingEffect.enabled = effectData["enabled"].get<bool>();
+                                }
+                                if (effectData.contains("index")) {
+                                    pendingEffect.index = effectData["index"].get<int>();
+                                }
+                                
+                                // Extract parameters
+                                if (effectData.contains("parameters") && effectData["parameters"].is_array()) {
+                                    for (const auto& paramData : effectData["parameters"]) {
+                                        if (paramData.contains("index") && paramData.contains("value")) {
+                                            int paramIndex = paramData["index"].get<int>();
+                                            float paramValue = paramData["value"].get<float>();
+                                            pendingEffect.parameters.emplace_back(paramIndex, paramValue);
+                                        }
+                                    }
+                                }
+                                
+                                pendingEffects.push_back(pendingEffect);
+                                DEBUG_PRINT("Queued effect for deferred loading: " + vstName + " for Master track");
+                            } else {
+                                DEBUG_PRINT("VST file not found for master track effect: " + vstName);
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Load tracks
+            if (composition.contains("tracks") && composition["tracks"].is_array()) {
+                currentComposition->tracks.clear();
+                
+                for (const auto& trackData : composition["tracks"]) {
+                    if (!trackData.contains("name")) continue;
+                    
+                    std::string trackName = trackData["name"].get<std::string>();
+                    auto track = std::make_unique<Track>(formatManager);
+                    track->setName(trackName);
+                    
+                    if (trackData.contains("volume")) {
+                        track->setVolume(trackData["volume"].get<float>());
+                    }
+                    if (trackData.contains("pan")) {
+                        track->setPan(trackData["pan"].get<float>());
+                    }
+                    if (trackData.contains("muted")) {
+                        bool shouldMute = trackData["muted"].get<bool>();
+                        if (shouldMute != track->isMuted()) {
+                            track->toggleMute();
+                        }
+                    }
+                    if (trackData.contains("soloed")) {
+                        track->setSolo(trackData["soloed"].get<bool>());
+                    }
+                    
+                    // Load reference clip
+                    if (trackData.contains("referenceClip") && !trackData["referenceClip"].is_null()) {
+                        const auto& refClipData = trackData["referenceClip"];
+                        if (refClipData.contains("file")) {
+                            std::string fileName = refClipData["file"].get<std::string>();
+                            juce::File file = findSampleFile(fileName);
+                            
+                            if (file.existsAsFile()) {
+                                AudioClip refClip;
+                                refClip.sourceFile = file;
+                                if (refClipData.contains("startTime")) {
+                                    refClip.startTime = refClipData["startTime"].get<double>();
+                                }
+                                if (refClipData.contains("offset")) {
+                                    refClip.offset = refClipData["offset"].get<double>();
+                                }
+                                if (refClipData.contains("duration")) {
+                                    refClip.duration = refClipData["duration"].get<double>();
+                                }
+                                if (refClipData.contains("volume")) {
+                                    refClip.volume = refClipData["volume"].get<float>();
+                                }
+                                
+                                track->setReferenceClip(refClip);
+                            } else {
+                                DEBUG_PRINT("Reference clip file not found: " + fileName);
+                            }
+                        }
+                    }
+                    
+                    // Load clips
+                    if (trackData.contains("clips") && trackData["clips"].is_array()) {
+                        for (const auto& clipData : trackData["clips"]) {
+                            if (clipData.contains("file")) {
+                                std::string fileName = clipData["file"].get<std::string>();
+                                juce::File file = findSampleFile(fileName);
+                                
+                                if (file.existsAsFile()) {
+                                    AudioClip clip;
+                                    clip.sourceFile = file;
+                                    if (clipData.contains("startTime")) {
+                                        clip.startTime = clipData["startTime"].get<double>();
+                                    }
+                                    if (clipData.contains("offset")) {
+                                        clip.offset = clipData["offset"].get<double>();
+                                    }
+                                    if (clipData.contains("duration")) {
+                                        clip.duration = clipData["duration"].get<double>();
+                                    }
+                                    if (clipData.contains("volume")) {
+                                        clip.volume = clipData["volume"].get<float>();
+                                    }
+                                    
+                                    track->addClip(clip);
+                                } else {
+                                    DEBUG_PRINT("Clip file not found: " + fileName);
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Load track effects
+                    if (trackData.contains("effects") && trackData["effects"].is_array()) {
+                        track->clearEffects();
+                        for (const auto& effectData : trackData["effects"]) {
+                            if (effectData.contains("vstName")) {
+                                std::string vstName = effectData["vstName"].get<std::string>();
+                                
+                                // Find VST file by name
+                                juce::File vstFile = findVSTFile(vstName);
+                                if (vstFile.existsAsFile()) {
+                                    // Store effect for deferred loading to prevent blank window issues
+                                    PendingEffect pendingEffect;
+                                    pendingEffect.trackName = trackName;
+                                    pendingEffect.vstPath = vstFile.getFullPathName().toStdString();
+                                    
+                                    if (effectData.contains("enabled")) {
+                                        pendingEffect.enabled = effectData["enabled"].get<bool>();
+                                    }
+                                    if (effectData.contains("index")) {
+                                        pendingEffect.index = effectData["index"].get<int>();
+                                    }
+                                    
+                                    // Extract parameters
+                                    if (effectData.contains("parameters") && effectData["parameters"].is_array()) {
+                                        for (const auto& paramData : effectData["parameters"]) {
+                                            if (paramData.contains("index") && paramData.contains("value")) {
+                                                int paramIndex = paramData["index"].get<int>();
+                                                float paramValue = paramData["value"].get<float>();
+                                                pendingEffect.parameters.emplace_back(paramIndex, paramValue);
+                                            }
+                                        }
+                                    }
+                                    
+                                    pendingEffects.push_back(pendingEffect);
+                                    DEBUG_PRINT("Queued effect for deferred loading: " + vstName + " for track: " + trackName);
+                                } else {
+                                    DEBUG_PRINT("VST file not found for track effect: " + vstName);
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Prepare track for playback and add to composition
+                    track->prepareToPlay(sampleRate, currentBufferSize);
+                    currentComposition->tracks.push_back(std::move(track));
+                    DEBUG_PRINT("Track loaded and finalized: " + trackName);
+                }
+            }
+        }
+        
+        // Prepare master track for playback
+        if (masterTrack) {
+            masterTrack->prepareToPlay(sampleRate, currentBufferSize);
+        }
+        
+        currentState = stateData;
+        DEBUG_PRINT("Engine state loaded successfully using nlohmann::json");
+        DEBUG_PRINT("Composition: " + (currentComposition ? currentComposition->name : "null"));
+        DEBUG_PRINT("Tracks loaded: " + std::to_string(currentComposition ? currentComposition->tracks.size() : 0));
+        DEBUG_PRINT("Selected track: " + selectedTrackName);
+        
+    } catch (const json::parse_error& e) {
+        DEBUG_PRINT("JSON parse error in loadState: " + std::string(e.what()));
+    } catch (const json::exception& e) {
+        DEBUG_PRINT("JSON error in loadState: " + std::string(e.what()));
+    } catch (const std::exception& e) {
+        DEBUG_PRINT("Error in loadState: " + std::string(e.what()));
+    }
 }
 
 void Engine::audioDeviceAboutToStart(juce::AudioIODevice* device) {

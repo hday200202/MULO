@@ -8,8 +8,12 @@
 #include <iostream>
 #include <filesystem>
 #include <SFML/Graphics/Color.hpp>
+#include <nlohmann/json.hpp>
 #include "Engine.hpp"
 #include "../DebugConfig.hpp"
+#include "UILO/UILO.hpp"
+
+using json = nlohmann::json;
 
 struct UITheme;
 
@@ -48,33 +52,26 @@ struct UIState {
     inline void saveConfig() {
         try {
             std::string configPath = getExecutableDirectory() + "/config.json";
-            std::ofstream file(configPath);
             
+            json config;
+            config["fileBrowserDirectory"] = fileBrowserDirectory;
+            config["vstDirectory"] = vstDirecory;
+            config["vstDirectories"] = vstDirectories;
+            config["saveDirectory"] = saveDirectory;
+            config["selectedTheme"] = selectedTheme;
+            config["sampleRate"] = sampleRate;
+            config["autoSaveIntervalSeconds"] = autoSaveIntervalSeconds;
+            config["enableAutoVSTScan"] = enableAutoVSTScan;
+            
+            std::ofstream file(configPath);
             if (!file.is_open()) {
                 DEBUG_PRINT("Failed to open config file for writing: " << configPath);
                 return;
             }
-
-            file << "{\n";
-            file << "  \"fileBrowserDirectory\": \"" << fileBrowserDirectory << "\",\n";
-            file << "  \"vstDirectory\": \"" << vstDirecory << "\",\n";
             
-            file << "  \"vstDirectories\": [\n";
-            for (size_t i = 0; i < vstDirectories.size(); ++i) {
-                file << "    \"" << vstDirectories[i] << "\"";
-                if (i < vstDirectories.size() - 1) file << ",";
-                file << "\n";
-            }
-            file << "  ],\n";
-            
-            file << "  \"saveDirectory\": \"" << saveDirectory << "\",\n";
-            file << "  \"selectedTheme\": \"" << selectedTheme << "\",\n";
-            file << "  \"sampleRate\": " << sampleRate << ",\n";
-            file << "  \"autoSaveIntervalSeconds\": " << autoSaveIntervalSeconds << ",\n";
-            file << "  \"enableAutoVSTScan\": " << (enableAutoVSTScan ? "true" : "false") << "\n";
-            file << "}\n";
-            
+            file << config.dump(2); // Pretty print with 2-space indentation
             file.close();
+            
             DEBUG_PRINT("Configuration saved to: " << configPath);
         } catch (const std::exception& e) {
             DEBUG_PRINT("Error saving config: " << e.what());
@@ -91,53 +88,43 @@ struct UIState {
                 return;
             }
 
-            std::string line;
-            while (std::getline(file, line)) {
-                size_t colonPos = line.find(':');
-                if (colonPos == std::string::npos) continue;
-                
-                std::string key = line.substr(0, colonPos);
-                std::string value = line.substr(colonPos + 1);
-                
-                // Remove quotes, spaces, and commas
-                auto cleanString = [](std::string& str) {
-                    str.erase(std::remove_if(str.begin(), str.end(), [](char c) {
-                        return c == '"' || c == ' ' || c == ',' || c == '\t';
-                    }), str.end());
-                };
-                
-                cleanString(key);
-                cleanString(value);
-                
-                if (key == "fileBrowserDirectory") {
-                    fileBrowserDirectory = value;
-                } else if (key == "vstDirectory") {
-                    vstDirecory = value;
-                } else if (key == "saveDirectory") {
-                    saveDirectory = value;
-                } else if (key == "selectedTheme") {
-                    selectedTheme = value;
-                } else if (key == "sampleRate") {
-                    try {
-                        sampleRate = std::stod(value);
-                    } catch (...) {
-                        DEBUG_PRINT("Invalid sampleRate in config, using default");
+            json config;
+            file >> config;
+            file.close();
+            
+            if (config.contains("fileBrowserDirectory") && config["fileBrowserDirectory"].is_string()) {
+                fileBrowserDirectory = config["fileBrowserDirectory"].get<std::string>();
+            }
+            if (config.contains("vstDirectory") && config["vstDirectory"].is_string()) {
+                vstDirecory = config["vstDirectory"].get<std::string>();
+            }
+            if (config.contains("vstDirectories") && config["vstDirectories"].is_array()) {
+                vstDirectories.clear();
+                for (const auto& dir : config["vstDirectories"]) {
+                    if (dir.is_string()) {
+                        vstDirectories.push_back(dir.get<std::string>());
                     }
-                } else if (key == "autoSaveIntervalSeconds") {
-                    try {
-                        autoSaveIntervalSeconds = std::stoi(value);
-                    } catch (...) {
-                        DEBUG_PRINT("Invalid autoSaveIntervalSeconds in config, using default");
-                    }
-                } else if (key == "enableAutoVSTScan") {
-                    enableAutoVSTScan = (value == "true" || value == "1");
                 }
-                // Note: vstDirectories and yabridgeDirectories arrays would need JSON parsing
-                // For now, they can be set programmatically or through UI
+            }
+            if (config.contains("saveDirectory") && config["saveDirectory"].is_string()) {
+                saveDirectory = config["saveDirectory"].get<std::string>();
+            }
+            if (config.contains("selectedTheme") && config["selectedTheme"].is_string()) {
+                selectedTheme = config["selectedTheme"].get<std::string>();
+            }
+            if (config.contains("sampleRate") && config["sampleRate"].is_number()) {
+                sampleRate = config["sampleRate"].get<double>();
+            }
+            if (config.contains("autoSaveIntervalSeconds") && config["autoSaveIntervalSeconds"].is_number()) {
+                autoSaveIntervalSeconds = config["autoSaveIntervalSeconds"].get<int>();
+            }
+            if (config.contains("enableAutoVSTScan") && config["enableAutoVSTScan"].is_boolean()) {
+                enableAutoVSTScan = config["enableAutoVSTScan"].get<bool>();
             }
             
-            file.close();
             DEBUG_PRINT("Configuration loaded from: " << configPath);
+        } catch (const json::parse_error& e) {
+            DEBUG_PRINT("JSON parse error loading config: " << e.what());
         } catch (const std::exception& e) {
             DEBUG_PRINT("Error loading config: " << e.what());
         }
@@ -152,6 +139,12 @@ struct UIResources {
     std::string ubuntuMonoBoldFont;
     UITheme* activeTheme = nullptr;
     // Add more resources as needed
+};
+
+struct ComponentLayoutData {
+    uilo::Container* parent = nullptr;
+    uilo::Align alignment = uilo::Align::LEFT;
+    std::string relativeTo = "";
 };
 
 struct UITheme {
@@ -243,8 +236,8 @@ namespace Themes {
         sf::Color(30, 30, 30),        // sliderBarColor - Dark
         sf::Color(90, 120, 160),      // clipColor - Muted Blue
         sf::Color(100, 100, 100),     // lineColor - Medium Gray
-        sf::Color(170, 190, 230),     // waveformColor - Soft Blue
-        sf::Color(90, 120, 160)
+        sf::Color::White,             // waveformColor - Soft Blue
+        sf::Color(90, 120, 160)       // selectedTrackColor - Muted Blue
     );
     
     // Light Theme
@@ -266,8 +259,8 @@ namespace Themes {
         sf::Color(215, 215, 215),     // sliderBarColor - Soft Gray
         sf::Color(120, 160, 200),     // clipColor - Light Blue
         sf::Color(120, 120, 120),     // lineColor - Medium Gray
-        sf::Color(80, 140, 200),       // waveformColor - Blue
-        sf::Color(120, 160, 200)
+        sf::Color(80, 140, 200),      // waveformColor - Blue
+        sf::Color(120, 160, 200)      // selectedTrackColor - Light Blue
     );
     
     // Cyberpunk Theme
@@ -429,4 +422,42 @@ inline void applyTheme(UIResources& resources, const std::string& themeName) {
     else if (themeName == "Monochrome") resources.activeTheme = const_cast<UITheme*>(&Themes::Monochrome);
     else if (themeName == "Solarized") resources.activeTheme = const_cast<UITheme*>(&Themes::Solarized);
     else resources.activeTheme = const_cast<UITheme*>(&Themes::Default);
+}
+
+inline std::string getAlignmentString(uilo::Align alignment) {
+    int alignValue = static_cast<int>(alignment);
+
+    constexpr int top = static_cast<int>(uilo::Align::TOP);
+    constexpr int bottom = static_cast<int>(uilo::Align::BOTTOM);
+    constexpr int left = static_cast<int>(uilo::Align::LEFT);
+    constexpr int right = static_cast<int>(uilo::Align::RIGHT);
+    constexpr int centerX = static_cast<int>(uilo::Align::CENTER_X);
+    constexpr int centerY = static_cast<int>(uilo::Align::CENTER_Y);
+
+    constexpr int topLeft = left | top;
+    constexpr int topRight = right | top;
+    constexpr int bottomLeft = left | bottom;
+    constexpr int bottomRight = right | bottom;
+    constexpr int topCenterX = top | centerX;
+    constexpr int bottomCenterX = bottom | centerX;
+    constexpr int leftCenterY = left | centerY;
+    constexpr int rightCenterY = right | centerY;
+
+    switch (alignValue) {
+        case top:                   return "Top";
+        case bottom:                return "Bottom";
+        case left:                  return "Left";
+        case right:                 return "Right";
+        case centerX:               return "Center X";
+        case centerY:               return "Center Y";
+        case topLeft:               return "Top Left";
+        case topRight:              return "Top Right";
+        case bottomLeft:            return "Bottom Left";
+        case bottomRight:           return "Bottom Right";
+        case topCenterX:            return "Top Center X";
+        case bottomCenterX:         return "Bottom Center X";
+        case leftCenterY:           return "Left Center Y";
+        case rightCenterY:          return "Right Center Y";
+        default:                    return "Unknown";
+    }
 }

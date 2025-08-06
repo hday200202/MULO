@@ -41,6 +41,8 @@ private:
 
     std::unordered_map<std::string, Button*> trackMuteButtons;
     std::unordered_map<std::string, Slider*> trackVolumeSliders;
+    std::unordered_map<std::string, Button*> trackSoloButtons;
+    std::unordered_map<std::string, Button*> trackRemoveButtons;
 
     Row* masterTrack();
     Row* track(const std::string& trackName, Align alignment, float volume = 1.0f, float pan = 0.0f);
@@ -105,8 +107,10 @@ TimelineComponent::~TimelineComponent() {
 void TimelineComponent::init() {
     if (app->mainContentRow)
         parentContainer = app->mainContentRow;
+
+    relativeTo = "file_browser";
     masterTrackElement = masterTrack();
-    // Create scrollableColumn and add all track rows
+
     ScrollableColumn* timelineScrollable = scrollableColumn(
         Modifier(),
         contains{}, "timeline"
@@ -212,6 +216,12 @@ bool TimelineComponent::handleEvents() {
     for (const auto& [name, _] : trackVolumeSliders) {
         uiTrackNames.emplace(name);
     }
+    for (const auto& [name, _] : trackSoloButtons) {
+        uiTrackNames.emplace(name);
+    }
+    for (const auto& [name, _] : trackRemoveButtons) {
+        uiTrackNames.emplace(name);
+    }
     
     if (engineTrackNames != uiTrackNames) {
         if (auto timelineIt = containers.find("timeline"); timelineIt != containers.end() && timelineIt->second) {
@@ -219,6 +229,8 @@ bool TimelineComponent::handleEvents() {
         }
         trackMuteButtons.clear();
         trackVolumeSliders.clear();
+        trackSoloButtons.clear();
+        trackRemoveButtons.clear();
     }
     
     for (const auto& t : allTracks) {
@@ -227,8 +239,10 @@ bool TimelineComponent::handleEvents() {
         
         const bool hasMuteButton = trackMuteButtons.count(name);
         const bool hasVolumeSlider = trackVolumeSliders.count(name);
+        const bool hasSoloButton = trackSoloButtons.count(name);
+        const bool hasRemoveButton = trackRemoveButtons.count(name);
         
-        if (!hasMuteButton && !hasVolumeSlider) {
+        if (!hasMuteButton && !hasVolumeSlider && !hasSoloButton && !hasRemoveButton) {
             if (auto timelineIt = containers.find("timeline"); timelineIt != containers.end() && timelineIt->second) {
                 timelineIt->second->addElements({
                     spacer(Modifier().setfixedHeight(4.f)),
@@ -246,6 +260,17 @@ bool TimelineComponent::handleEvents() {
             );
             // Reset the button's clicked state to prevent rapid toggling
             muteBtnIt->second->setClicked(false);
+            forceUpdate = true;
+        }
+        
+        if (auto soloBtnIt = trackSoloButtons.find(name); 
+            soloBtnIt != trackSoloButtons.end() && soloBtnIt->second && soloBtnIt->second->isClicked() && app->getWindow().hasFocus()) {
+            t->setSolo(!t->isSolo());
+            soloBtnIt->second->m_modifier.setColor(
+                t->isSolo() ? app->resources.activeTheme->mute_color : app->resources.activeTheme->not_muted_color
+            );
+            // Reset the button's clicked state to prevent rapid toggling
+            soloBtnIt->second->setClicked(false);
             forceUpdate = true;
         }
         
@@ -477,12 +502,35 @@ uilo::Row* TimelineComponent::track(
     float pan
 ) {
     trackMuteButtons[trackName] = button(
-        Modifier().align(Align::LEFT | Align::BOTTOM).setfixedWidth(64).setfixedHeight(32).setColor(app->resources.activeTheme->not_muted_color),
+        Modifier().align(Align::LEFT | Align::BOTTOM).setfixedWidth(32).setfixedHeight(32).setColor(app->resources.activeTheme->not_muted_color),
         ButtonStyle::Rect,
-        "mute",
+        "M",
         app->resources.dejavuSansFont,
         app->resources.activeTheme->secondary_text_color,
         "mute_" + trackName
+    );
+
+    trackSoloButtons[trackName] = button(
+        Modifier().align(Align::LEFT | Align::BOTTOM).setfixedWidth(32).setfixedHeight(32).setColor(app->resources.activeTheme->not_muted_color),
+        ButtonStyle::Rect,
+        "S",
+        app->resources.dejavuSansFont,
+        app->resources.activeTheme->secondary_text_color,
+        "solo_" + trackName
+    );
+
+    trackRemoveButtons[trackName] = button(
+        Modifier().align(Align::CENTER_X | Align::CENTER_Y).setfixedWidth(16).setfixedHeight(16).setColor(app->resources.activeTheme->mute_color)
+            .onLClick([this, trackName](){
+                if (!app->getWindow().hasFocus()) return;
+                std::cout << "Removing track: " + trackName + "\n";
+                app->removeTrack(trackName);
+            }),
+        ButtonStyle::Pill,
+        "",
+        "",
+        sf::Color::Transparent,
+        "remove_" + trackName
     );
 
     trackVolumeSliders[trackName] = slider(
@@ -554,23 +602,37 @@ uilo::Row* TimelineComponent::track(
         row(
             Modifier().align(Align::RIGHT).setHighPriority(true),
         contains{
-            spacer(Modifier().setfixedWidth(8).align(Align::LEFT)),
+            column(
+                Modifier().setfixedWidth(32).align(Align::LEFT | Align::TOP), 
+            contains{
+                    trackRemoveButtons[trackName],
+            }),
 
             column(
                 Modifier(),
             contains{
-                text(
-                    Modifier().setColor(app->resources.activeTheme->primary_text_color).setfixedHeight(24).align(Align::LEFT | Align::TOP),
-                    trackName,
-                    app->resources.dejavuSansFont
-                ),
+                row(
+                    Modifier().align(Align::LEFT | Align::TOP),
+                contains{
+                    spacer(Modifier().setfixedWidth(8).align(Align::LEFT)),
+                    
+                    text(
+                        Modifier().setColor(app->resources.activeTheme->primary_text_color).setfixedHeight(24).align(Align::LEFT | Align::TOP),
+                        trackName,
+                        app->resources.dejavuSansFont
+                    )
+                }),
 
                 row(
                     Modifier(),
                 contains{
-                    spacer(Modifier().setfixedWidth(16).align(Align::LEFT)),
+                    spacer(Modifier().setfixedWidth(8).align(Align::LEFT)),
 
-                    trackMuteButtons[trackName]
+                    trackMuteButtons[trackName],
+                    
+                    spacer(Modifier().setfixedWidth(8).align(Align::LEFT)),
+                    
+                    trackSoloButtons[trackName]
                 }),
             }),
 

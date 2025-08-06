@@ -62,10 +62,10 @@ void AppControls::init() {
             .setColor(app->resources.activeTheme->button_color)
             .onLClick([&](){
                 app->uiState.saveDirectory = app->selectDirectory();
-                if (app->saveState(app->uiState.saveDirectory + "/" + app->getCurrentCompositionName() + ".mpf"))
-                    DEBUG_PRINT("Project saved successfully.");
-                else
-                    std::cerr << "Failed to save project." << std::endl;
+                std::string savePath = app->uiState.saveDirectory + "/" + app->getCurrentCompositionName() + ".mpf";
+                app->saveState();
+                app->saveToFile(savePath);
+                DEBUG_PRINT("Project saved successfully to: " << savePath);
             }),
         ButtonStyle::Pill,
         "save",

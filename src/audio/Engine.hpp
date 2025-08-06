@@ -18,6 +18,19 @@ public:
     Engine();
     ~Engine();
     
+    // Structure for deferred effect loading
+    struct PendingEffect {
+        std::string trackName;
+        std::string vstPath;
+        bool enabled = true;
+        int index = -1;
+        std::vector<std::pair<int, float>> parameters;
+    };
+    
+    // Get list of effects that should be loaded with deferred loading
+    const std::vector<PendingEffect>& getPendingEffects() const { return pendingEffects; }
+    void clearPendingEffects() { pendingEffects.clear(); }
+    
     // Playback control
     void play();
     void pause();
@@ -52,8 +65,19 @@ public:
     Track* getSelectedTrackPtr();
     bool hasSelectedTrack() const;
     
+    // Directory management
+    void setVSTDirectory(const std::string& directory);
+    void setSampleDirectory(const std::string& directory);
+    std::string getVSTDirectory() const;
+    std::string getSampleDirectory() const;
+    
+    // File scanning utilities
+    juce::File findSampleFile(const std::string& sampleName) const;
+    juce::File findVSTFile(const std::string& vstName) const;
+    
     // State management
-    bool saveState(const std::string& path = "untitled.mpf") const;
+    void saveState();  // Updates currentState string
+    void save(const std::string& path = "untitled.mpf") const;  // Writes currentState to file
     std::string getStateString() const;
     void loadState(const std::string& state);
     
@@ -91,6 +115,12 @@ private:
     juce::AudioBuffer<float> tempMixBuffer;
     std::unique_ptr<Track> masterTrack;
     std::string selectedTrackName;
+    
+    std::string vstDirectory;
+    std::string sampleDirectory;
+    
+    std::string currentState;  // Current serialized engine state
+    std::vector<PendingEffect> pendingEffects;  // Effects to be loaded with deferred loading
 
     void processBlock(juce::AudioBuffer<float>& outputBuffer, int numSamples);
 };

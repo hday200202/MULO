@@ -41,6 +41,9 @@ FileBrowserComponent::~FileBrowserComponent() {}
 void FileBrowserComponent::init() {
     if (app->mainContentRow)
         parentContainer = app->mainContentRow;
+
+    relativeTo = "timeline";
+    
     layout = scrollableColumn(
         Modifier()
             .align(Align::LEFT | Align::TOP)
