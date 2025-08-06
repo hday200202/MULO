@@ -7,19 +7,14 @@
 class SettingsComponent : public MULOComponent {
 public:
     SettingsComponent();
-    
     ~SettingsComponent() override;
 
     void init() override;
-    
     void update() override;
-    
     Container* getLayout() override { return nullptr; }
-    
-    bool handleEvents() override { update(); return false; };
+    bool handleEvents() override { update(); return false; }
 
     void show() override;
-    
     void hide() override;
 
 private:
@@ -30,12 +25,10 @@ private:
     bool pendingClose = false;
     bool pendingUIRebuild = false;
 
-    // Temporary settings before application
     std::string tempSampleRate = "44100";
     std::string tempTheme = "Dark";
 
     Container* buildLayout();
-    
     void applySettings();
 };
 

@@ -18,6 +18,7 @@ public:
     Engine();
     ~Engine();
     
+    // Playback control
     void play();
     void pause();
     void stop();
@@ -29,6 +30,7 @@ public:
     double getSavedPosition() const;
     bool hasSavedPosition() const;
     
+    // Composition management
     void newComposition(const std::string& name = "untitled");
     void loadComposition(const std::string& path);
     void saveComposition(const std::string& path);
@@ -36,6 +38,7 @@ public:
     double getBpm() const;
     void setBpm(double newBpm);
     
+    // Track management
     void addTrack(const std::string& name = "", const std::string& samplePath = "");
     void removeTrack(int index);
     void removeTrackByName(const std::string& name);
@@ -49,19 +52,13 @@ public:
     Track* getSelectedTrackPtr();
     bool hasSelectedTrack() const;
     
+    // State management
     bool saveState(const std::string& path = "untitled.mpf") const;
     std::string getStateString() const;
     void loadState(const std::string& state);
     
-    void audioDeviceIOCallbackWithContext(
-        const float* const* inputChannelData,
-        int numInputChannels,
-        float* const* outputChannelData,
-        int numOutputChannels,
-        int numSamples,
-        const juce::AudioIODeviceCallbackContext& context
-    ) override;
-
+    // Audio device callbacks
+    void audioDeviceIOCallbackWithContext(const float* const* inputChannelData, int numInputChannels, float* const* outputChannelData, int numOutputChannels, int numSamples, const juce::AudioIODeviceCallbackContext& context) override;
     void audioDeviceAboutToStart(juce::AudioIODevice* device) override;
     void audioDeviceStopped() override;
     
@@ -73,6 +70,8 @@ public:
         sampleRate = newSampleRate; 
         DEBUG_PRINT("[Engine] Sample rate set to " << newSampleRate);
     }
+    
+    bool configureAudioDevice(double sampleRate, int bufferSize = 256);
 
     std::vector<float> generateWaveformPeaks(const juce::File& audioFile, float duration, float peakResolution = 0.05f);
     void undo();

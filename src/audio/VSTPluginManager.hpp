@@ -30,16 +30,10 @@ public:
         return instance;
     }
 
-    // Get platform-specific default VST3 search paths
     std::vector<std::string> getDefaultVSTSearchPaths() const;
-    
-    // Check if a file is a valid VST plugin for the current platform
+    std::vector<std::string> getManualVSTSearchPaths(const std::vector<std::string>& configuredPaths) const;
     bool isValidVSTFile(const std::string& filepath) const;
-    
-    // Scan a directory for VST plugins
     std::vector<VSTInfo> scanDirectory(const std::string& directory, bool recursive = true) const;
-    
-    // Get file extension for VST plugins on current platform
     std::vector<std::string> getVSTExtensions() const;
 
 private:
@@ -126,6 +120,34 @@ inline std::vector<std::string> VSTPluginManager::getDefaultVSTSearchPaths() con
     }
     
     return existingPaths;
+}
+
+inline std::vector<std::string> VSTPluginManager::getManualVSTSearchPaths(const std::vector<std::string>& configuredPaths) const {
+    std::vector<std::string> validPaths;
+    
+    for (const auto& path : configuredPaths) {
+        if (!path.empty() && std::filesystem::exists(path) && std::filesystem::is_directory(path)) {
+            validPaths.push_back(path);
+        }
+    }
+    
+    // If no valid configured paths, fall back to a minimal set
+    if (validPaths.empty()) {
+        char* homeDir = getenv("HOME");
+        if (homeDir) {
+            std::string userVst3 = std::string(homeDir) + "/.vst3";
+            if (std::filesystem::exists(userVst3)) {
+                validPaths.push_back(userVst3);
+            }
+        }
+        
+        // Add system VST3 path as last resort
+        if (std::filesystem::exists("/usr/lib/vst3")) {
+            validPaths.push_back("/usr/lib/vst3");
+        }
+    }
+    
+    return validPaths;
 }
 
 inline std::vector<std::string> VSTPluginManager::getVSTExtensions() const {

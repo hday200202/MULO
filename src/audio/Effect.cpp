@@ -6,68 +6,57 @@
 #include <filesystem>
 #include <algorithm>
 
-// Protect against Windows min/max macros
 #ifdef _WIN32
 #undef max
 #undef min
 #endif
 
-// VSTEditorWindow Implementation
 VSTEditorWindow::VSTEditorWindow(const juce::String& name, juce::AudioProcessor* processor, std::function<void()> onClose)
     : juce::DocumentWindow(name, juce::Colours::lightgrey, juce::DocumentWindow::allButtons)
     , vstProcessor(processor)
     , closeCallback(onClose)
 {
-    // Platform-specific window setup
-#ifdef _WIN32
     setUsingNativeTitleBar(true);
-#elif defined(__APPLE__)
-    setUsingNativeTitleBar(true);
-#else
-    // On Linux, native title bar might cause issues with some VST plugins
-    setUsingNativeTitleBar(false);
-#endif
     
     if (processor && processor->hasEditor()) {
-        // CRITICAL: Ensure we're on the message thread
         if (!juce::MessageManager::getInstance()->isThisTheMessageThread()) {
             std::cout << "ERROR: Not on message thread! VST editor will fail!" << std::endl;
             return;
         }
         
-        // CRITICAL: Ensure plugin is properly prepared before creating editor
-        // Note: Don't call prepareToPlay here - it should already be called by Track::addEffect
-        // processor->prepareToPlay(48000.0, 512);
+        bool isDPFPlugin = processor->getName().toLowerCase().contains("dpf") ||
+                           processor->getName().toLowerCase().contains("distrho");
         
-        // CRITICAL: Some VSTs require being activated before editor creation
+        if (isDPFPlugin) {
+            DEBUG_PRINT("Creating DPF plugin editor window...");
+        }
+        
         processor->setProcessingPrecision(juce::AudioProcessor::singlePrecision);
         
         auto* editor = processor->createEditor();
         if (editor) {
-            // CRITICAL: Set content BEFORE making window visible
             setContentOwned(editor, true);
             
-            // CRITICAL: Size window to editor dimensions EXACTLY
             int editorWidth = editor->getWidth();
             int editorHeight = editor->getHeight();
             
-            // Ensure minimum size for usability
+            if (isDPFPlugin && (editorWidth < 100 || editorHeight < 100)) {
+                DEBUG_PRINT("DPF plugin reported small size, using defaults");
+                editorWidth = 400;
+                editorHeight = 300;
+            }
+            
             editorWidth = juce::jmax(editorWidth, 300);
             editorHeight = juce::jmax(editorHeight, 200);
             
             setSize(editorWidth, editorHeight);
-            setResizable(false, false);
+            setResizable(isDPFPlugin, isDPFPlugin);
             
-            // CRITICAL: Make editor visible FIRST
             editor->setVisible(true);
-            
-            // NOW make window visible and bring to front
             setVisible(true);
             toFront(true);
             
             DEBUG_PRINT("VST editor window setup complete (" << editorWidth << "x" << editorHeight << ")");
-            
-            // Final repaint of the entire window
             repaint();
         } else {
             std::cerr << "Failed to create VST editor" << std::endl;
@@ -78,7 +67,17 @@ VSTEditorWindow::VSTEditorWindow(const juce::String& name, juce::AudioProcessor*
 }
 
 VSTEditorWindow::~VSTEditorWindow() {
-    // Clean shutdown
+    DEBUG_PRINT("Destroying VSTEditorWindow");
+    
+    try {
+        setContentOwned(nullptr, false);
+        setVisible(false);
+        DEBUG_PRINT("VSTEditorWindow destroyed successfully");
+    } catch (const std::exception& e) {
+        std::cerr << "Exception during VSTEditorWindow destruction: " << e.what() << std::endl;
+    } catch (...) {
+        std::cerr << "Unknown exception during VSTEditorWindow destruction" << std::endl;
+    }
 }
 
 void VSTEditorWindow::closeButtonPressed()
@@ -89,34 +88,76 @@ void VSTEditorWindow::closeButtonPressed()
     }
 }
 
-// Effect Implementation
 Effect::~Effect() {
-    // Close editor window if open - smart pointer will automatically clean up
-    if (editorWindow) {
-        editorWindow->setVisible(false);
-        editorWindow.reset();
+    DEBUG_PRINT("Destroying Effect: " << name);
+    
+    try {
+        if (editorWindow) {
+            DEBUG_PRINT("Closing editor window for: " << name);
+            editorWindow->setVisible(false);
+            editorWindow.reset();
+        }
+        
+        if (plugin) {
+            DEBUG_PRINT("Releasing plugin: " << name);
+            
+            try {
+                plugin->suspendProcessing(true);
+                
+                if (plugin->hasEditor()) {
+                    auto* editor = plugin->getActiveEditor();
+                    if (editor) {
+                        DEBUG_PRINT("Plugin has active editor, will be closed during plugin destruction");
+                    }
+                }
+                
+                try {
+                    plugin->releaseResources();
+                    DEBUG_PRINT("Plugin resources released successfully: " << name);
+                } catch (const std::exception& e) {
+                    std::cerr << "Exception during plugin->releaseResources(): " << e.what() << std::endl;
+                } catch (...) {
+                    std::cerr << "Unknown exception during plugin->releaseResources()" << std::endl;
+                }
+                
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                
+            } catch (const std::exception& e) {
+                std::cerr << "Exception during plugin preparation for destruction: " << e.what() << std::endl;
+            } catch (...) {
+                std::cerr << "Unknown exception during plugin preparation for destruction" << std::endl;
+            }
+            
+            std::cerr << "WARNING: Skipping plugin destruction for '" << name 
+                      << "' to prevent 'pure virtual method called' crash." << std::endl;
+            std::cerr << "This is a known workaround for buggy VST plugins. Memory will be leaked." << std::endl;
+            
+            plugin.release();
+            DEBUG_PRINT("Plugin ownership released (leaked) to prevent crash: " << name);
+            DEBUG_PRINT("Plugin released successfully: " << name);
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "Exception during Effect destruction (" << name << "): " << e.what() << std::endl;
+    } catch (...) {
+        std::cerr << "Unknown exception during Effect destruction: " << name << std::endl;
     }
     
-    // Properly release the plugin
-    if (plugin) {
-        plugin->suspendProcessing(true);
-        plugin->releaseResources();
-        plugin.reset();
-    }
+    DEBUG_PRINT("Effect destroyed: " << name);
 }
 
 bool Effect::loadVST(const std::string& vstPath) {
-    // Store the VST path for later use
+    return loadVST(vstPath, 44100.0);
+}
+
+bool Effect::loadVST(const std::string& vstPath, double sampleRate) {
     this->vstPath = vstPath;
     
-    // Validate the VST file using cross-platform manager
     auto& vstManager = VSTPluginManager::getInstance();
     if (!vstManager.isValidVSTFile(vstPath)) {
         std::cerr << "Invalid or unsupported VST file: " << vstPath << std::endl;
         return false;
     }
     
-    // Create plugin format manager and register VST3 format
     static juce::AudioPluginFormatManager formatManager;
     static bool formatsRegistered = false;
     
@@ -126,14 +167,12 @@ bool Effect::loadVST(const std::string& vstPath) {
         DEBUG_PRINT("Registered JUCE plugin formats");
     }
     
-    // Create plugin description from file
     juce::File vstFile(vstPath);
     if (!vstFile.exists()) {
         std::cerr << "VST file does not exist: " << vstPath << std::endl;
         return false;
     }
     
-    // Get available formats and try to load the plugin
     juce::OwnedArray<juce::PluginDescription> descriptions;
     
     for (auto* format : formatManager.getFormats()) {
@@ -141,6 +180,20 @@ bool Effect::loadVST(const std::string& vstPath) {
         format->findAllTypesForFile(descriptions, vstFile.getFullPathName());
         if (!descriptions.isEmpty()) {
             DEBUG_PRINT("Found " << descriptions.size() << " plugin(s) using format: " << format->getName().toStdString());
+            
+            for (int i = 0; i < descriptions.size(); ++i) {
+                auto* desc = descriptions[i];
+                DEBUG_PRINT("  Plugin " << i << ": " << desc->name.toStdString() 
+                          << " (Manufacturer: " << desc->manufacturerName.toStdString()
+                          << ", Format: " << desc->pluginFormatName.toStdString()
+                          << ", Category: " << desc->category.toStdString() << ")");
+                          
+                if (desc->manufacturerName.toLowerCase().contains("distrho") || 
+                    desc->manufacturerName.toLowerCase().contains("dpf") ||
+                    desc->category.toLowerCase().contains("dpf")) {
+                    DEBUG_PRINT("  -> Detected DPF plugin");
+                }
+            }
             break;
         }
     }
@@ -150,25 +203,54 @@ bool Effect::loadVST(const std::string& vstPath) {
         return false;
     }
     
-    // Use the first description found
     auto* description = descriptions[0];
     DEBUG_PRINT("Loading plugin: " << description->name.toStdString() 
               << " (Format: " << description->pluginFormatName.toStdString() << ")");
     
-    // Create the plugin instance - use device sample rate and buffer size (will be set in prepareToPlay)
+    bool isDPFPlugin = description->manufacturerName.toLowerCase().contains("distrho") || 
+                       description->manufacturerName.toLowerCase().contains("dpf") ||
+                       description->category.toLowerCase().contains("dpf");
+    
+    if (isDPFPlugin) {
+        DEBUG_PRINT("Applying DPF-specific loading procedures...");
+    }
+    
     juce::String errorMessage;
-    plugin = formatManager.createPluginInstance(*description, 44100.0, 512, errorMessage);
+    
+    if (isDPFPlugin) {
+        DEBUG_PRINT("Creating DPF plugin instance with sample rate: " << sampleRate << " Hz");
+    }
+    
+    plugin = formatManager.createPluginInstance(*description, sampleRate, 512, errorMessage);
     
     if (!plugin) {
         std::cerr << "Failed to create plugin instance: " << errorMessage.toStdString() << std::endl;
+        
+        if (isDPFPlugin) {
+            std::cerr << "DPF Plugin troubleshooting:" << std::endl;
+            std::cerr << "  - Check if all DPF dependencies are installed" << std::endl;
+            std::cerr << "  - Verify plugin file permissions: " << vstPath << std::endl;
+            std::cerr << "  - Try running: ldd " << vstPath << std::endl;
+        }
         return false;
     }
     
-    // Set the name from the plugin
     name = plugin->getName().toStdString();
     
-    // Make sure the plugin is not bypassed
-    plugin->suspendProcessing(false);
+    if (isDPFPlugin) {
+        DEBUG_PRINT("Initializing DPF plugin: " << name);
+        
+        // Some DPF plugins need to be resumed before they work properly
+        plugin->suspendProcessing(false);
+        
+        // Ensure proper state (no blocking sleep - let initialization happen naturally)
+        plugin->setProcessingPrecision(juce::AudioProcessor::singlePrecision);
+        
+        DEBUG_PRINT("DPF plugin initialization complete");
+    } else {
+        // Make sure the plugin is not bypassed
+        plugin->suspendProcessing(false);
+    }
     
     // Print parameter info for debugging
     DEBUG_PRINT("VST '" << name << "' has " << plugin->getNumParameters() << " parameters:");
@@ -190,6 +272,13 @@ bool Effect::loadVST(const std::string& vstPath) {
 void Effect::prepareToPlay(double sampleRate, int bufferSize) {
     if (!plugin) return;
     
+    DEBUG_PRINT("Preparing VST '" << name << "' for playback...");
+    
+    // Check if this is a DPF plugin
+    bool isDPFPlugin = plugin->getName().toLowerCase().contains("dpf") ||
+                       name.find("DPF") != std::string::npos ||
+                       name.find("DISTRHO") != std::string::npos;
+    
     // Set up proper channel layout before preparing
     juce::AudioProcessor::BusesLayout layout;
     
@@ -209,7 +298,24 @@ void Effect::prepareToPlay(double sampleRate, int bufferSize) {
         
         if (!plugin->setBusesLayout(layout)) {
             DEBUG_PRINT("Warning: Could not set mono layout for VST '" << name << "'");
+            
+            // DPF plugins might have specific channel requirements
+            if (isDPFPlugin) {
+                DEBUG_PRINT("DPF plugin - trying default bus layout...");
+                // Let DPF plugin use its preferred layout
+            }
         }
+    }
+    
+    // DPF-specific preparation
+    if (isDPFPlugin) {
+        DEBUG_PRINT("Applying DPF-specific preparation for '" << name << "'");
+        
+        // Ensure processing is enabled
+        plugin->suspendProcessing(false);
+
+        // Set precision (DPF usually works better with single precision)
+        plugin->setProcessingPrecision(juce::AudioProcessor::singlePrecision);
     }
     
     // Prepare the plugin with the correct audio settings
@@ -238,10 +344,10 @@ void Effect::processAudio(juce::AudioBuffer<float>& buffer) {
         int pluginOutputChannels = plugin->getTotalNumOutputChannels();
         int bufferChannels = buffer.getNumChannels();
         
-        // if (pluginInputChannels > bufferChannels) {
-        //     DEBUG_PRINT("Warning: VST '" << name << "' expects " << pluginInputChannels 
-        //                << " input channels but buffer has " << bufferChannels);
-        // }
+        // DPF plugins often need exact channel matching
+        bool isDPFPlugin = plugin->getName().toLowerCase().contains("dpf") ||
+                           name.find("DPF") != std::string::npos ||
+                           name.find("DISTRHO") != std::string::npos;
         
         // Create a properly sized buffer if needed
         juce::AudioBuffer<float> processBuffer;
@@ -258,6 +364,13 @@ void Effect::processAudio(juce::AudioBuffer<float>& buffer) {
             
             // Process through plugin
             juce::MidiBuffer midiBuffer;
+            
+            // DPF plugins might need MIDI even if they don't use it
+            if (isDPFPlugin) {
+                // Some DPF plugins expect at least an empty MIDI buffer
+                midiBuffer.clear();
+            }
+            
             plugin->processBlock(processBuffer, midiBuffer);
             
             // Copy output back
@@ -267,6 +380,12 @@ void Effect::processAudio(juce::AudioBuffer<float>& buffer) {
         } else {
             // Direct processing - channels match
             juce::MidiBuffer midiBuffer;
+            
+            // DPF plugins might need MIDI even if they don't use it
+            if (isDPFPlugin) {
+                midiBuffer.clear();
+            }
+            
             plugin->processBlock(buffer, midiBuffer);
         }
         

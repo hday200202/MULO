@@ -11,12 +11,11 @@ public:
     ~Effect();
     
     bool loadVST(const std::string& vstPath);
+    bool loadVST(const std::string& vstPath, double sampleRate);
     void prepareToPlay(double sampleRate, int bufferSize);
     void processAudio(juce::AudioBuffer<float>& buffer);
-
     void openWindow();
     
-    // Force refresh the VST editor window if open - call this from Application::update()
     void updateEditor() {
         if (editorWindow && editorWindow->isVisible()) {
             editorWindow->forceRefresh();
@@ -39,12 +38,10 @@ public:
 private:
     std::unique_ptr<juce::AudioPluginInstance> plugin;
     std::string name;
-    std::string vstPath; // Store VST path for process launching
+    std::string vstPath;
     bool isEnabled = true;
-    bool hasEditorCached = false; // Cache the editor capability at load time
-    int index = -1; // Index within the track's effect list
+    bool hasEditorCached = false;
+    int index = -1;
     
-    // VST Editor Window
     std::unique_ptr<VSTEditorWindow> editorWindow;
-    
 };

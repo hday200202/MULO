@@ -161,7 +161,9 @@ void Track::prepareToPlay(double sampleRate, int bufferSize) {
 Effect* Track::addEffect(const std::string& vstPath) {
     auto effect = std::make_unique<Effect>();
     
-    if (!effect->loadVST(vstPath)) {
+    DEBUG_PRINT("Track '" << name << "' adding effect with sample rate: " << currentSampleRate << " Hz");
+    
+    if (!effect->loadVST(vstPath, currentSampleRate)) {
         std::cerr << "Failed to load VST: " << vstPath << std::endl;
         return nullptr;
     }
@@ -179,17 +181,38 @@ Effect* Track::addEffect(const std::string& vstPath) {
 
 bool Track::removeEffect(int index) {
     if (index < 0 || index >= static_cast<int>(effects.size())) {
+        DEBUG_PRINT("Invalid effect index for removal: " << index);
         return false;
     }
     
-    std::string effectName = effects[index]->getName();
-    effects.erase(effects.begin() + index);
+    auto& effectToRemove = effects[index];
+    std::string effectName = effectToRemove->getName();
     
-    // Update all effect indices after removal
-    updateEffectIndices();
+    DEBUG_PRINT("Removing effect '" << effectName << "' from track '" << name << "'");
     
-    DEBUG_PRINT("Removed effect '" << effectName << "' from track '" << name << "'");
-    return true;
+    try {
+        // First, disable the effect to stop it from being processed
+        effectToRemove->disable();
+        
+        // Close any open editor windows
+        // Note: This will be handled by the Effect destructor, but doing it here for safety
+        
+        // Remove from the vector - this will trigger the destructor
+        effects.erase(effects.begin() + index);
+        
+        // Update all effect indices after removal
+        updateEffectIndices();
+        
+        DEBUG_PRINT("Successfully removed effect '" << effectName << "' from track '" << name << "'");
+        return true;
+        
+    } catch (const std::exception& e) {
+        std::cerr << "Exception while removing effect '" << effectName << "': " << e.what() << std::endl;
+        return false;
+    } catch (...) {
+        std::cerr << "Unknown exception while removing effect: " << effectName << std::endl;
+        return false;
+    }
 }
 
 bool Track::removeEffect(const std::string& name) {

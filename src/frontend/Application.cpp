@@ -23,7 +23,6 @@ LRESULT CALLBACK MinSizeWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         mmi->ptMinTrackSize.y = s_minWindowSize.y;
         return 0;
     }
-    // Call the original window proc
     return DefWindowProc(hwnd, msg, wParam, lParam);
 }
 
@@ -43,13 +42,10 @@ void SetMinWindowSize(HWND hwnd, int minWidth, int minHeight)
 
 namespace fs = std::filesystem;
 
-Application::Application() {
-    // Constructor is now empty - initialization moved to initialise()
-}
+Application::Application() {}
 
 void Application::initialise(const juce::String& commandLine) {
 #ifdef _WIN32
-    // Get executable path on Windows
     char path[MAX_PATH];
     GetModuleFileNameA(NULL, path, MAX_PATH);
     exeDirectory = fs::path(path).parent_path().string();
@@ -57,8 +53,15 @@ void Application::initialise(const juce::String& commandLine) {
     exeDirectory = fs::canonical("/proc/self/exe").parent_path().string();
 #endif
     
-    // Initialize window, engine, ui
     uiState.loadConfig();
+    
+    if (uiState.sampleRate > 0) {
+        engine.configureAudioDevice(uiState.sampleRate);
+        DEBUG_PRINT("Configured engine with sample rate from config: " << uiState.sampleRate << " Hz");
+    } else {
+        DEBUG_PRINT("Using default audio device configuration");
+    }
+    
     createWindow();
     applyTheme(resources, uiState.selectedTheme);
     initUIResources();
@@ -66,8 +69,6 @@ void Application::initialise(const juce::String& commandLine) {
 
     engine.newComposition("untitled");
     engine.addTrack("Master");
-    
-    // Note: Engine sample rate will be set automatically when audio device starts
 
     running = ui->isRunning();
 
@@ -241,11 +242,10 @@ void Application::createWindow() {
     minWindowSize.y = 600;
 
     sf::ContextSettings settings;
-    // CRITICAL: Try to minimize OpenGL context to avoid conflict with JUCE VST windows
-    settings.antiAliasingLevel = 0;  // Disable anti-aliasing
-    settings.depthBits = 0;          // No depth buffer  
-    settings.stencilBits = 0;        // No stencil buffer
-    settings.majorVersion = 1;       // Use minimal OpenGL version
+    settings.antiAliasingLevel = 0;
+    settings.depthBits = 0;
+    settings.stencilBits = 0;
+    settings.majorVersion = 1;
     settings.minorVersion = 0;
     settings.attributeFlags = sf::ContextSettings::Default;
 

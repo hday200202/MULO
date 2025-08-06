@@ -6,27 +6,18 @@
 class MixerComponent : public MULOComponent {
 public:
     MixerComponent();
-    
     ~MixerComponent() override;
 
     void init() override;
-    
     void update() override;
-    
     bool handleEvents() override;
-    
     inline Container* getLayout() override { return layout; }
 
     void rebuildUI();
-    
     void setMixerVisible(bool visible);
-    
     bool isMixerVisible() const { return mixerShown; }
-    
     void show() override { setMixerVisible(true); }
-    
     void hide() override { setMixerVisible(false); }
-    
     bool isVisible() const override { return mixerShown; }
 
 private:
@@ -42,12 +33,10 @@ private:
     std::unordered_map<std::string, Button*> soloButtons;
     std::unordered_map<std::string, Slider*> volumeSliders;
     std::unordered_map<std::string, Slider*> panSliders;
-    
     std::unordered_map<std::string, bool> lastSoloButtonStates;
 
     Column* createMixerTrack(const std::string& trackName, float volume = 1.0f, float pan = 0.5f);
     Column* createMasterMixerTrack();
-    
     void rebuildUIFromEngine();
     void clearTrackElements();
     void syncSlidersToEngine();

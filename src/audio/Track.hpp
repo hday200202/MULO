@@ -22,19 +22,14 @@ public:
     float getVolume() const;
     void setPan(float pan);
     float getPan() const;
+    
     void addClip(const AudioClip& clip);
     void removeClip(int index);
     const std::vector<AudioClip>& getClips() const;
     void setReferenceClip(const AudioClip& clip);
     AudioClip* getReferenceClip();
 
-    void process(
-        double playheadSeconds,
-        juce::AudioBuffer<float>& outputBuffer,
-        int numSamples,
-        double sampleRate
-    );
-    
+    void process(double playheadSeconds, juce::AudioBuffer<float>& outputBuffer, int numSamples, double sampleRate);
     void prepareToPlay(double sampleRate, int bufferSize);
 
     void toggleMute() { muted = !muted; }
@@ -52,8 +47,6 @@ public:
     int getEffectCount() const { return effects.size(); }
 
     void processEffects(juce::AudioBuffer<float>& buffer);
-    
-    // Update all effect editors - call this from Application::update()
     void updateEffectEditors() {
         for (auto& effect : effects) {
             if (effect) {
@@ -66,7 +59,7 @@ public:
     void clearEffects();
 
 private:
-    void updateEffectIndices(); // Helper to update effect indices after changes
+    void updateEffectIndices();
     std::string name;
     float volumeDb = 0.0f;
     float pan = 0.0f;
@@ -78,7 +71,6 @@ private:
 
     juce::AudioFormatManager& formatManager;
 
-    // Audio settings for effects
     double currentSampleRate = 44100.0;
     int currentBufferSize = 512;
 

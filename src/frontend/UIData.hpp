@@ -16,6 +16,7 @@ struct UITheme;
 struct UIState {
     std::string fileBrowserDirectory = "";
     std::string vstDirecory = "";
+    std::vector<std::string> vstDirectories = {};
     std::string saveDirectory = "";
     std::string selectedTheme = "Dark";
 
@@ -23,6 +24,7 @@ struct UIState {
     double sampleRate = 44100.0;
     int autoSaveIntervalSeconds = 300;
     bool settingsShown = false;
+    bool enableAutoVSTScan = false;
 
     inline void printUIState() {
         DEBUG_PRINT("  [File Browser Dir] " << fileBrowserDirectory);
@@ -39,7 +41,7 @@ struct UIState {
             return exePath.string();
         } catch (const std::exception& e) {
             DEBUG_PRINT("Error getting executable directory: " << e.what());
-            return "."; // Fallback to current directory
+            return ".";
         }
     }
 
@@ -53,14 +55,23 @@ struct UIState {
                 return;
             }
 
-            // Write JSON manually (simple format)
             file << "{\n";
             file << "  \"fileBrowserDirectory\": \"" << fileBrowserDirectory << "\",\n";
             file << "  \"vstDirectory\": \"" << vstDirecory << "\",\n";
+            
+            file << "  \"vstDirectories\": [\n";
+            for (size_t i = 0; i < vstDirectories.size(); ++i) {
+                file << "    \"" << vstDirectories[i] << "\"";
+                if (i < vstDirectories.size() - 1) file << ",";
+                file << "\n";
+            }
+            file << "  ],\n";
+            
             file << "  \"saveDirectory\": \"" << saveDirectory << "\",\n";
             file << "  \"selectedTheme\": \"" << selectedTheme << "\",\n";
             file << "  \"sampleRate\": " << sampleRate << ",\n";
             file << "  \"autoSaveIntervalSeconds\": " << autoSaveIntervalSeconds << ",\n";
+            file << "  \"enableAutoVSTScan\": " << (enableAutoVSTScan ? "true" : "false") << "\n";
             file << "}\n";
             
             file.close();
@@ -82,7 +93,6 @@ struct UIState {
 
             std::string line;
             while (std::getline(file, line)) {
-                // Simple JSON parsing (look for key-value pairs)
                 size_t colonPos = line.find(':');
                 if (colonPos == std::string::npos) continue;
                 
@@ -119,7 +129,11 @@ struct UIState {
                     } catch (...) {
                         DEBUG_PRINT("Invalid autoSaveIntervalSeconds in config, using default");
                     }
+                } else if (key == "enableAutoVSTScan") {
+                    enableAutoVSTScan = (value == "true" || value == "1");
                 }
+                // Note: vstDirectories and yabridgeDirectories arrays would need JSON parsing
+                // For now, they can be set programmatically or through UI
             }
             
             file.close();
@@ -159,6 +173,7 @@ struct UITheme {
     sf::Color clip_color;
     sf::Color line_color;
     sf::Color wave_form_color;
+    sf::Color selected_track_color;
     
     UITheme(
         sf::Color btn = sf::Color::Red,
@@ -178,11 +193,13 @@ struct UITheme {
         sf::Color sliderBar = sf::Color::Black,
         sf::Color clip = sf::Color(100, 150, 200),
         sf::Color line = sf::Color(80, 80, 80),
-        sf::Color waveform = sf::Color(0, 150, 255)
+        sf::Color waveform = sf::Color(0, 150, 255),
+        sf::Color selectedTrack = sf::Color(100, 150, 200)
     ) : button_color(btn), track_color(track), track_row_color(trackRow), master_track_color(masterTrack),
         mute_color(mute), foreground_color(fg), primary_text_color(primaryText), secondary_text_color(secondaryText),
         not_muted_color(notMuted), middle_color(middle), alt_button_color(altBtn), white(w), black(b),
-        slider_knob_color(sliderKnob), slider_bar_color(sliderBar), clip_color(clip), line_color(line), wave_form_color(waveform) {}
+        slider_knob_color(sliderKnob), slider_bar_color(sliderBar), clip_color(clip), line_color(line), 
+        wave_form_color(waveform), selected_track_color(selectedTrack) {}
 };
 
 namespace Themes {
@@ -222,11 +239,12 @@ namespace Themes {
         sf::Color(50, 50, 50),        // altButtonColor
         sf::Color::White,             // white
         sf::Color(20, 20, 20),        // black - Very Dark
-        sf::Color(105, 125, 150),     // sliderKnobColor - Muted Light Blue
+        sf::Color::White,             // sliderKnobColor - Muted Light Blue
         sf::Color(30, 30, 30),        // sliderBarColor - Dark
         sf::Color(90, 120, 160),      // clipColor - Muted Blue
         sf::Color(100, 100, 100),     // lineColor - Medium Gray
-        sf::Color(170, 190, 230)      // waveformColor - Soft Blue
+        sf::Color(170, 190, 230),     // waveformColor - Soft Blue
+        sf::Color(90, 120, 160)
     );
     
     // Light Theme
@@ -248,7 +266,8 @@ namespace Themes {
         sf::Color(215, 215, 215),     // sliderBarColor - Soft Gray
         sf::Color(120, 160, 200),     // clipColor - Light Blue
         sf::Color(120, 120, 120),     // lineColor - Medium Gray
-        sf::Color(80, 140, 200)       // waveformColor - Blue
+        sf::Color(80, 140, 200),       // waveformColor - Blue
+        sf::Color(120, 160, 200)
     );
     
     // Cyberpunk Theme
@@ -270,7 +289,8 @@ namespace Themes {
         sf::Color(80, 60, 100),       // sliderBarColor - Muted Purple
         sf::Color(120, 80, 140),      // clipColor - Muted Purple-Pink
         sf::Color(80, 120, 120),      // lineColor - Muted Teal
-        sf::Color(140, 100, 160)      // waveformColor - Soft Purple
+        sf::Color(140, 100, 160),     // waveformColor - Soft Purple
+        sf::Color(120, 80, 140)
     );
     
     // Forest Theme
@@ -292,7 +312,8 @@ namespace Themes {
         sf::Color(75, 100, 75),       // sliderBarColor - Darker Muted Green
         sf::Color(100, 130, 90),      // clipColor - Sage Green
         sf::Color(110, 120, 100),     // lineColor - Olive Gray
-        sf::Color(120, 150, 100)      // waveformColor - Light Green
+        sf::Color(120, 150, 100),     // waveformColor - Light Green
+        sf::Color(100, 130, 90)
     );
     
     // Ocean Theme

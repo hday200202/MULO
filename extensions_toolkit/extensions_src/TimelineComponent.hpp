@@ -49,36 +49,19 @@ private:
     void rebuildUIFromEngine();
     void syncSlidersToEngine();
     
-    const std::vector<std::shared_ptr<sf::Drawable>>& getCachedMeasureLines(
-        float measureWidth, float scrollOffset, const sf::Vector2f& rowSize);
-    
-    const std::vector<std::shared_ptr<sf::Drawable>>& getCachedClipGeometry(
-        const std::string& trackName, double bpm, float beatWidth, float scrollOffset, 
-        const sf::Vector2f& rowSize, const std::vector<AudioClip>& clips, float verticalOffset, 
-        UIResources* resources, UIState* uiState, const AudioClip* selectedClip,
-        const std::string& currentTrackName, const std::string& selectedTrackName);
+    const std::vector<std::shared_ptr<sf::Drawable>>& getCachedMeasureLines(float measureWidth, float scrollOffset, const sf::Vector2f& rowSize);
+    const std::vector<std::shared_ptr<sf::Drawable>>& getCachedClipGeometry(const std::string& trackName, double bpm, float beatWidth, float scrollOffset, const sf::Vector2f& rowSize, const std::vector<AudioClip>& clips, float verticalOffset, UIResources* resources, UIState* uiState, const AudioClip* selectedClip, const std::string& currentTrackName, const std::string& selectedTrackName);
     
     float enginePanToSlider(float enginePan) const { return (enginePan + 1.0f) * 0.5f; }
     float sliderPanToEngine(float sliderPan) const { return (sliderPan * 2.0f) - 1.0f; }
 
-    static float decibelsToFloat(float db) {
-        return std::pow(10.0f, db / 20.0f);
-    }
-
-    static float floatToDecibels(float value) {
-        return 20.0f * std::log10(std::max(value, 0.001f));
-    }
+    static float decibelsToFloat(float db) { return std::pow(10.0f, db / 20.0f); }
+    static float floatToDecibels(float value) { return 20.0f * std::log10(std::max(value, 0.001f)); }
 };
 
-inline std::vector<std::shared_ptr<sf::Drawable>> generateClipRects(
-    double bpm, float beatWidth, float scrollOffset, const sf::Vector2f& rowSize, 
-    const std::vector<AudioClip>& clips, float verticalOffset, 
-    UIResources* resources, UIState* uiState, const AudioClip* selectedClip,
-    const std::string& currentTrackName, const std::string& selectedTrackName
-);
+inline std::vector<std::shared_ptr<sf::Drawable>> generateClipRects(double bpm, float beatWidth, float scrollOffset, const sf::Vector2f& rowSize, const std::vector<AudioClip>& clips, float verticalOffset, UIResources* resources, UIState* uiState, const AudioClip* selectedClip, const std::string& currentTrackName, const std::string& selectedTrackName);
 
-inline std::shared_ptr<sf::Drawable> getPlayHead(
-    double bpm, float beatWidth, float scrollOffset, float seconds, const sf::Vector2f& rowSize
+inline std::shared_ptr<sf::Drawable> getPlayHead(double bpm, float beatWidth, float scrollOffset, float seconds, const sf::Vector2f& rowSize
 );
 
 inline float getNearestMeasureX(
@@ -381,10 +364,7 @@ bool TimelineComponent::handleEvents() {
         if (auto labelIt = containers.find(labelKey); labelIt != containers.end() && labelIt->second) {
             auto* labelColumn = labelIt->second;
             if (t->getName() == selectedTrack) {
-                // Track is selected - highlight with inverted clip color
-                const sf::Color& clipColor = app->resources.activeTheme->clip_color;
-                sf::Color invertedColor(255 - clipColor.r, 255 - clipColor.g, 255 - clipColor.b, clipColor.a);
-                labelColumn->m_modifier.setColor(invertedColor);
+                labelColumn->m_modifier.setColor(app->resources.activeTheme->selected_track_color);
             } else {
                 // Track is not selected - use normal color
                 labelColumn->m_modifier.setColor(app->resources.activeTheme->track_color);
@@ -397,9 +377,7 @@ bool TimelineComponent::handleEvents() {
         const std::string masterLabelKey = "Master_Track_Column";
         if (auto masterIt = containers.find(masterLabelKey); masterIt != containers.end() && masterIt->second) {
             auto* masterColumn = masterIt->second;
-            const sf::Color& clipColor = app->resources.activeTheme->clip_color;
-            sf::Color invertedColor(255 - clipColor.r, 255 - clipColor.g, 255 - clipColor.b, clipColor.a);
-            masterColumn->m_modifier.setColor(invertedColor);
+            masterColumn->m_modifier.setColor(app->resources.activeTheme->selected_track_color);
         }
     } else {
         const std::string masterLabelKey = "Master_Track_Column";

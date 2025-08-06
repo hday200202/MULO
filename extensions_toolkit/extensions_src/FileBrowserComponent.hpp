@@ -55,23 +55,12 @@ void FileBrowserComponent::init() {
         fileTree.setRootDirectory(app->uiState.fileBrowserDirectory);
     }
     
-    // Initialize VST directory with default if not set
+    // Initialize VST directory with config value only (no auto-scanning)
     if (!app->uiState.vstDirecory.empty() && 
         std::filesystem::is_directory(app->uiState.vstDirecory)) {
         vstTree.setRootDirectory(app->uiState.vstDirecory);
-    } else {
-        // Try to set a default platform-specific VST path
-        auto& vstManager = VSTPluginManager::getInstance();
-        auto defaultPaths = vstManager.getDefaultVSTSearchPaths();
-        
-        if (!defaultPaths.empty()) {
-            std::string defaultPath = defaultPaths[0]; // Use first available path
-            vstTree.setRootDirectory(defaultPath);
-            app->uiState.vstDirecory = defaultPath;
-            app->uiState.saveConfig();
-            DEBUG_PRINT("Initialized default VST directory: " << defaultPath);
-        }
     }
+    // Removed auto-detection to prevent crashes - user must manually select VST directory
     
     buildFileTreeUI();
     if (parentContainer) {
@@ -114,22 +103,8 @@ void FileBrowserComponent::browseForVSTDirectory() {
         
         app->uiState.vstDirecory = selectedDir;
         app->uiState.saveConfig();
-    } else {
-        // If no directory selected, try to set a default platform-specific VST path
-        auto& vstManager = VSTPluginManager::getInstance();
-        auto defaultPaths = vstManager.getDefaultVSTSearchPaths();
-        
-        if (!defaultPaths.empty()) {
-            std::string defaultPath = defaultPaths[0]; // Use first available path
-            vstTree.setRootDirectory(defaultPath);
-            vstTreeNeedsRebuild = true;
-            
-            app->uiState.vstDirecory = defaultPath;
-            app->uiState.saveConfig();
-            
-            DEBUG_PRINT("Set default VST directory: " << defaultPath);
-        }
     }
+    // Removed auto-fallback to prevent crashes - user must manually select directory
 }
 
 void FileBrowserComponent::buildFileTreeUI() {

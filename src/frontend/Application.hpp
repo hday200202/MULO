@@ -6,13 +6,11 @@
 #include "FileTree.hpp"
 #include "MULOComponent.hpp"
 #include <iostream>
-
 #include <juce_core/juce_core.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <chrono>
 #include <thread>
 
-// Platform-specific includes for dynamic loading
 #ifdef _WIN32
     #include <windows.h>
     #define PLUGIN_EXT ".dll"
@@ -24,7 +22,6 @@
     #define PLUGIN_EXT ".so"
 #endif
 
-// Forward declarations
 class Application;
 class Engine;
 struct UIResources;
@@ -41,21 +38,23 @@ public:
     UIState uiState;
     UIResources resources;
 
-    // juce::JUCEApplication interface
+    // JUCE Application interface
     const juce::String getApplicationName() override { return "MDAW"; }
     const juce::String getApplicationVersion() override { return "1.0.0"; }
     bool moreThanOneInstanceAllowed() override { return true; }
-    
     void initialise(const juce::String& commandLine) override;
     void shutdown() override;
 
     Application();
     ~Application();
 
+    // Core application methods
     void update();
     void render();
     void handleEvents();
     inline bool isRunning() const { return running; }
+
+    // Component management
     inline Container* getComponentLayout(const std::string& componentName) { 
         if (muloComponents.find(componentName) != muloComponents.end()) 
             return muloComponents[componentName]->getLayout(); 
@@ -69,44 +68,35 @@ public:
     inline Row* getMainContentRow() { return mainContentRow; }
     void setComponentParentContainer(const std::string& componentName, Container* parent);
 
+    // File operations
     std::string selectDirectory();
     std::string selectFile(std::initializer_list<std::string> filters);
 
+    // Window management
     inline const sf::RenderWindow& getWindow() const { return window; }
     inline void requestUIRebuild() { pendingUIRebuild = true; }
     inline void requestFullscreenToggle() { pendingFullscreenToggle = true; }
 
-    // Engine interface
-    inline Track* getMasterTrack() 
-    { return engine.getMasterTrack(); }
+    // Engine interface - Track management
+    inline Track* getMasterTrack() { return engine.getMasterTrack(); }
+    inline Track* getTrack(const std::string& name) { return engine.getTrackByName(name); }
+    inline std::vector<std::unique_ptr<Track>>& getAllTracks() { return engine.getAllTracks(); }
+    inline void addTrack(const std::string& name, const std::string& samplePath) { engine.addTrack(name, samplePath); }
+    inline void removeTrack(const std::string& name) { engine.removeTrackByName(name); }
 
-    inline Track* getTrack(const std::string& name)
-    { return engine.getTrackByName(name); }
-
-    inline std::vector<std::unique_ptr<Track>>& getAllTracks()
-    { return engine.getAllTracks(); }
-
-    inline void addTrack(const std::string& name, const std::string& samplePath)
-    { engine.addTrack(name, samplePath); }
-
-    inline void removeTrack(const std::string& name) 
-    { engine.removeTrackByName(name); }
-
-    // VST Effect Management
+    // VST Effect management
     inline void addEffect(const std::string& filePath) {
-        // Request deferred effect loading to be processed in main thread
         pendingEffectPath = filePath;
         hasPendingEffect = true;
         std::cout << "Queued effect for loading: " << filePath << std::endl;
     }
-    
     inline void requestOpenEffectWindow(size_t effectIndex) {
-        // Request deferred effect window opening to be processed in main thread
         pendingEffectWindowIndex = effectIndex;
         hasPendingEffectWindow = true;
         std::cout << "Queued effect window opening for index: " << effectIndex << std::endl;
     }
 
+    // Playback control
     inline void play() { engine.play(); }
     inline void pause() { engine.pause(); }
     inline void setSavedPosition(double seconds) { engine.setPosition(seconds); }
@@ -115,26 +105,29 @@ public:
     inline float getBpm() const { return engine.getBpm(); }
     inline double getPosition() const { return engine.getPosition(); }
     inline void setPosition(double seconds) { engine.setPosition(seconds); }
-    inline AudioClip* getReferenceClip(const std::string& trackName) 
-    { return engine.getTrackByName(trackName)->getReferenceClip(); }
-    inline void addClipToTrack(const std::string& trackName, const AudioClip& clip) 
-    { engine.getTrackByName(trackName)->addClip(clip); }
-    inline void removeClipFromTrack(const std::string& trackName, size_t index) 
-    { engine.getTrackByName(trackName)->removeClip(index); }
+
+    // Audio clip management
+    inline AudioClip* getReferenceClip(const std::string& trackName) { return engine.getTrackByName(trackName)->getReferenceClip(); }
+    inline void addClipToTrack(const std::string& trackName, const AudioClip& clip) { engine.getTrackByName(trackName)->addClip(clip); }
+    inline void removeClipFromTrack(const std::string& trackName, size_t index) { engine.getTrackByName(trackName)->removeClip(index); }
+
+    // Audio configuration
     inline double getSampleRate() const { return engine.getSampleRate(); }
     inline void setSampleRate(const double newSampleRate) { 
-        // Update UI state but don't force engine - it should match device
+        DEBUG_PRINT("Application: Setting sample rate to " << newSampleRate << "Hz");
         uiState.sampleRate = newSampleRate;
-        uiState.saveConfig(); // Save the new sample rate to config
-        
-        // Note: Engine sample rate is determined by audio device, not forced
-        DEBUG_PRINT("Application: Sample rate preference set to " << newSampleRate << "Hz");
+        uiState.saveConfig(); 
+        engine.configureAudioDevice(newSampleRate);
+        DEBUG_PRINT("Application: Sample rate configuration completed");
     }
-    // Selected Track Management
+
+    // Selected track management
     inline void setSelectedTrack(const std::string& trackName) { engine.setSelectedTrack(trackName); }
     inline std::string getSelectedTrack() const { return engine.getSelectedTrack(); }
     inline Track* getSelectedTrackPtr() { return engine.getSelectedTrackPtr(); }
     inline bool hasSelectedTrack() const { return engine.hasSelectedTrack(); }
+
+    // Composition management
     inline void loadComposition(const std::string& path) { engine.loadComposition(path); }
     inline std::string getCurrentCompositionName() const { return engine.getCurrentCompositionName(); }
     inline bool saveState(const std::string& saveDirectory) const { return engine.saveState(saveDirectory); }
@@ -157,7 +150,6 @@ private:
     bool pendingFullscreenToggle = false;
     bool prevCtrlShftR;
 
-    // VST Effect Management
     std::string pendingEffectPath;
     size_t pendingEffectWindowIndex = SIZE_MAX;
     bool hasPendingEffect = false;
@@ -183,12 +175,10 @@ private:
     void toggleFullscreen();
     void cleanup();
     
-    // Plugin loading methods
     void scanAndLoadPlugins();
     bool loadPlugin(const std::string& path);
     void unloadPlugin(const std::string& name);
     void unloadAllPlugins();
     
-    // VST testing
     void testVSTLoading();
 };

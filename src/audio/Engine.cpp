@@ -6,10 +6,12 @@ Engine::Engine() {
     
     deviceManager.initialise(0, 2, nullptr, false);
     
+    // Don't force a specific sample rate here - let the application configure it
+    // after loading the config file
     auto currentSetup = deviceManager.getAudioDeviceSetup();
     
     currentSetup.bufferSize = 256;
-    currentSetup.sampleRate = 44100.0;
+    // Note: Sample rate will be set by application after config is loaded
     
     juce::String error = deviceManager.setAudioDeviceSetup(currentSetup, true);
     
@@ -29,7 +31,7 @@ Engine::Engine() {
     }
     
     auto finalSetup = deviceManager.getAudioDeviceSetup();
-    DEBUG_PRINT("Audio device setup:");
+    DEBUG_PRINT("Audio device setup (initial):");
     DEBUG_PRINT("  Sample rate: " << finalSetup.sampleRate << " Hz");
     DEBUG_PRINT("  Buffer size: " << finalSetup.bufferSize << " samples");
     DEBUG_PRINT_INLINE("  Latency: ~" << std::fixed << std::setprecision(1) 
@@ -41,6 +43,52 @@ Engine::Engine() {
     masterTrack->setName("Master");
     
     selectedTrackName = "Master";
+}
+
+bool Engine::configureAudioDevice(double desiredSampleRate, int bufferSize) {
+    DEBUG_PRINT("Configuring audio device: " << desiredSampleRate << " Hz, " << bufferSize << " samples");
+    
+    auto currentSetup = deviceManager.getAudioDeviceSetup();
+    currentSetup.sampleRate = desiredSampleRate;
+    currentSetup.bufferSize = bufferSize;
+    
+    juce::String error = deviceManager.setAudioDeviceSetup(currentSetup, true);
+    
+    if (error.isNotEmpty()) {
+        DEBUG_PRINT("Failed to set desired audio setup, trying fallback buffer sizes...");
+        DEBUG_PRINT("Error: " << error.toStdString());
+        
+        // Try with larger buffer sizes if the desired one fails
+        std::vector<int> fallbackBuffers = {512, 1024, 2048};
+        for (int fallbackBuffer : fallbackBuffers) {
+            currentSetup.bufferSize = fallbackBuffer;
+            error = deviceManager.setAudioDeviceSetup(currentSetup, true);
+            
+            if (error.isEmpty()) {
+                DEBUG_PRINT("Successfully set audio device with fallback buffer: " << fallbackBuffer);
+                break;
+            }
+        }
+        
+        if (error.isNotEmpty()) {
+            DEBUG_PRINT("Failed to configure audio device with desired sample rate: " << desiredSampleRate);
+            DEBUG_PRINT("Final error: " << error.toStdString());
+            return false;
+        }
+    }
+    
+    auto finalSetup = deviceManager.getAudioDeviceSetup();
+    DEBUG_PRINT("Audio device configured:");
+    DEBUG_PRINT("  Sample rate: " << finalSetup.sampleRate << " Hz");
+    DEBUG_PRINT("  Buffer size: " << finalSetup.bufferSize << " samples");
+    DEBUG_PRINT_INLINE("  Latency: ~" << std::fixed << std::setprecision(1) 
+              << (finalSetup.bufferSize / finalSetup.sampleRate * 1000.0) << " ms");
+              
+    // Update internal sample rate to match what was actually set
+    sampleRate = finalSetup.sampleRate;
+    currentBufferSize = finalSetup.bufferSize;
+    
+    return true;
 }
 
 Engine::~Engine() {
@@ -433,6 +481,12 @@ void Engine::audioDeviceAboutToStart(juce::AudioIODevice* device) {
     
     DEBUG_PRINT("Engine: Device starting - sample rate: " << sampleRate << "Hz, buffer: " << currentBufferSize);
     
+    // Prepare master track
+    if (masterTrack) {
+        masterTrack->prepareToPlay(sampleRate, currentBufferSize);
+    }
+    
+    // Prepare all composition tracks
     if (currentComposition) {
         for (auto& track : currentComposition->tracks) {
             if (track) {
