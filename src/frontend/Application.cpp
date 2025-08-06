@@ -44,6 +44,10 @@ void SetMinWindowSize(HWND hwnd, int minWidth, int minHeight)
 namespace fs = std::filesystem;
 
 Application::Application() {
+    // Constructor is now empty - initialization moved to initialise()
+}
+
+void Application::initialise(const juce::String& commandLine) {
 #ifdef _WIN32
     // Get executable path on Windows
     char path[MAX_PATH];
@@ -62,22 +66,24 @@ Application::Application() {
 
     engine.newComposition("untitled");
     engine.addTrack("Master");
+    
+    // Note: Engine sample rate will be set automatically when audio device starts
 
     running = ui->isRunning();
 
     loadComponents();
 
     ui->forceUpdate();
+    
+    // TEST: Auto-load Bitspeek to test window reopening behavior
+    // testVSTLoading();
 }
 
-Application::~Application() {
-    // Unload all plugins before destroying the application
+Application::~Application() {}
+
+void Application::shutdown() {
     unloadAllPlugins();
-    
-    // Give some time for cleanup
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    
-    // Destroy JUCE components and handle any cleanup here
 }
 
 void Application::update() {
@@ -105,10 +111,8 @@ void Application::update() {
         rebuildUI();
     }
 
-    // (shouldForceUpdate) ? ui->forceUpdate(windowView) : ui->update(windowView);
     ui->forceUpdate(windowView);
 
-    // if (shouldForceUpdate)
     for (const auto& [name, component] : muloComponents)
         if (component)
             component->update();
@@ -120,6 +124,7 @@ void Application::update() {
 }
 
 void Application::render() {
+    // Test: Add back UI rendering to see what specifically breaks VST windows
     if (ui->windowShouldUpdate()) {
         window.clear(sf::Color::Black);
         ui->render();
@@ -128,9 +133,6 @@ void Application::render() {
 }
 
 void Application::handleEvents() {
-    // handle events of all muloComponents
-    // they will set shouldForceUpdate
-    // through their reference to application
     for (auto& component : muloComponents)
         shouldForceUpdate |= component.second->handleEvents();
 
@@ -142,6 +144,39 @@ void Application::handleEvents() {
     if (pendingFullscreenToggle) {
         toggleFullscreen();
         pendingFullscreenToggle = false;
+    }
+
+    // Process pending VST effect operations in main thread context
+    if (hasPendingEffect) {
+        Track* selectedTrack = getSelectedTrackPtr();
+        if (selectedTrack) {
+            Effect* effect = selectedTrack->addEffect(pendingEffectPath);
+            if (effect) {
+                effect->openWindow();
+            } else {
+                std::cout << "Failed to load effect: " << pendingEffectPath << std::endl;
+            }
+        } else {
+            std::cout << "No selected track for effect loading" << std::endl;
+        }
+        hasPendingEffect = false;
+        pendingEffectPath.clear();
+    }
+
+    if (hasPendingEffectWindow) {
+        Track* selectedTrack = getSelectedTrackPtr();
+        if (selectedTrack) {
+            auto& effects = selectedTrack->getEffects();
+            if (pendingEffectWindowIndex < effects.size()) {
+                effects[pendingEffectWindowIndex]->openWindow();
+            } else {
+                std::cout << "Invalid effect index: " << pendingEffectWindowIndex << std::endl;
+            }
+        } else {
+            std::cout << "No selected track for effect window opening" << std::endl;
+        }
+        hasPendingEffectWindow = false;
+        pendingEffectWindowIndex = SIZE_MAX;
     }
 }
 
@@ -169,7 +204,6 @@ void Application::initUIResources() {
         fs::path exeFont = fs::path(exeDirectory) / "assets" / "fonts" / filename;
         if (fs::exists(exeFont)) return exeFont.string();
 
-        // Not found
         return "";
     };
 
@@ -207,7 +241,13 @@ void Application::createWindow() {
     minWindowSize.y = 600;
 
     sf::ContextSettings settings;
-    settings.antiAliasingLevel = 8;
+    // CRITICAL: Try to minimize OpenGL context to avoid conflict with JUCE VST windows
+    settings.antiAliasingLevel = 0;  // Disable anti-aliasing
+    settings.depthBits = 0;          // No depth buffer  
+    settings.stencilBits = 0;        // No stencil buffer
+    settings.majorVersion = 1;       // Use minimal OpenGL version
+    settings.minorVersion = 0;
+    settings.attributeFlags = sf::ContextSettings::Default;
 
     windowView.setSize({ (float)screenResolution.size.x / 2, (float)screenResolution.size.y / 2 });
     windowView.setCenter({ (float)screenResolution.size.x / 2.f, (float)screenResolution.size.y / 2.f });
@@ -289,7 +329,6 @@ void Application::loadComponents() {
 
 void Application::rebuildUI() {
     unloadAllPlugins();
-    // Clear everything
     muloComponents.clear();
 
     applyTheme(resources, uiState.selectedTheme);

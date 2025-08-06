@@ -1,78 +1,100 @@
 #include "Effect.hpp"
+#include "VSTPluginManager.hpp"
 #include "../DebugConfig.hpp"
+#include <thread>
+#include <chrono>
+#include <filesystem>
+#include <algorithm>
 
-// VSTEditorComponent Implementation
-VSTEditorComponent::VSTEditorComponent(std::unique_ptr<juce::AudioProcessorEditor> editor)
-    : vstEditor(std::move(editor)) {
-    if (vstEditor) {
-        addAndMakeVisible(vstEditor.get());
-        int width = vstEditor->getWidth();
-        int height = vstEditor->getHeight();
-        setSize(width, height);
-        vstEditor->setBounds(0, 0, width, height);
-        DEBUG_PRINT("VSTEditorComponent created with size: " << width << "x" << height);
-    }
-}
+// Protect against Windows min/max macros
+#ifdef _WIN32
+#undef max
+#undef min
+#endif
 
-VSTEditorComponent::~VSTEditorComponent() {
-    if (vstEditor) {
-        removeChildComponent(vstEditor.get());
-    }
-}
-
-void VSTEditorComponent::paint(juce::Graphics& g) {
-    g.fillAll(juce::Colours::black);
-}
-
-void VSTEditorComponent::resized() {
-    if (vstEditor) {
-        // Make the VST editor fill the entire component
-        vstEditor->setBounds(getLocalBounds());
-        DEBUG_PRINT("VSTEditorComponent resized to: " << getWidth() << "x" << getHeight());
-    }
-}
-
-void VSTEditorComponent::parentHierarchyChanged() {
-    if (vstEditor) {
-        vstEditor->repaint();
-    }
-}
-
-// VSTPluginWindow Implementation
-VSTPluginWindow::VSTPluginWindow(const juce::String& name, Effect* parentEffect)
-    : juce::DocumentWindow(name, juce::Colours::darkgrey, juce::DocumentWindow::closeButton), 
-      effect(parentEffect) {
+// VSTEditorWindow Implementation
+VSTEditorWindow::VSTEditorWindow(const juce::String& name, juce::AudioProcessor* processor, std::function<void()> onClose)
+    : juce::DocumentWindow(name, juce::Colours::lightgrey, juce::DocumentWindow::allButtons)
+    , vstProcessor(processor)
+    , closeCallback(onClose)
+{
+    // Platform-specific window setup
+#ifdef _WIN32
     setUsingNativeTitleBar(true);
-    setDropShadowEnabled(false);
-    setResizable(false, false);
-}
-
-VSTPluginWindow::~VSTPluginWindow() {
-    // Proper cleanup to avoid X11 errors
-    setContentOwned(nullptr, false);
-    clearContentComponent();
-}
-
-void VSTPluginWindow::closeButtonPressed() {
-    setVisible(false);
-    if (effect) {
-        effect->closeWindow();
+#elif defined(__APPLE__)
+    setUsingNativeTitleBar(true);
+#else
+    // On Linux, native title bar might cause issues with some VST plugins
+    setUsingNativeTitleBar(false);
+#endif
+    
+    if (processor && processor->hasEditor()) {
+        // CRITICAL: Ensure we're on the message thread
+        if (!juce::MessageManager::getInstance()->isThisTheMessageThread()) {
+            std::cout << "ERROR: Not on message thread! VST editor will fail!" << std::endl;
+            return;
+        }
+        
+        // CRITICAL: Ensure plugin is properly prepared before creating editor
+        // Note: Don't call prepareToPlay here - it should already be called by Track::addEffect
+        // processor->prepareToPlay(48000.0, 512);
+        
+        // CRITICAL: Some VSTs require being activated before editor creation
+        processor->setProcessingPrecision(juce::AudioProcessor::singlePrecision);
+        
+        auto* editor = processor->createEditor();
+        if (editor) {
+            // CRITICAL: Set content BEFORE making window visible
+            setContentOwned(editor, true);
+            
+            // CRITICAL: Size window to editor dimensions EXACTLY
+            int editorWidth = editor->getWidth();
+            int editorHeight = editor->getHeight();
+            
+            // Ensure minimum size for usability
+            editorWidth = juce::jmax(editorWidth, 300);
+            editorHeight = juce::jmax(editorHeight, 200);
+            
+            setSize(editorWidth, editorHeight);
+            setResizable(false, false);
+            
+            // CRITICAL: Make editor visible FIRST
+            editor->setVisible(true);
+            
+            // NOW make window visible and bring to front
+            setVisible(true);
+            toFront(true);
+            
+            DEBUG_PRINT("VST editor window setup complete (" << editorWidth << "x" << editorHeight << ")");
+            
+            // Final repaint of the entire window
+            repaint();
+        } else {
+            std::cerr << "Failed to create VST editor" << std::endl;
+        }
+    } else {
+        std::cerr << "VST has no editor or processor is null" << std::endl;
     }
 }
 
-void VSTPluginWindow::userTriedToCloseWindow() {
-    closeButtonPressed();
+VSTEditorWindow::~VSTEditorWindow() {
+    // Clean shutdown
+}
+
+void VSTEditorWindow::closeButtonPressed()
+{
+    setVisible(false);
+    if (closeCallback) {
+        closeCallback();
+    }
 }
 
 // Effect Implementation
 Effect::~Effect() {
-    // Properly destroy the window if it exists
-    if (pluginWindow) {
-        pluginWindow->setVisible(false);
-        pluginWindow->setContentOwned(nullptr, false);
-        pluginWindow->clearContentComponent();
-        pluginWindow->removeFromDesktop();
-        pluginWindow.reset();
+    // Close editor window if open - smart pointer will automatically clean up
+    if (editorWindow) {
+        editorWindow->setVisible(false);
+        editorWindow.reset();
     }
     
     // Properly release the plugin
@@ -84,6 +106,16 @@ Effect::~Effect() {
 }
 
 bool Effect::loadVST(const std::string& vstPath) {
+    // Store the VST path for later use
+    this->vstPath = vstPath;
+    
+    // Validate the VST file using cross-platform manager
+    auto& vstManager = VSTPluginManager::getInstance();
+    if (!vstManager.isValidVSTFile(vstPath)) {
+        std::cerr << "Invalid or unsupported VST file: " << vstPath << std::endl;
+        return false;
+    }
+    
     // Create plugin format manager and register VST3 format
     static juce::AudioPluginFormatManager formatManager;
     static bool formatsRegistered = false;
@@ -91,6 +123,7 @@ bool Effect::loadVST(const std::string& vstPath) {
     if (!formatsRegistered) {
         formatManager.addDefaultFormats();
         formatsRegistered = true;
+        DEBUG_PRINT("Registered JUCE plugin formats");
     }
     
     // Create plugin description from file
@@ -104,7 +137,12 @@ bool Effect::loadVST(const std::string& vstPath) {
     juce::OwnedArray<juce::PluginDescription> descriptions;
     
     for (auto* format : formatManager.getFormats()) {
+        DEBUG_PRINT("Trying format: " << format->getName().toStdString());
         format->findAllTypesForFile(descriptions, vstFile.getFullPathName());
+        if (!descriptions.isEmpty()) {
+            DEBUG_PRINT("Found " << descriptions.size() << " plugin(s) using format: " << format->getName().toStdString());
+            break;
+        }
     }
     
     if (descriptions.isEmpty()) {
@@ -114,6 +152,8 @@ bool Effect::loadVST(const std::string& vstPath) {
     
     // Use the first description found
     auto* description = descriptions[0];
+    DEBUG_PRINT("Loading plugin: " << description->name.toStdString() 
+              << " (Format: " << description->pluginFormatName.toStdString() << ")");
     
     // Create the plugin instance - use device sample rate and buffer size (will be set in prepareToPlay)
     juce::String errorMessage;
@@ -186,136 +226,137 @@ void Effect::processAudio(juce::AudioBuffer<float>& buffer) {
         return;
     }
     
-    // Simple direct processing - no channel conversion for now
-    juce::MidiBuffer midiBuffer;
-    plugin->processBlock(buffer, midiBuffer);
+    try {
+        // Safety checks before processing
+        if (buffer.getNumChannels() == 0 || buffer.getNumSamples() == 0) {
+            DEBUG_PRINT("Warning: Empty buffer passed to VST '" << name << "'");
+            return;
+        }
+        
+        // Check if plugin expects different channel configuration
+        int pluginInputChannels = plugin->getTotalNumInputChannels();
+        int pluginOutputChannels = plugin->getTotalNumOutputChannels();
+        int bufferChannels = buffer.getNumChannels();
+        
+        // if (pluginInputChannels > bufferChannels) {
+        //     DEBUG_PRINT("Warning: VST '" << name << "' expects " << pluginInputChannels 
+        //                << " input channels but buffer has " << bufferChannels);
+        // }
+        
+        // Create a properly sized buffer if needed
+        juce::AudioBuffer<float> processBuffer;
+        if (pluginOutputChannels != bufferChannels || pluginInputChannels != bufferChannels) {
+            // Create buffer matching plugin requirements
+            int maxChannels = (std::max)({pluginInputChannels, pluginOutputChannels, bufferChannels});
+            processBuffer.setSize(maxChannels, buffer.getNumSamples());
+            processBuffer.clear();
+            
+            // Copy input data
+            for (int ch = 0; ch < (std::min)(bufferChannels, pluginInputChannels); ++ch) {
+                processBuffer.copyFrom(ch, 0, buffer, ch, 0, buffer.getNumSamples());
+            }
+            
+            // Process through plugin
+            juce::MidiBuffer midiBuffer;
+            plugin->processBlock(processBuffer, midiBuffer);
+            
+            // Copy output back
+            for (int ch = 0; ch < (std::min)(bufferChannels, pluginOutputChannels); ++ch) {
+                buffer.copyFrom(ch, 0, processBuffer, ch, 0, buffer.getNumSamples());
+            }
+        } else {
+            // Direct processing - channels match
+            juce::MidiBuffer midiBuffer;
+            plugin->processBlock(buffer, midiBuffer);
+        }
+        
+    } catch (const std::exception& e) {
+        std::cerr << "ERROR: VST '" << name << "' crashed during audio processing: " << e.what() << std::endl;
+        isEnabled = false; // Disable the crashing effect
+    } catch (...) {
+        std::cerr << "ERROR: VST '" << name << "' crashed during audio processing (unknown exception)" << std::endl;
+        isEnabled = false; // Disable the crashing effect
+    }
 }
 
 void Effect::openWindow() {
-    if (!plugin) {
+    if (!plugin || !hasEditorCached) {
+        std::cout << "Cannot open window - plugin: " << (plugin ? "OK" : "NULL") 
+                  << ", hasEditor: " << (hasEditorCached ? "YES" : "NO") << std::endl;
         return;
     }
     
-    // Use the cached value as the authoritative source
-    if (!hasEditorCached) {
-        return;
-    }
-    
-    if (pluginWindow) {
-        // Simply show the existing window
-        pluginWindow->setVisible(true);
-        pluginWindow->toFront(true);
+    // Check if window already exists
+    if (editorWindow) {
+        if (!editorWindow->isVisible()) {
+            editorWindow->setVisible(true);
+            editorWindow->toFront(true);
+        } else {
+            editorWindow->toFront(true);
+        }
         return;
     }
     
     // Ensure we're on the message thread for GUI operations
     if (!juce::MessageManager::getInstance()->isThisTheMessageThread()) {
+        std::cout << "Not on message thread, dispatching to main thread" << std::endl;
         juce::MessageManager::callAsync([this]() {
-            openWindow();
+            openWindow(); // Call recursively on main thread
         });
         return;
     }
     
-    try {
-        // Create the VST editor
-        auto vstEditor = plugin->createEditor();
-        if (!vstEditor) {
-            return;
+    // Create new editor window with close callback to hide (not destroy)
+    editorWindow = std::make_unique<VSTEditorWindow>(juce::String(getName()), plugin.get(), [this]() {
+        // Just hide the window, don't destroy it
+        if (editorWindow) {
+            editorWindow->setVisible(false);
         }
-        
-        // Get the proper size from the VST editor
-        int editorWidth = vstEditor->getWidth();
-        int editorHeight = vstEditor->getHeight();
-        
-        // Some VST plugins don't report proper initial size, so we need to handle this
-        if (editorWidth <= 0 || editorHeight <= 0) {
-            editorWidth = 400;  // Fallback width
-            editorHeight = 300; // Fallback height
-            vstEditor->setSize(editorWidth, editorHeight);
-        }
-        
-        // Wrap editor in our custom component - createEditor returns a raw pointer so we need to wrap it
-        std::unique_ptr<juce::AudioProcessorEditor> editorPtr(vstEditor);
-        auto editorComponent = std::make_unique<VSTEditorComponent>(std::move(editorPtr));
-        
-        // Create our custom DocumentWindow for better Linux compatibility and close handling
-        pluginWindow = std::make_unique<VSTPluginWindow>(juce::String(getName()), this);
-        
-        // Configure the window and set content
-        pluginWindow->setContentOwned(editorComponent.release(), true);
-        
-        // Set the window to match the VST editor size exactly
-        pluginWindow->setSize(editorWidth, editorHeight);
-        
-        // Center the window first
-        pluginWindow->centreWithSize(editorWidth, editorHeight);
-        
-        // Show the window
-        pluginWindow->setVisible(true);
-        pluginWindow->toFront(true);
-        
-    }
-    catch (const std::exception& e) {
-        std::cerr << "Exception while opening VST window for '" << getName() << "': " << e.what() << std::endl;
-        if (pluginWindow) {
-            pluginWindow.reset();
-        }
-    }
-    catch (...) {
-        std::cerr << "Unknown exception while opening VST window for '" << getName() << "'" << std::endl;
-        if (pluginWindow) {
-            pluginWindow.reset();
-        }
-    }
-}
-
-void Effect::closeWindow() {
-    if (!pluginWindow) {
-        return; // No window to close
-    }
+    });
     
-    try {
-        // Instead of destroying the window completely, just hide it
-        // This prevents VST3 plugin corruption issues
-        pluginWindow->setVisible(false);
-        
-        // Note: We don't reset the window pointer - we keep it for reuse
-        // This prevents the VST3 plugin editor corruption that causes crashes
-    }
-    catch (const std::exception& e) {
-        std::cerr << "Exception while hiding VST window for '" << getName() << "': " << e.what() << std::endl;
-    }
-    catch (...) {
-        std::cerr << "Unknown exception while hiding VST window for '" << getName() << "'" << std::endl;
-    }
-}
-
-bool Effect::hasWindow() const {
-    return plugin && hasEditorCached;
+    std::cout << "VST editor window created successfully!" << std::endl;
 }
 
 void Effect::setParameter(int index, float value) {
     if (!plugin) return;
     
     // Fall back to deprecated method 
+#ifdef _MSC_VER
+    #pragma warning(push)
+    #pragma warning(disable: 4996)
+#else
     #pragma GCC diagnostic push
     #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
     if (index >= 0 && index < plugin->getNumParameters()) {
         plugin->setParameter(index, value);
     }
+#ifdef _MSC_VER
+    #pragma warning(pop)
+#else
     #pragma GCC diagnostic pop
+#endif
 }
 
 float Effect::getParameter(int index) const {
     if (!plugin) return 0.0f;
     
     // Fall back to deprecated method 
+#ifdef _MSC_VER
+    #pragma warning(push)
+    #pragma warning(disable: 4996)
+#else
     #pragma GCC diagnostic push
     #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
     if (index >= 0 && index < plugin->getNumParameters()) {
         return plugin->getParameter(index);
     }
+#ifdef _MSC_VER
+    #pragma warning(pop)
+#else
     #pragma GCC diagnostic pop
+#endif
     
     return 0.0f;
 }
@@ -324,8 +365,17 @@ int Effect::getNumParameters() const {
     if (!plugin) return 0;
     
     // Fall back to deprecated method 
+#ifdef _MSC_VER
+    #pragma warning(push)
+    #pragma warning(disable: 4996)
+#else
     #pragma GCC diagnostic push
     #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
     return plugin->getNumParameters();
+#ifdef _MSC_VER
+    #pragma warning(pop)
+#else
     #pragma GCC diagnostic pop
+#endif
 }

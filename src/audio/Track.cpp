@@ -1,10 +1,10 @@
 
 #include "Track.hpp"
 #include "../DebugConfig.hpp"
-#include "../DebugConfig.hpp"
+#include <juce_dsp/juce_dsp.h>
 
 Track::Track(juce::AudioFormatManager& fm) : formatManager(fm) {}
-Track::~Track() {} // unique_ptr handles referenceClip deletion
+Track::~Track() {}
 
 void Track::setName(const std::string& n) { name = n; }
 std::string Track::getName() const { return name; }
@@ -64,22 +64,71 @@ void Track::process(double playheadSeconds,
         return;
     }
 
-    juce::int64 sourceFileStartSample = static_cast<juce::int64>((active->offset + readStartTimeInClip) * reader->sampleRate);
-    juce::int64 sourceFileEndSample = static_cast<juce::int64>((active->offset + readEndTimeInClip) * reader->sampleRate);
-    juce::int64 numSamplesToRead = sourceFileEndSample - sourceFileStartSample;
+    double sourceSampleRate = reader->sampleRate;
+    juce::int64 sourceFileStartSample = static_cast<juce::int64>((active->offset + readStartTimeInClip) * sourceSampleRate);
+    juce::int64 sourceFileEndSample = static_cast<juce::int64>((active->offset + readEndTimeInClip) * sourceSampleRate);
+    juce::int64 numSourceSamplesToRead = sourceFileEndSample - sourceFileStartSample;
 
     juce::int64 outputBufferStartSample = static_cast<juce::int64>(juce::jmax(0.0, (active->startTime - blockStartTimeSeconds) * sampleRate));
-    juce::int64 numSamplesToWrite = juce::jmin((juce::int64)numSamples - outputBufferStartSample, numSamplesToRead);
     
-    if (numSamplesToRead <= 0 || numSamplesToWrite <= 0) {
+    if (numSourceSamplesToRead <= 0) {
         return;
     }
     
     outputBufferStartSample = juce::jmax((juce::int64)0, outputBufferStartSample);
 
-    juce::AudioBuffer<float> tempClipBuf(reader->numChannels, (int)numSamplesToRead);
+    juce::AudioBuffer<float> tempClipBuf(reader->numChannels, (int)numSourceSamplesToRead);
     tempClipBuf.clear();
-    reader->read(&tempClipBuf, 0, (int)numSamplesToRead, sourceFileStartSample, true, true);
+    reader->read(&tempClipBuf, 0, (int)numSourceSamplesToRead, sourceFileStartSample, true, true);
+
+    if (std::abs(sourceSampleRate - sampleRate) > 0.1) {
+        double ratio = sampleRate / sourceSampleRate;
+        int numOutputSamples = static_cast<int>(numSourceSamplesToRead * ratio + 0.5);
+        
+        juce::AudioBuffer<float> resampledBuffer(reader->numChannels, numOutputSamples);
+        resampledBuffer.clear();
+        
+        for (int ch = 0; ch < tempClipBuf.getNumChannels(); ++ch) {
+            const float* inputData = tempClipBuf.getReadPointer(ch);
+            float* outputData = resampledBuffer.getWritePointer(ch);
+            
+            for (int i = 0; i < numOutputSamples; ++i) {
+                double sourcePos = (double)i / ratio;
+                int baseIndex = (int)sourcePos;
+                double fraction = sourcePos - baseIndex;
+                
+                float sample = 0.0f;
+                
+                if (baseIndex >= 0 && baseIndex < numSourceSamplesToRead - 1) {
+                    float y0 = inputData[baseIndex];
+                    float y1 = inputData[baseIndex + 1];
+                    
+                    double t = fraction;
+                    double t2 = t * t;
+                    double t3 = t2 * t;
+                    
+                    double h00 = 2.0 * t3 - 3.0 * t2 + 1.0;
+                    double h01 = -2.0 * t3 + 3.0 * t2;
+                    
+                    sample = (float)(h00 * y0 + h01 * y1);
+                    
+                } else if (baseIndex >= 0 && baseIndex < numSourceSamplesToRead) {
+                    sample = inputData[baseIndex];
+                }
+                
+                outputData[i] = sample;
+            }
+        }
+        
+        tempClipBuf = std::move(resampledBuffer);
+        numSourceSamplesToRead = numOutputSamples;
+    }
+
+    juce::int64 numSamplesToWrite = juce::jmin((juce::int64)numSamples - outputBufferStartSample, numSourceSamplesToRead);
+    
+    if (numSamplesToWrite <= 0) {
+        return;
+    }
 
     float gain = juce::Decibels::decibelsToGain(volumeDb) * active->volume;
 
@@ -93,16 +142,12 @@ void Track::process(double playheadSeconds,
                        0, (int)numSamplesToWrite,
                        gain * panGain);
     }
-    
-    // Don't apply effects here - they should be applied after mixing
-    // processEffects(output);
 }
 
 void Track::prepareToPlay(double sampleRate, int bufferSize) {
     currentSampleRate = sampleRate;
     currentBufferSize = bufferSize;
     
-    // Prepare all existing effects with new audio settings
     for (auto& effect : effects) {
         if (effect) {
             effect->prepareToPlay(sampleRate, bufferSize);
@@ -121,17 +166,12 @@ Effect* Track::addEffect(const std::string& vstPath) {
         return nullptr;
     }
     
-    // Prepare the effect with current audio settings
     effect->prepareToPlay(currentSampleRate, currentBufferSize);
     
     Effect* effectPtr = effect.get();
     effects.push_back(std::move(effect));
     
-    // Update all effect indices after adding
     updateEffectIndices();
-    
-    // Note: VST window opening is now handled by the UI components (FXRack, etc.)
-    // This prevents conflicts between auto-opening and user-triggered opening
     
     DEBUG_PRINT("Added effect '" << effectPtr->getName() << "' to track '" << name << "'");
     return effectPtr;
@@ -181,7 +221,15 @@ void Track::processEffects(juce::AudioBuffer<float>& buffer) {
     // Apply each effect in the chain sequentially
     for (auto& effect : effects) {
         if (effect && effect->enabled()) {
-            effect->processAudio(buffer);
+            try {
+                effect->processAudio(buffer);
+            } catch (const std::exception& e) {
+                std::cerr << "ERROR: Effect '" << effect->getName() << "' on track '" << name << "' crashed: " << e.what() << std::endl;
+                effect->disable(); // Disable crashing effect
+            } catch (...) {
+                std::cerr << "ERROR: Effect '" << effect->getName() << "' on track '" << name << "' crashed (unknown exception)" << std::endl;
+                effect->disable(); // Disable crashing effect
+            }
         }
     }
 }

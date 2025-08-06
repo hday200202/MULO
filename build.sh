@@ -59,12 +59,24 @@ build_main() {
     echo "Platform detected: $PLATFORM"
     echo "Configuring build ($BUILD_TYPE)..."
 
-    # Use Ninja if available for faster builds, otherwise use default generator
-    if command -v ninja &> /dev/null; then
-        echo "Using Ninja generator for faster builds"
-        cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DCMAKE_LINKER=lld -G Ninja
+    # Platform-specific CMake configuration
+    if [ "$PLATFORM" = "Windows" ]; then
+        # Force 64-bit build on Windows using Visual Studio generator
+        if command -v ninja &> /dev/null; then
+            echo "Using Ninja generator for faster builds"
+            cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=$BUILD_TYPE -A x64 -G Ninja
+        else
+            echo "Using Visual Studio generator with 64-bit architecture"
+            cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=$BUILD_TYPE -A x64
+        fi
     else
-        cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=$BUILD_TYPE
+        # Use Ninja if available for faster builds on Linux/Mac
+        if command -v ninja &> /dev/null; then
+            echo "Using Ninja generator for faster builds"
+            cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DCMAKE_LINKER=lld -G Ninja
+        else
+            cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=$BUILD_TYPE
+        fi
     fi
 
     echo "Building main project ($BUILD_TYPE)..."
@@ -80,6 +92,7 @@ elif [ $DO_CLEAN -eq 1 ] && [ $# -eq 1 ]; then
     # Only clean was requested
     echo "Cleaning build directory..."
     rm -rf "$BUILD_DIR"
+    rm -rf "VSTEditor/build"
     exit 0
 else
     # Build only main project

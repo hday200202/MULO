@@ -38,6 +38,10 @@ endif()
 # Enable JUCE modal loops so FileChooser::browseForFileToOpen() is available
 add_compile_definitions(JUCE_MODAL_LOOPS_PERMITTED=1)
 
+# Enable VST3 plugin support for extensions
+set(JUCE_PLUGINHOST_VST3 ON CACHE BOOL "Enable VST3 plugin support" FORCE)
+add_compile_definitions(JUCE_PLUGINHOST_VST3=1)
+
 # SFML Setup
 set(SFML_INCLUDE_DIRS "")
 set(SFML_FOUND FALSE)
@@ -104,6 +108,7 @@ set(ENGINE_SOURCES
     "${CMAKE_SOURCE_DIR}/../src/audio/AudioClip.cpp"
     "${CMAKE_SOURCE_DIR}/../src/audio/Composition.cpp"
     "${CMAKE_SOURCE_DIR}/../src/audio/Track.cpp"
+    "${CMAKE_SOURCE_DIR}/../src/audio/Effect.cpp"
     "${CMAKE_SOURCE_DIR}/../src/frontend/Application.cpp"
     "${CMAKE_SOURCE_DIR}/../src/frontend/FileTree.cpp"
 )

@@ -61,8 +61,8 @@ void SettingsComponent::update() {
     } 
     else if ((!app->uiState.settingsShown && window.isOpen()) || pendingClose) {
         hide();
-        pendingClose = false; // Reset immediately after hide
-        app->uiState.settingsShown = false; // ensure settingsShown is false
+        pendingClose = false;
+        app->uiState.settingsShown = false;
     }
 
     if (window.isOpen() && ui) {
@@ -108,11 +108,6 @@ Container* SettingsComponent::buildLayout() {
     auto layout = column(
         Modifier(),
     contains{
-        // row(Modifier().setfixedHeight(32), contains{
-        //     spacer(Modifier().setfixedWidth(8).align(Align::LEFT)),
-        //     text(Modifier().setfixedHeight(24).setColor(app->resources.activeTheme->primary_text_color).align(Align::CENTER_Y | Align::LEFT), "Settings", app->resources.dejavuSansFont),
-        // }),
-
         scrollableColumn(
             Modifier().setColor(app->resources.activeTheme->foreground_color),
             contains{

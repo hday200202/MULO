@@ -5,6 +5,7 @@
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_audio_basics/juce_audio_basics.h>
+#include <juce_dsp/juce_dsp.h>
 #include <juce_gui_extra/juce_gui_extra.h>
 
 #include "AudioClip.hpp"
@@ -51,6 +52,15 @@ public:
     int getEffectCount() const { return effects.size(); }
 
     void processEffects(juce::AudioBuffer<float>& buffer);
+    
+    // Update all effect editors - call this from Application::update()
+    void updateEffectEditors() {
+        for (auto& effect : effects) {
+            if (effect) {
+                effect->updateEditor();
+            }
+        }
+    }
 
     bool moveEffect(int fromIndex, int toIndex);
     void clearEffects();

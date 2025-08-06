@@ -30,15 +30,10 @@ private:
     float deltaTime = 0.0f;
     bool firstFrame = true;
 
-    // Cached measure lines optimization
     std::vector<std::shared_ptr<sf::Drawable>> cachedMeasureLines;
     float lastMeasureWidth = -1.f;
     float lastScrollOffset = -1.f;
     sf::Vector2f lastRowSize = {-1.f, -1.f};
-
-    // Removed unused cached clip geometry members to reduce class size
-    // std::unordered_map<std::string, std::vector<std::shared_ptr<sf::Drawable>>> cachedClipGeometry;
-    // ... and the rest of the clip cache variables
 
     Row* masterTrackElement = nullptr;
     Button* muteMasterButton = nullptr;
@@ -54,7 +49,6 @@ private:
     void rebuildUIFromEngine();
     void syncSlidersToEngine();
     
-    // Unused caching functions are kept as is, as they are not part of the core logic being changed.
     const std::vector<std::shared_ptr<sf::Drawable>>& getCachedMeasureLines(
         float measureWidth, float scrollOffset, const sf::Vector2f& rowSize);
     
@@ -64,11 +58,9 @@ private:
         UIResources* resources, UIState* uiState, const AudioClip* selectedClip,
         const std::string& currentTrackName, const std::string& selectedTrackName);
     
-    // Pan conversion helpers (same as MixerComponent for consistency)
     float enginePanToSlider(float enginePan) const { return (enginePan + 1.0f) * 0.5f; }
     float sliderPanToEngine(float sliderPan) const { return (sliderPan * 2.0f) - 1.0f; }
 
-    // Volume conversion helpers
     static float decibelsToFloat(float db) {
         return std::pow(10.0f, db / 20.0f);
     }
@@ -199,12 +191,14 @@ bool TimelineComponent::handleEvents() {
         wasVisible = false;
     }
 
-    if (muteMasterButton && muteMasterButton->isClicked()) {
+    if (muteMasterButton && muteMasterButton->isClicked() && app->getWindow().hasFocus()) {
         auto* masterTrack = app->getMasterTrack();
         masterTrack->toggleMute();
         muteMasterButton->m_modifier.setColor(
             masterTrack->isMuted() ? app->resources.activeTheme->mute_color : app->resources.activeTheme->not_muted_color
         );
+        // Reset the button's clicked state to prevent rapid toggling
+        muteMasterButton->setClicked(false);
         return true;
     }
     
@@ -262,11 +256,13 @@ bool TimelineComponent::handleEvents() {
         }
         
         if (auto muteBtnIt = trackMuteButtons.find(name); 
-            muteBtnIt != trackMuteButtons.end() && muteBtnIt->second && muteBtnIt->second->isClicked()) {
+            muteBtnIt != trackMuteButtons.end() && muteBtnIt->second && muteBtnIt->second->isClicked() && app->getWindow().hasFocus()) {
             t->toggleMute();
             muteBtnIt->second->m_modifier.setColor(
                 t->isMuted() ? app->resources.activeTheme->mute_color : app->resources.activeTheme->not_muted_color
             );
+            // Reset the button's clicked state to prevent rapid toggling
+            muteBtnIt->second->setClicked(false);
             forceUpdate = true;
         }
         
@@ -289,82 +285,90 @@ bool TimelineComponent::handleEvents() {
     const bool minus = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Hyphen);
     const bool backspace = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Backspace);
 
-    if (selectedClip && backspace && !prevBackspace) {
-        for (const auto& t : allTracks) {
-            if (t->getName() != app->getSelectedTrack()) continue;
-            
-            const auto& clips = t->getClips();
-            for (size_t i = 0; i < clips.size(); ++i) {
-                const auto& clip = clips[i];
-                if (clip.startTime == selectedClip->startTime &&
-                    clip.duration == selectedClip->duration &&
-                    clip.sourceFile == selectedClip->sourceFile) {
-                    t->removeClip(static_cast<int>(i));
-                    selectedClip = nullptr;
-                    forceUpdate = true;
-                    DEBUG_PRINT("Removed selected clip from track '" << t->getName() << "'");
-                    goto done_clip_remove;
+    // Block keyboard input when window doesn't have focus
+    if (!app->getWindow().hasFocus()) {
+        prevCtrl = ctrl;
+        prevPlus = plus;
+        prevMinus = minus;
+        prevBackspace = backspace;
+    } else {
+        if (selectedClip && backspace && !prevBackspace) {
+            for (const auto& t : allTracks) {
+                if (t->getName() != app->getSelectedTrack()) continue;
+                
+                const auto& clips = t->getClips();
+                for (size_t i = 0; i < clips.size(); ++i) {
+                    const auto& clip = clips[i];
+                    if (clip.startTime == selectedClip->startTime &&
+                        clip.duration == selectedClip->duration &&
+                        clip.sourceFile == selectedClip->sourceFile) {
+                        t->removeClip(static_cast<int>(i));
+                        selectedClip = nullptr;
+                        forceUpdate = true;
+                        DEBUG_PRINT("Removed selected clip from track '" << t->getName() << "'");
+                        goto done_clip_remove;
+                    }
                 }
             }
+            done_clip_remove: ;
         }
-        done_clip_remove: ;
-    }
 
-    constexpr float zoomSpeed = 0.2f;
-    constexpr float maxZoom = 5.0f;
-    constexpr float minZoom = 0.1f;
-    
-    float newZoom = app->uiState.timelineZoomLevel;
-
-    if (ctrl && plus && !prevPlus) {
-        newZoom = std::min(maxZoom, app->uiState.timelineZoomLevel + zoomSpeed);
-    }
-    if (ctrl && minus && !prevMinus) {
-        newZoom = std::max(minZoom, app->uiState.timelineZoomLevel - zoomSpeed);
-    }
-
-    const int vertScroll = app->ui->getVerticalScrollDelta();
-    if (ctrl && vertScroll != 0) {
-        constexpr float scrollZoomSpeed = 0.1f;
-        const float zoomDelta = (vertScroll < 0) ? -scrollZoomSpeed : scrollZoomSpeed;
-        newZoom = std::clamp(app->uiState.timelineZoomLevel + zoomDelta, minZoom, maxZoom);
-    }
-    
-    if (newZoom != app->uiState.timelineZoomLevel) {
-        const float currentOffset = timelineOffset;
-        const float oldZoom = app->uiState.timelineZoomLevel;
-        const sf::Vector2f mousePos = app->ui->getMousePosition();
+        constexpr float zoomSpeed = 0.2f;
+        constexpr float maxZoom = 5.0f;
+        constexpr float minZoom = 0.1f;
         
-        sf::Vector2f timelineRowPos(0.f, 0.f);
-        if (!allTracks.empty()) {
-            const std::string rowKey = allTracks[0]->getName() + "_scrollable_row";
-            if (auto rowIt = containers.find(rowKey); rowIt != containers.end() && rowIt->second) {
-                timelineRowPos = rowIt->second->getPosition();
+        float newZoom = app->uiState.timelineZoomLevel;
+
+        if (ctrl && plus && !prevPlus) {
+            newZoom = std::min(maxZoom, app->uiState.timelineZoomLevel + zoomSpeed);
+        }
+        if (ctrl && minus && !prevMinus) {
+            newZoom = std::max(minZoom, app->uiState.timelineZoomLevel - zoomSpeed);
+        }
+
+        const int vertScroll = app->ui->getVerticalScrollDelta();
+        if (ctrl && vertScroll != 0) {
+            constexpr float scrollZoomSpeed = 0.1f;
+            const float zoomDelta = (vertScroll < 0) ? -scrollZoomSpeed : scrollZoomSpeed;
+            newZoom = std::clamp(app->uiState.timelineZoomLevel + zoomDelta, minZoom, maxZoom);
+        }
+        
+        if (newZoom != app->uiState.timelineZoomLevel) {
+            const float currentOffset = timelineOffset;
+            const float oldZoom = app->uiState.timelineZoomLevel;
+            const sf::Vector2f mousePos = app->ui->getMousePosition();
+            
+            sf::Vector2f timelineRowPos(0.f, 0.f);
+            if (!allTracks.empty()) {
+                const std::string rowKey = allTracks[0]->getName() + "_scrollable_row";
+                if (auto rowIt = containers.find(rowKey); rowIt != containers.end() && rowIt->second) {
+                    timelineRowPos = rowIt->second->getPosition();
+                }
             }
-        }
-        
-        const float mouseXInTimeline = mousePos.x - timelineRowPos.x;
-        
-        app->uiState.timelineZoomLevel = newZoom;
-        
-        const float zoomRatio = newZoom / oldZoom;
-        
-        timelineOffset = mouseXInTimeline - (mouseXInTimeline - currentOffset) * zoomRatio;
-        
-        for (const auto& track : allTracks) {
-            const std::string rowKey = track->getName() + "_scrollable_row";
-            if (auto rowIt = containers.find(rowKey); rowIt != containers.end() && rowIt->second) {
-                auto* scrollableRow = static_cast<ScrollableRow*>(rowIt->second);
-                scrollableRow->setOffset(std::min(0.f, timelineOffset));
+            
+            const float mouseXInTimeline = mousePos.x - timelineRowPos.x;
+            
+            app->uiState.timelineZoomLevel = newZoom;
+            
+            const float zoomRatio = newZoom / oldZoom;
+            
+            timelineOffset = mouseXInTimeline - (mouseXInTimeline - currentOffset) * zoomRatio;
+            
+            for (const auto& track : allTracks) {
+                const std::string rowKey = track->getName() + "_scrollable_row";
+                if (auto rowIt = containers.find(rowKey); rowIt != containers.end() && rowIt->second) {
+                    auto* scrollableRow = static_cast<ScrollableRow*>(rowIt->second);
+                    scrollableRow->setOffset(std::min(0.f, timelineOffset));
+                }
             }
+            forceUpdate = true;
         }
-        forceUpdate = true;
-    }
 
-    prevCtrl = ctrl;
-    prevPlus = plus;
-    prevMinus = minus;
-    prevBackspace = backspace;
+        prevCtrl = ctrl;
+        prevPlus = plus;
+        prevMinus = minus;
+        prevBackspace = backspace;
+    }
 
     app->ui->resetScrollDeltas();
 
@@ -476,9 +480,11 @@ uilo::Row* TimelineComponent::masterTrack() {
             .setfixedHeight(96)
             .align(Align::LEFT | Align::BOTTOM)
             .onLClick([&](){
+                if (!app->getWindow().hasFocus()) return;
                 app->setSelectedTrack("Master");
             })
             .onRClick([&](){
+                if (!app->getWindow().hasFocus()) return;
                 app->setSelectedTrack("Master");
             }),
     contains{
@@ -517,6 +523,8 @@ uilo::Row* TimelineComponent::track(
 
     // Use a single lambda with a flag to handle both left and right clicks
     auto handleTrackClick = [this, trackName](bool isRightClick) {
+        if (!app->getWindow().hasFocus()) return;
+        
         if (!(sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) || sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RControl))) {
             app->setSelectedTrack(trackName);
             return;
@@ -605,9 +613,11 @@ uilo::Row* TimelineComponent::track(
             .setfixedHeight(96)
             .align(alignment)
             .onLClick([&](){
+                if (!app->getWindow().hasFocus()) return;
                 app->setSelectedTrack(trackName);
             })
             .onRClick([&](){
+                if (!app->getWindow().hasFocus()) return;
                 app->setSelectedTrack(trackName);
             }),
     contains{
@@ -647,7 +657,7 @@ void TimelineComponent::handleCustomUIElements() {
     const bool isPlaying = app->isPlaying();
     const sf::Vector2f mousePos = app->ui->getMousePosition();
 
-    if (selectedClip && backspace && !prevBackspace) {
+    if (selectedClip && backspace && !prevBackspace && app->getWindow().hasFocus()) {
         for (auto& t : allTracks) {
             if (t->getName() != currentSelectedTrack) continue;
             
@@ -742,6 +752,7 @@ void TimelineComponent::handleCustomUIElements() {
                 const sf::FloatRect clipRect({clipXPosition, 0.f}, {clipWidthPixels, trackRow->getSize().y});
                 
                 if (clipRect.contains(localMousePos)) {
+                    if (!app->getWindow().hasFocus()) continue;
                     if (!ctrlPressed && !prevCtrlPressed && sf::Mouse::isButtonPressed(sf::Mouse::Button::Left)) {
                         selectedClip = const_cast<AudioClip*>(&clipsVec[i]);
                         app->setSelectedTrack(track->getName());

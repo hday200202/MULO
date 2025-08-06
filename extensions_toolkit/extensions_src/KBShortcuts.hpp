@@ -19,7 +19,6 @@ public:
 bool KBShortcuts::handleEvents() {
     bool forceUpdate = false;
 
-    // Play/Pause
     static bool prevSpace = false;
     static bool prevF11 = false;
     bool space = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Space);

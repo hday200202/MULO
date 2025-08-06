@@ -168,13 +168,10 @@ void AppControls::init() {
 bool AppControls::handleEvents() { 
     bool forceUpdate = false;
 
-    // Check if play state changed and update button text safely
     bool currentlyPlaying = app->isPlaying();
     if (currentlyPlaying != wasPlaying) {
-        // Only try to update text if we have a valid playButton pointer
         if (playButton) {
             try {
-                // Use setText which is generally safer than getText
                 if (currentlyPlaying) {
                     playButton->setText("pause");
                 } else {
@@ -182,7 +179,6 @@ bool AppControls::handleEvents() {
                 }
                 forceUpdate = true;
             } catch (...) {
-                // If setText fails, the button might be invalid - just ignore
             }
         }
         wasPlaying = currentlyPlaying;

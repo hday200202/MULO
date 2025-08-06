@@ -8,7 +8,7 @@
 #include <iostream>
 
 #include <juce_core/juce_core.h>
-#include <nlohmann/json.hpp>
+#include <juce_gui_basics/juce_gui_basics.h>
 #include <chrono>
 #include <thread>
 
@@ -30,53 +30,50 @@ class Engine;
 struct UIResources;
 struct UIState;
 
-class Application {
+class Application : public juce::JUCEApplication {
 public:
     Column* baseContainer = nullptr;
     Row* mainContentRow = nullptr;
     bool shouldForceUpdate = false;
     bool freshRebuild = false;
+    bool openEffectWindow = false;
     std::unique_ptr<UILO> ui = nullptr;
     UIState uiState;
     UIResources resources;
 
-    Application();
+    // juce::JUCEApplication interface
+    const juce::String getApplicationName() override { return "MDAW"; }
+    const juce::String getApplicationVersion() override { return "1.0.0"; }
+    bool moreThanOneInstanceAllowed() override { return true; }
+    
+    void initialise(const juce::String& commandLine) override;
+    void shutdown() override;
 
+    Application();
     ~Application();
 
     void update();
-
     void render();
-
     void handleEvents();
-
     inline bool isRunning() const { return running; }
-
     inline Container* getComponentLayout(const std::string& componentName) { 
         if (muloComponents.find(componentName) != muloComponents.end()) 
             return muloComponents[componentName]->getLayout(); 
         return nullptr;
     }
-
     inline MULOComponent* getComponent(const std::string& componentName) {
         auto it = muloComponents.find(componentName);
         return (it != muloComponents.end()) ? it->second.get() : nullptr;
     }
-    
     inline Container* getPageBaseContainer() { return baseContainer; }
-    
     inline Row* getMainContentRow() { return mainContentRow; }
-    
     void setComponentParentContainer(const std::string& componentName, Container* parent);
 
     std::string selectDirectory();
-    
     std::string selectFile(std::initializer_list<std::string> filters);
 
     inline const sf::RenderWindow& getWindow() const { return window; }
-    
     inline void requestUIRebuild() { pendingUIRebuild = true; }
-    
     inline void requestFullscreenToggle() { pendingFullscreenToggle = true; }
 
     // Engine interface
@@ -95,45 +92,51 @@ public:
     inline void removeTrack(const std::string& name) 
     { engine.removeTrackByName(name); }
 
+    // VST Effect Management
+    inline void addEffect(const std::string& filePath) {
+        // Request deferred effect loading to be processed in main thread
+        pendingEffectPath = filePath;
+        hasPendingEffect = true;
+        std::cout << "Queued effect for loading: " << filePath << std::endl;
+    }
+    
+    inline void requestOpenEffectWindow(size_t effectIndex) {
+        // Request deferred effect window opening to be processed in main thread
+        pendingEffectWindowIndex = effectIndex;
+        hasPendingEffectWindow = true;
+        std::cout << "Queued effect window opening for index: " << effectIndex << std::endl;
+    }
+
     inline void play() { engine.play(); }
-    
     inline void pause() { engine.pause(); }
-    
     inline void setSavedPosition(double seconds) { engine.setPosition(seconds); }
-    
     inline bool isPlaying() const { return engine.isPlaying(); }
-
     inline void setBpm(float bpm) { engine.setBpm(bpm); }
-    
     inline float getBpm() const { return engine.getBpm(); }
-    
     inline double getPosition() const { return engine.getPosition(); }
-    
     inline void setPosition(double seconds) { engine.setPosition(seconds); }
-
     inline AudioClip* getReferenceClip(const std::string& trackName) 
     { return engine.getTrackByName(trackName)->getReferenceClip(); }
-
     inline void addClipToTrack(const std::string& trackName, const AudioClip& clip) 
     { engine.getTrackByName(trackName)->addClip(clip); }
-
     inline void removeClipFromTrack(const std::string& trackName, size_t index) 
     { engine.getTrackByName(trackName)->removeClip(index); }
-
     inline double getSampleRate() const { return engine.getSampleRate(); }
-    
-    inline void setSampleRate(const double newSampleRate) { engine.setSampleRate(newSampleRate); }
-    
+    inline void setSampleRate(const double newSampleRate) { 
+        // Update UI state but don't force engine - it should match device
+        uiState.sampleRate = newSampleRate;
+        uiState.saveConfig(); // Save the new sample rate to config
+        
+        // Note: Engine sample rate is determined by audio device, not forced
+        DEBUG_PRINT("Application: Sample rate preference set to " << newSampleRate << "Hz");
+    }
     // Selected Track Management
     inline void setSelectedTrack(const std::string& trackName) { engine.setSelectedTrack(trackName); }
     inline std::string getSelectedTrack() const { return engine.getSelectedTrack(); }
     inline Track* getSelectedTrackPtr() { return engine.getSelectedTrackPtr(); }
     inline bool hasSelectedTrack() const { return engine.hasSelectedTrack(); }
-    
     inline void loadComposition(const std::string& path) { engine.loadComposition(path); }
-    
     inline std::string getCurrentCompositionName() const { return engine.getCurrentCompositionName(); }
-    
     inline bool saveState(const std::string& saveDirectory) const { return engine.saveState(saveDirectory); }
 
 private:
@@ -154,6 +157,12 @@ private:
     bool pendingFullscreenToggle = false;
     bool prevCtrlShftR;
 
+    // VST Effect Management
+    std::string pendingEffectPath;
+    size_t pendingEffectWindowIndex = SIZE_MAX;
+    bool hasPendingEffect = false;
+    bool hasPendingEffectWindow = false;
+
     size_t forceUpdatePoll = 0;
 
     struct LoadedPlugin {
@@ -167,25 +176,19 @@ private:
     std::unordered_map<std::string, LoadedPlugin> loadedPlugins;
 
     void initUI();
-    
     void initUIResources();
-    
     void createWindow();
-    
     void loadComponents();
-    
     void rebuildUI();
-    
     void toggleFullscreen();
-    
     void cleanup();
     
     // Plugin loading methods
     void scanAndLoadPlugins();
-    
     bool loadPlugin(const std::string& path);
-    
     void unloadPlugin(const std::string& name);
-    
     void unloadAllPlugins();
+    
+    // VST testing
+    void testVSTLoading();
 };

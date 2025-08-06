@@ -18,68 +18,41 @@ public:
     Engine();
     ~Engine();
     
-    // Playback Control
     void play();
-    
     void pause();
-    
     void stop();
-    
     void setPosition(double seconds);
-    
     double getPosition() const;
-    
     bool isPlaying() const;
     
-    // Saved Position Management
     void setSavedPosition(double seconds);
-    
     double getSavedPosition() const;
-    
     bool hasSavedPosition() const;
     
-    // Composition Management
     void newComposition(const std::string& name = "untitled");
-    
     void loadComposition(const std::string& path);
-    
     void saveComposition(const std::string& path);
-    
     std::pair<int, int> getTimeSignature() const;
-    
     double getBpm() const;
-    
     void setBpm(double newBpm);
     
-    // Track Management
     void addTrack(const std::string& name = "", const std::string& samplePath = "");
-    
     void removeTrack(int index);
-    
     void removeTrackByName(const std::string& name);
-    
     Track* getTrack(int index);
-    
     Track* getTrackByName(const std::string& name);
-    
     std::vector<std::unique_ptr<Track>>& getAllTracks();
-    
     Track* getMasterTrack();
     
-    // Selected Track Management
     void setSelectedTrack(const std::string& trackName);
     std::string getSelectedTrack() const;
     Track* getSelectedTrackPtr();
     bool hasSelectedTrack() const;
     
-    // Project State Management
     bool saveState(const std::string& path = "untitled.mpf") const;
-    
     std::string getStateString() const;
-    
     void loadState(const std::string& state);
     
-    // Audio Device Callbacks (JUCE AudioIODeviceCallback interface)
     void audioDeviceIOCallbackWithContext(
         const float* const* inputChannelData,
         int numInputChannels,
@@ -90,22 +63,19 @@ public:
     ) override;
 
     void audioDeviceAboutToStart(juce::AudioIODevice* device) override;
-    
     void audioDeviceStopped() override;
     
     std::string getCurrentCompositionName() const;
-    
     void setCurrentCompositionName(const std::string& newName);
 
     inline double getSampleRate() const { return sampleRate; }
-    
-    inline void setSampleRate(double newSampleRate)
-    { sampleRate = newSampleRate; DEBUG_PRINT("[Engine] Sample rate set to " << newSampleRate);}
+    inline void setSampleRate(double newSampleRate) { 
+        sampleRate = newSampleRate; 
+        DEBUG_PRINT("[Engine] Sample rate set to " << newSampleRate);
+    }
 
     std::vector<float> generateWaveformPeaks(const juce::File& audioFile, float duration, float peakResolution = 0.05f);
-
     void undo();
-    
     void redo();
 
 private:
@@ -120,9 +90,7 @@ private:
     bool hasSaved = false;
 
     juce::AudioBuffer<float> tempMixBuffer;
-
     std::unique_ptr<Track> masterTrack;
-    
     std::string selectedTrackName;
 
     void processBlock(juce::AudioBuffer<float>& outputBuffer, int numSamples);

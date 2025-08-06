@@ -64,7 +64,6 @@ inline void FXRack::update() {
 inline bool FXRack::handleEvents() {
     bool forceUpdate = false;
     
-    // Only rebuild UI when track changes or effect count changes
     if (app->getSelectedTrackPtr()->getName() != selectedTrackName 
     || app->getSelectedTrackPtr()->getEffectCount() != selectedTrackEffectsSize) {
         selectedTrackName = app->getSelectedTrackPtr()->getName();
@@ -73,7 +72,6 @@ inline bool FXRack::handleEvents() {
         forceUpdate = true;
     }
 
-    // Check if we need to rebuild UI due to effect state changes
     if (needsUIRebuild) {
         rebuildUI();
         needsUIRebuild = false;
@@ -102,7 +100,6 @@ inline Row* FXRack::effectRow(const std::string& effectName, const int index) {
                 app->getSelectedTrackPtr()->getEffect(index)->disable():
                 app->getSelectedTrackPtr()->getEffect(index)->enable();
                 
-                // Trigger UI rebuild after state change
                 needsUIRebuild = true;
             })
         .align(Align::CENTER_X | Align::CENTER_Y),

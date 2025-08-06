@@ -3,17 +3,16 @@
 
 #include "MULOComponent.hpp"
 #include "FileTree.hpp"
+#include "../../src/audio/VSTPluginManager.hpp"
+#include "../../src/DebugConfig.hpp"
 
 class FileBrowserComponent : public MULOComponent {
 public:
     FileBrowserComponent();
-    
     ~FileBrowserComponent() override;
 
     void init() override;
-    
     void update() override;
-    
     bool handleEvents() override;
 
 private:
@@ -23,17 +22,11 @@ private:
     bool vstTreeNeedsRebuild = false;
     
     void buildFileTreeUI();
-    
     void buildFileTreeUIRecursive(const FileTree& tree, int indentLevel);
-    
     void buildVSTTreeUIRecursive(const FileTree& tree, int indentLevel);
-
     void toggleTreeNodeByPath(const std::string& path);
-    
     void toggleVSTTreeNodeByPath(const std::string& path);
-    
     void browseForDirectory();
-    
     void browseForVSTDirectory();
 };
 
@@ -57,16 +50,27 @@ void FileBrowserComponent::init() {
         "file_browser_scroll_column"
     );
     
-    // Load directory from UI state if available
     if (!app->uiState.fileBrowserDirectory.empty() && 
         std::filesystem::is_directory(app->uiState.fileBrowserDirectory)) {
         fileTree.setRootDirectory(app->uiState.fileBrowserDirectory);
     }
     
-    // Load VST directory from UI state if available
+    // Initialize VST directory with default if not set
     if (!app->uiState.vstDirecory.empty() && 
         std::filesystem::is_directory(app->uiState.vstDirecory)) {
         vstTree.setRootDirectory(app->uiState.vstDirecory);
+    } else {
+        // Try to set a default platform-specific VST path
+        auto& vstManager = VSTPluginManager::getInstance();
+        auto defaultPaths = vstManager.getDefaultVSTSearchPaths();
+        
+        if (!defaultPaths.empty()) {
+            std::string defaultPath = defaultPaths[0]; // Use first available path
+            vstTree.setRootDirectory(defaultPath);
+            app->uiState.vstDirecory = defaultPath;
+            app->uiState.saveConfig();
+            DEBUG_PRINT("Initialized default VST directory: " << defaultPath);
+        }
     }
     
     buildFileTreeUI();
@@ -97,7 +101,6 @@ void FileBrowserComponent::browseForDirectory() {
         fileTree.setRootDirectory(selectedDir);
         fileTreeNeedsRebuild = true;
         
-        // Save the selected directory to UI state and persist to config
         app->uiState.fileBrowserDirectory = selectedDir;
         app->uiState.saveConfig();
     }
@@ -109,9 +112,23 @@ void FileBrowserComponent::browseForVSTDirectory() {
         vstTree.setRootDirectory(selectedDir);
         vstTreeNeedsRebuild = true;
         
-        // Save the selected VST directory to UI state and persist to config
         app->uiState.vstDirecory = selectedDir;
         app->uiState.saveConfig();
+    } else {
+        // If no directory selected, try to set a default platform-specific VST path
+        auto& vstManager = VSTPluginManager::getInstance();
+        auto defaultPaths = vstManager.getDefaultVSTSearchPaths();
+        
+        if (!defaultPaths.empty()) {
+            std::string defaultPath = defaultPaths[0]; // Use first available path
+            vstTree.setRootDirectory(defaultPath);
+            vstTreeNeedsRebuild = true;
+            
+            app->uiState.vstDirecory = defaultPath;
+            app->uiState.saveConfig();
+            
+            DEBUG_PRINT("Set default VST directory: " << defaultPath);
+        }
     }
 }
 
@@ -121,7 +138,6 @@ void FileBrowserComponent::buildFileTreeUI() {
 
     scrollColumn->clear();
 
-    // User Library Section
     scrollColumn->addElements({
         spacer(Modifier().setfixedHeight(16).align(Align::TOP)),
         row(Modifier().setfixedHeight(48),
@@ -186,7 +202,6 @@ void FileBrowserComponent::buildFileTreeUI() {
         }
     }
 
-    // VST3 Plugins Section
     scrollColumn->addElements({
         spacer(Modifier().setfixedHeight(24)),
         row(Modifier().setfixedHeight(48),
@@ -265,7 +280,6 @@ void FileBrowserComponent::buildFileTreeUIRecursive(const FileTree& tree, int in
         displayName = symbol + displayName;
         std::string treePath = tree.getPath();
         
-        // FIX: Lambda now only sets the rebuild flag.
         textModifier.onLClick([this, treePath](){
             toggleTreeNodeByPath(treePath);
             fileTreeNeedsRebuild = true;
@@ -274,7 +288,6 @@ void FileBrowserComponent::buildFileTreeUIRecursive(const FileTree& tree, int in
         displayName = "[f] " + displayName;
         std::string filePath = tree.getPath();
         
-        // FIX: Lambda now only adds the track. The TimelineComponent will handle the UI.
         textModifier.onLClick([this, filePath](){
             juce::File sampleFile(filePath);
             std::string trackName = sampleFile.getFileNameWithoutExtension().toStdString();
@@ -285,15 +298,10 @@ void FileBrowserComponent::buildFileTreeUIRecursive(const FileTree& tree, int in
         displayName = "[v] " + displayName;
         std::string filePath = tree.getPath();
         
-        // Add VST to currently selected track
+        // Add VST to currently selected track - DEFERRED to avoid OpenGL context conflicts
         textModifier.onLClick([this, filePath](){
-            Track* selectedTrack = app->getSelectedTrackPtr();
-            if (selectedTrack) {
-                selectedTrack->addEffect(filePath);
-            } else {
-                // Could show a message or notification that no track is selected
-                // For now, just do nothing if no track is selected
-            }
+            std::cout << "FileBrowser: Requesting VST load via unified system: " << filePath << std::endl;
+            app->addEffect(filePath);
         });
     }
 
@@ -338,15 +346,10 @@ void FileBrowserComponent::buildVSTTreeUIRecursive(const FileTree& tree, int ind
         displayName = "[v] " + displayName;
         std::string filePath = tree.getPath();
         
-        // Add VST to currently selected track
+        // Add VST to currently selected track - DEFERRED to avoid OpenGL context conflicts
         textModifier.onLClick([this, filePath](){
-            Track* selectedTrack = app->getSelectedTrackPtr();
-            if (selectedTrack) {
-                selectedTrack->addEffect(filePath);
-            } else {
-                // Could show a message or notification that no track is selected
-                // For now, just do nothing if no track is selected
-            }
+            std::cout << "FileBrowser: Requesting VST load via unified system: " << filePath << std::endl;
+            app->addEffect(filePath);
         });
     }
 

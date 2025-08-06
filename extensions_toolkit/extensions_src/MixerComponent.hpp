@@ -35,34 +35,24 @@ private:
     bool mixerShown = false;
     bool wasVisible = false;
 
-    // UI Elements
     ScrollableRow* mixerScrollable = nullptr;
     Column* masterMixerTrackElement = nullptr;
     
-    // Track UI element storage
     std::unordered_map<std::string, Column*> mixerTrackElements;
     std::unordered_map<std::string, Button*> soloButtons;
     std::unordered_map<std::string, Slider*> volumeSliders;
     std::unordered_map<std::string, Slider*> panSliders;
     
-    // Button click state tracking to prevent multiple clicks per frame
     std::unordered_map<std::string, bool> lastSoloButtonStates;
 
-    // UI creation methods
     Column* createMixerTrack(const std::string& trackName, float volume = 1.0f, float pan = 0.5f);
-    
     Column* createMasterMixerTrack();
     
-    // UI rebuild helpers
     void rebuildUIFromEngine();
-    
     void clearTrackElements();
-    
     void syncSlidersToEngine();
     
-    // Pan conversion helpers
     float enginePanToSlider(float enginePan) const { return (enginePan + 1.0f) * 0.5f; }
-    
     float sliderPanToEngine(float sliderPan) const { return (sliderPan * 2.0f) - 1.0f; }
 };
 

@@ -20,6 +20,7 @@ struct UIState {
     std::string selectedTheme = "Dark";
 
     float timelineZoomLevel = 1.f;
+    double sampleRate = 44100.0;
     int autoSaveIntervalSeconds = 300;
     bool settingsShown = false;
 
@@ -28,6 +29,7 @@ struct UIState {
         DEBUG_PRINT("     [VST Directory] " << vstDirecory);
         DEBUG_PRINT("          [Save Dir] " << saveDirectory);
         DEBUG_PRINT("          [UI Theme] " << selectedTheme);
+        DEBUG_PRINT("       [Sample Rate] " << sampleRate);
         DEBUG_PRINT("[Auto Save Interval] " << autoSaveIntervalSeconds);
     }
 
@@ -57,9 +59,8 @@ struct UIState {
             file << "  \"vstDirectory\": \"" << vstDirecory << "\",\n";
             file << "  \"saveDirectory\": \"" << saveDirectory << "\",\n";
             file << "  \"selectedTheme\": \"" << selectedTheme << "\",\n";
-            file << "  \"timelineZoomLevel\": " << timelineZoomLevel << ",\n";
+            file << "  \"sampleRate\": " << sampleRate << ",\n";
             file << "  \"autoSaveIntervalSeconds\": " << autoSaveIntervalSeconds << ",\n";
-            file << "  \"settingsShown\": " << (settingsShown ? "true" : "false") << "\n";
             file << "}\n";
             
             file.close();
@@ -106,11 +107,11 @@ struct UIState {
                     saveDirectory = value;
                 } else if (key == "selectedTheme") {
                     selectedTheme = value;
-                } else if (key == "timelineZoomLevel") {
+                } else if (key == "sampleRate") {
                     try {
-                        timelineZoomLevel = std::stof(value);
+                        sampleRate = std::stod(value);
                     } catch (...) {
-                        DEBUG_PRINT("Invalid timelineZoomLevel in config, using default");
+                        DEBUG_PRINT("Invalid sampleRate in config, using default");
                     }
                 } else if (key == "autoSaveIntervalSeconds") {
                     try {
@@ -118,8 +119,6 @@ struct UIState {
                     } catch (...) {
                         DEBUG_PRINT("Invalid autoSaveIntervalSeconds in config, using default");
                     }
-                } else if (key == "settingsShown") {
-                    settingsShown = (value == "true");
                 }
             }
             

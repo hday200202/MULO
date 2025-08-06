@@ -1,5 +1,6 @@
 
 #include "FileTree.hpp"
+#include "../audio/VSTPluginManager.hpp"
 #include <algorithm>
 #include <iostream>
 
@@ -58,9 +59,10 @@ void FileTree::loadChildren() {
             child->parent = this; // Set raw pointer to parent
             
             if (entry.is_directory()) {
-                // Check if this is a VST3 bundle (directory with .vst3 extension)
-                if (isValidVSTExtension(child->getFileExtension(child->name))) {
-                    child->isDir = false; // Treat VST3 bundles as files
+                // Check if this is a VST bundle using cross-platform manager
+                auto& vstManager = VSTPluginManager::getInstance();
+                if (vstManager.isValidVSTFile(child->path)) {
+                    child->isDir = false; // Treat VST bundles as files
                     files.push_back(child);
                 } else {
                     child->isDir = true;
@@ -139,14 +141,20 @@ bool FileTree::isValidAudioExtension(const std::string& extension) {
 }
 
 bool FileTree::isValidVSTExtension(const std::string& extension) {
-    static const std::vector<std::string> vstExtensions = {
-        ".vst3"
-    };
+    auto& vstManager = VSTPluginManager::getInstance();
+    auto validExtensions = vstManager.getVSTExtensions();
     
     std::string lowerExt = extension;
     std::transform(lowerExt.begin(), lowerExt.end(), lowerExt.begin(), ::tolower);
     
-    return std::find(vstExtensions.begin(), vstExtensions.end(), lowerExt) != vstExtensions.end();
+    for (auto& ext : validExtensions) {
+        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+        if (ext == lowerExt) {
+            return true;
+        }
+    }
+    
+    return false;
 }
 
 std::string FileTree::getFileExtension(const std::string& filename) const {

@@ -1,6 +1,17 @@
 cmake_minimum_required(VERSION 3.20)
 project(MULO)
 
+# Ensure 64-bit build on Windows
+if(WIN32)
+    if(CMAKE_SIZEOF_VOID_P EQUAL 4)
+        message(FATAL_ERROR "32-bit builds are not supported on Windows. Please use a 64-bit generator:")
+        message(FATAL_ERROR "  cmake -G \"Visual Studio 17 2022\" -A x64 ..")
+        message(FATAL_ERROR "  or")
+        message(FATAL_ERROR "  cmake -G \"Visual Studio 16 2019\" -A x64 ..")
+    endif()
+    message(STATUS "Building for 64-bit Windows (pointer size: ${CMAKE_SIZEOF_VOID_P} bytes)")
+endif()
+
 # Build optimizations for faster compilation
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -17,10 +28,10 @@ endif()
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Output directories per build type and platform
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG         ${CMAKE_SOURCE_DIR}/bin/${CMAKE_SYSTEM_NAME}/Debug)
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE       ${CMAKE_SOURCE_DIR}/bin/${CMAKE_SYSTEM_NAME}/Release)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG      ${CMAKE_SOURCE_DIR}/bin/${CMAKE_SYSTEM_NAME}/Debug)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE      ${CMAKE_SOURCE_DIR}/bin/${CMAKE_SYSTEM_NAME}/Release)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${CMAKE_SOURCE_DIR}/bin/${CMAKE_SYSTEM_NAME}/RelWithDebInfo)
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL    ${CMAKE_SOURCE_DIR}/bin/${CMAKE_SYSTEM_NAME}/MinSizeRel)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL     ${CMAKE_SOURCE_DIR}/bin/${CMAKE_SYSTEM_NAME}/MinSizeRel)
 
 # Platform-specific JUCE - Optimized build
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -50,6 +61,10 @@ endif()
 # Enable JUCE modal loops so FileChooser::browseForFileToOpen() is available
 add_compile_definitions(JUCE_MODAL_LOOPS_PERMITTED=1)
 
+# Enable VST3 plugin support globally for JUCE before JUCE is added
+set(JUCE_PLUGINHOST_VST3 ON CACHE BOOL "Enable VST3 plugin support" FORCE)
+add_compile_definitions(JUCE_PLUGINHOST_VST3=1)
+
 # SFML Setup
 set(SFML_INCLUDE_DIRS "")
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -66,6 +81,12 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     find_package(CURL REQUIRED)
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Windows")
     set(SFML_DIR "${CMAKE_SOURCE_DIR}/external/windows/SFML-3.0.0-MSVC/lib/cmake/SFML")
+    
+    # Check if SFML path exists before trying to find it
+    if(NOT EXISTS "${SFML_DIR}/SFMLConfig.cmake")
+        message(FATAL_ERROR "SFML not found at: ${SFML_DIR}/SFMLConfig.cmake. Please ensure SFML 3.0.0 (64-bit MSVC) is installed in external/windows/SFML-3.0.0-MSVC/")
+    endif()
+    
     find_package(SFML 3.0.0 COMPONENTS Graphics Window System REQUIRED)
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
     find_package(SFML 3.0.1 COMPONENTS Graphics Window System REQUIRED)
@@ -113,9 +134,11 @@ target_include_directories(MULO PRIVATE
     ${JUCE_MODULE_DIR}/juce_audio_basics/include
     ${JUCE_MODULE_DIR}/juce_audio_devices/include
     ${JUCE_MODULE_DIR}/juce_audio_formats/include
+    ${JUCE_MODULE_DIR}/juce_audio_processors/include
     ${JUCE_MODULE_DIR}/juce_audio_utils/include
     ${JUCE_MODULE_DIR}/juce_dsp/include
     ${JUCE_MODULE_DIR}/juce_gui_extra/gui_extra
+    ${JUCE_MODULE_DIR}/juce_opengl/include
 )
 
 # Linux-only GTK/WebKit (if needed)
@@ -148,6 +171,9 @@ target_link_libraries(MULO PRIVATE
     juce::juce_audio_utils
     juce::juce_dsp
 
+    # JUCE OpenGL
+    juce::juce_opengl
+
     # SFML
     SFML::Graphics
     SFML::Window
@@ -166,8 +192,6 @@ target_compile_definitions(MULO PRIVATE
     
     # Enable VST plugin support
     JUCE_PLUGINHOST_VST3=1
-    # JUCE_PLUGINHOST_VST=1         # Disabled - VST2 SDK headers not available
-    # JUCE_PLUGINHOST_LADSPA=1     # Disabled - requires ladspa-dev package
 )
 
 # Enable symbol export for plugins on Linux
@@ -215,23 +239,11 @@ endif()
 # Copy assets to output directory
 add_custom_target(copy_assets ALL
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/assets" "$<TARGET_FILE_DIR:MULO>/assets"
+      "${CMAKE_SOURCE_DIR}/assets" "$<TARGET_FILE_DIR:MULO>/assets"
     COMMENT "Copying assets folder to $<TARGET_FILE_DIR:MULO>/assets"
 )
 
-# Enable AddressSanitizer and LeakSanitizer for debug and RelWithDebInfo builds
-option(ENABLE_SANITIZERS "Enable AddressSanitizer and LeakSanitizer" ON)
-if(ENABLE_SANITIZERS)
-    if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-        set(SANITIZER_FLAGS "-fsanitize=address -fsanitize=leak -fno-omit-frame-pointer")
-        set(SANITIZER_LINK_FLAGS "-fsanitize=address -fsanitize=leak")
-        foreach(build_type DEBUG RELWITHDEBINFO)
-            set(CMAKE_CXX_FLAGS_${build_type} "${CMAKE_CXX_FLAGS_${build_type}} ${SANITIZER_FLAGS}")
-            set(CMAKE_EXE_LINKER_FLAGS_${build_type} "${CMAKE_EXE_LINKER_FLAGS_${build_type}} ${SANITIZER_LINK_FLAGS}")
-        endforeach()
-    endif()
-endif()
-
+# Add tinyfiledialogs library
 add_library(tinyfiledialogs STATIC external/tinyfiledialogs/tinyfiledialogs.cpp)
 target_include_directories(tinyfiledialogs PUBLIC external/tinyfiledialogs)
 target_link_libraries(MULO PRIVATE tinyfiledialogs)
@@ -239,4 +251,3 @@ target_link_libraries(MULO PRIVATE tinyfiledialogs)
 if(UNIX AND NOT APPLE)
     target_link_libraries(MULO PRIVATE X11)
 endif()
-

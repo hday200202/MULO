@@ -1,33 +1,26 @@
-
 #include "Engine.hpp"
 #include "../DebugConfig.hpp"
 
 Engine::Engine() {
     formatManager.registerBasicFormats();
     
-    // Initialize with low latency settings for Windows
     deviceManager.initialise(0, 2, nullptr, false);
     
-    // Configure low-latency audio device setup
     auto currentSetup = deviceManager.getAudioDeviceSetup();
     
-    // Set moderate buffer size for stable low latency
-    currentSetup.bufferSize = 256;  // Start with 256 samples (~6ms at 44.1kHz) - more stable
-    currentSetup.sampleRate = 44100.0;  // Standard sample rate
+    currentSetup.bufferSize = 256;
+    currentSetup.sampleRate = 44100.0;
     
-    // Try to apply the low-latency setup
     juce::String error = deviceManager.setAudioDeviceSetup(currentSetup, true);
     
-    // If 256 samples fails, try larger buffer sizes
     if (error.isNotEmpty()) {
-        currentSetup.bufferSize = 512;  // ~12ms at 44.1kHz
+        currentSetup.bufferSize = 512;
         error = deviceManager.setAudioDeviceSetup(currentSetup, true);
         
         if (error.isNotEmpty()) {
-            currentSetup.bufferSize = 1024;  // ~23ms at 44.1kHz
+            currentSetup.bufferSize = 1024;
             error = deviceManager.setAudioDeviceSetup(currentSetup, true);
             
-            // If still failing, let JUCE use default
             if (error.isNotEmpty()) {
                 DEBUG_PRINT("Warning: Could not set low-latency audio buffer. Using default settings.");
                 DEBUG_PRINT("Audio setup error: " << error.toStdString());
@@ -35,7 +28,6 @@ Engine::Engine() {
         }
     }
     
-    // Print the actual audio setup for debugging
     auto finalSetup = deviceManager.getAudioDeviceSetup();
     DEBUG_PRINT("Audio device setup:");
     DEBUG_PRINT("  Sample rate: " << finalSetup.sampleRate << " Hz");
@@ -48,7 +40,6 @@ Engine::Engine() {
     masterTrack = std::make_unique<Track>(formatManager);
     masterTrack->setName("Master");
     
-    // Initialize with Master track selected by default
     selectedTrackName = "Master";
 }
 
@@ -212,7 +203,6 @@ double Engine::getBpm() const { return currentComposition->bpm; }
 void Engine::setBpm(double newBpm) { currentComposition->bpm = newBpm; }
 
 void Engine::addTrack(const std::string& name, const std::string& samplePath) {
-    // Ensure unique track name
     std::string baseName = name;
     std::string uniqueName = baseName;
     int suffix = 1;
@@ -229,7 +219,6 @@ void Engine::addTrack(const std::string& name, const std::string& samplePath) {
     auto t = std::make_unique<Track>(formatManager);
     t->setName(uniqueName);
     
-    // Prepare the track with current audio settings
     t->prepareToPlay(sampleRate, currentBufferSize);
 
     if (!samplePath.empty() && uniqueName != "Master") {
@@ -302,7 +291,6 @@ void Engine::setSelectedTrack(const std::string& trackName) {
     // Validate that the track exists (including Master track)
     if (trackName == "Master") {
         selectedTrackName = trackName;
-        DEBUG_PRINT("[Engine] Selected track: " << trackName);
         return;
     }
     
@@ -311,7 +299,6 @@ void Engine::setSelectedTrack(const std::string& trackName) {
         for (const auto& track : currentComposition->tracks) {
             if (track->getName() == trackName) {
                 selectedTrackName = trackName;
-                DEBUG_PRINT("[Engine] Selected track: " << trackName);
                 return;
             }
         }
@@ -444,7 +431,8 @@ void Engine::audioDeviceAboutToStart(juce::AudioIODevice* device) {
     tempMixBuffer.clear();
     positionSeconds = 0.0;
     
-    // Prepare all tracks with the correct audio settings
+    DEBUG_PRINT("Engine: Device starting - sample rate: " << sampleRate << "Hz, buffer: " << currentBufferSize);
+    
     if (currentComposition) {
         for (auto& track : currentComposition->tracks) {
             if (track) {
@@ -467,7 +455,6 @@ void Engine::processBlock(juce::AudioBuffer<float>& outputBuffer, int numSamples
 
     if (!currentComposition) return;
 
-    // Check if any regular tracks are soloed (master track solo doesn't affect regular track playback)
     bool anyTrackSoloed = false;
     for (const auto& track : currentComposition->tracks) {
         if (track && track->isSolo()) {
@@ -476,23 +463,17 @@ void Engine::processBlock(juce::AudioBuffer<float>& outputBuffer, int numSamples
         }
     }
 
-    // Process all regular tracks into the temporary mixing buffer
     for (const auto& track : currentComposition->tracks) {
         if (track) {
             bool shouldPlay = !anyTrackSoloed ? !track->isMuted() : track->isSolo();
             if (shouldPlay) {
-                // Create a separate buffer for this track to avoid effects bleeding between tracks
                 juce::AudioBuffer<float> trackBuffer;
                 trackBuffer.setSize(tempMixBuffer.getNumChannels(), numSamples);
                 trackBuffer.clear();
                 
-                // Process track audio into its own buffer
                 track->process(positionSeconds, trackBuffer, numSamples, sampleRate);
-                
-                // Apply track effects to its own buffer
                 track->processEffects(trackBuffer);
                 
-                // Add the processed track to the mix
                 for (int ch = 0; ch < tempMixBuffer.getNumChannels(); ++ch) {
                     tempMixBuffer.addFrom(ch, 0, trackBuffer, ch, 0, numSamples);
                 }
@@ -500,12 +481,10 @@ void Engine::processBlock(juce::AudioBuffer<float>& outputBuffer, int numSamples
         }
     }
 
-    // Apply master track processing (master track always processes the mixed audio unless muted)
     if (masterTrack && !masterTrack->isMuted()) {
         float masterGain = juce::Decibels::decibelsToGain(masterTrack->getVolume());
         float masterPan = masterTrack->getPan();
 
-        // Apply the same pan law as regular tracks for consistency
         float panL = (1.0f - juce::jlimit(-1.f, 1.f, masterPan)) * 0.5f;
         float panR = (1.0f + juce::jlimit(-1.f, 1.f, masterPan)) * 0.5f;
         
@@ -517,7 +496,6 @@ void Engine::processBlock(juce::AudioBuffer<float>& outputBuffer, int numSamples
             tempMixBuffer.applyGain(0, 0, numSamples, masterGain);
         }
 
-        // Apply master track effects to the final mix
         masterTrack->processEffects(tempMixBuffer);
 
         outputBuffer.makeCopyOf(tempMixBuffer);
