@@ -83,7 +83,7 @@ public:
     inline Track* getTrack(const std::string& name) { return engine.getTrackByName(name); }
     inline std::vector<std::unique_ptr<Track>>& getAllTracks() { return engine.getAllTracks(); }
     inline void addTrack(const std::string& name, const std::string& samplePath) { engine.addTrack(name, samplePath); }
-    inline void removeTrack(const std::string& name) { engine.removeTrackByName(name); }
+    inline void removeTrack(const std::string& name) { pendingTrackRemoveName = name; }
 
     // VST Effect management
     inline void addEffect(const std::string& filePath) {
@@ -171,6 +171,8 @@ private:
     size_t pendingEffectWindowIndex = SIZE_MAX;
     bool hasPendingEffect = false;
     bool hasPendingEffectWindow = false;
+
+    std::string pendingTrackRemoveName = "";
 
     // Deferred effect loading structure for save file restoration
     struct DeferredEffect {

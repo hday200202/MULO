@@ -28,19 +28,21 @@ private:
 
     ScrollableRow* mixerScrollable = nullptr;
     Column* masterMixerTrackElement = nullptr;
-    
+
     std::unordered_map<std::string, Column*> mixerTrackElements;
     std::unordered_map<std::string, Button*> soloButtons;
+    std::unordered_map<std::string, Button*> muteButtons;
     std::unordered_map<std::string, Slider*> volumeSliders;
     std::unordered_map<std::string, Slider*> panSliders;
     std::unordered_map<std::string, bool> lastSoloButtonStates;
+    std::unordered_map<std::string, bool> lastMuteButtonStates;
 
     Column* createMixerTrack(const std::string& trackName, float volume = 1.0f, float pan = 0.5f);
     Column* createMasterMixerTrack();
     void rebuildUIFromEngine();
     void clearTrackElements();
     void syncSlidersToEngine();
-    
+
     float enginePanToSlider(float enginePan) const { return (enginePan + 1.0f) * 0.5f; }
     float sliderPanToEngine(float sliderPan) const { return (sliderPan * 2.0f) - 1.0f; }
 };
@@ -159,28 +161,45 @@ bool MixerComponent::handleEvents() {
     // Process all tracks with identical logic
     for (Track* track : allTracksToProcess) {
         if (!track) continue;
-        
+
         const std::string& name = track->getName();
         auto volumeIt = volumeSliders.find(name);
         auto panIt = panSliders.find(name);
         auto soloIt = soloButtons.find(name);
-        
-        // Handle solo button clicks with state tracking
+        auto muteIt = muteButtons.find(name);
+
+        // Handle solo button clicks with state tracking (rising edge)
         if (soloIt != soloButtons.end() && soloIt->second) {
             bool currentSoloState = soloIt->second->isClicked();
             bool& lastSoloState = lastSoloButtonStates[track->getName()];
-            
+
             if (currentSoloState && !lastSoloState) {
-                // Only process on rising edge (button just clicked)
                 track->setSolo(!track->isSolo());
                 soloIt->second->m_modifier.setColor(
                     track->isSolo() ? app->resources.activeTheme->mute_color : app->resources.activeTheme->button_color
                 );
+                soloIt->second->setClicked(false); // Reset after processing
                 forceUpdate = true;
             }
             lastSoloState = currentSoloState;
         }
-        
+
+        // Handle mute button clicks with state tracking (rising edge)
+        if (muteIt != muteButtons.end() && muteIt->second) {
+            bool currentMuteState = muteIt->second->isClicked();
+            bool& lastMuteState = lastMuteButtonStates[track->getName()];
+
+            if (currentMuteState && !lastMuteState) {
+                track->toggleMute();
+                muteIt->second->m_modifier.setColor(
+                    track->isMuted() ? app->resources.activeTheme->mute_color : app->resources.activeTheme->button_color
+                );
+                muteIt->second->setClicked(false); // Reset after processing
+                forceUpdate = true;
+            }
+            lastMuteState = currentMuteState;
+        }
+
         // Handle volume slider changes
         if (volumeIt != volumeSliders.end() && volumeIt->second) {
             const float sliderDb = floatToDecibels(volumeIt->second->getValue());
@@ -189,7 +208,7 @@ bool MixerComponent::handleEvents() {
                 forceUpdate = true;
             }
         }
-        
+
         // Handle pan slider changes
         if (panIt != panSliders.end() && panIt->second) {
             float sliderValue = panIt->second->getValue(); // 0.0 to 1.0
@@ -250,6 +269,19 @@ Column* MixerComponent::createMixerTrack(const std::string& trackName, float vol
         "solo_" + trackName
     );
 
+    muteButtons[trackName] = button(
+        Modifier()
+            .setfixedHeight(32)
+            .setfixedWidth(64)
+            .align(Align::CENTER_X | Align::BOTTOM)
+            .setColor(app->resources.activeTheme->button_color),
+        ButtonStyle::Rect,
+        "mute",
+        app->resources.dejavuSansFont,
+        app->resources.activeTheme->secondary_text_color,
+        "mute_" + trackName
+    );
+
     auto mixerTrack = column(
         Modifier()
             .setColor(app->resources.activeTheme->track_color)
@@ -264,19 +296,15 @@ Column* MixerComponent::createMixerTrack(const std::string& trackName, float vol
             ),
 
             spacer(Modifier().setfixedHeight(12).align(Align::TOP)),
-
             volumeSliders[trackName],
-
             spacer(Modifier().setfixedHeight(12).align(Align::BOTTOM)),
-
-            row(Modifier().setWidth(.8f).setfixedHeight(32.f).align(Align::BOTTOM | Align::CENTER_X),
-            contains{
-                panSliders[trackName],
-            }),
-
-            spacer(Modifier().setfixedHeight(12).align(Align::BOTTOM)),
-
             soloButtons[trackName],
+            spacer(Modifier().setfixedHeight(12).align(Align::BOTTOM)),
+            muteButtons[trackName],
+            spacer(Modifier().setfixedHeight(12).align(Align::BOTTOM)),
+            row(Modifier().setWidth(.8f).setfixedHeight(32.f).align(Align::BOTTOM | Align::CENTER_X),
+            contains{panSliders[trackName],}),
+            spacer(Modifier().setfixedHeight(12).align(Align::BOTTOM)),
         }
     );
 
@@ -313,6 +341,19 @@ Column* MixerComponent::createMasterMixerTrack() {
         "solo_Master"
     );
 
+    muteButtons["Master"] = button(
+        Modifier()
+            .setfixedHeight(32)
+            .setfixedWidth(64)
+            .align(Align::CENTER_X | Align::BOTTOM)
+            .setColor(app->resources.activeTheme->button_color),
+        ButtonStyle::Rect,
+        "mute",
+        app->resources.dejavuSansFont,
+        app->resources.activeTheme->secondary_text_color,
+        "mute_Master"
+    );
+
     auto masterTrack = column(
         Modifier()
             .setColor(app->resources.activeTheme->master_track_color)
@@ -328,19 +369,16 @@ Column* MixerComponent::createMasterMixerTrack() {
             ),
 
             spacer(Modifier().setfixedHeight(12).align(Align::TOP)),
-
             volumeSliders["Master"],
-            
+            spacer(Modifier().setfixedHeight(12).align(Align::BOTTOM)),
+            soloButtons["Master"],
+            spacer(Modifier().setfixedHeight(12).align(Align::BOTTOM)),
+            muteButtons["Master"],
             spacer(Modifier().setfixedHeight(12).align(Align::BOTTOM)),
 
             row(Modifier().setWidth(.8f).setfixedHeight(32.f).align(Align::BOTTOM | Align::CENTER_X),
-            contains{
-                panSliders["Master"],
-            }),
-
+            contains{ panSliders["Master"],}),
             spacer(Modifier().setfixedHeight(12).align(Align::BOTTOM)),
-
-            soloButtons["Master"],
         }
     );
 

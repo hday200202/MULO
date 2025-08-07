@@ -126,15 +126,15 @@ private:
 };
 
 inline float floatToDecibels(float linear, float minusInfinityDb = -100.0f) {
-    constexpr float reference = 0.75f;
-    if (linear <= 0.0f)
+    constexpr double reference = 0.75;  // 0.75 linear = 0 dB
+    if (linear <= 0.0)
         return minusInfinityDb;
-    return 20.f * std::log10(linear / reference);
+    return static_cast<float>(20.0 * std::log10(static_cast<double>(linear) / reference));
 }
 
 inline float decibelsToFloat(float db, float minusInfinityDb = -100.0f) {
-    constexpr float reference = 0.75f;
+    constexpr double reference = 0.75;  // 0.75 linear = 0 dB
     if (db <= minusInfinityDb)
         return 0.0f;
-    return reference * std::pow(10.0f, db / 20.f);
+    return static_cast<float>(reference * std::pow(10.0, static_cast<double>(db) / 20.0));
 }

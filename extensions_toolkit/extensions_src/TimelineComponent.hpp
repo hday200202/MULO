@@ -56,9 +56,6 @@ private:
     
     float enginePanToSlider(float enginePan) const { return (enginePan + 1.0f) * 0.5f; }
     float sliderPanToEngine(float sliderPan) const { return (sliderPan * 2.0f) - 1.0f; }
-
-    static float decibelsToFloat(float db) { return std::pow(10.0f, db / 20.0f); }
-    static float floatToDecibels(float value) { return 20.0f * std::log10(std::max(value, 0.001f)); }
 };
 
 inline std::vector<std::shared_ptr<sf::Drawable>> generateClipRects(double bpm, float beatWidth, float scrollOffset, const sf::Vector2f& rowSize, const std::vector<AudioClip>& clips, float verticalOffset, UIResources* resources, UIState* uiState, const AudioClip* selectedClip, const std::string& currentTrackName, const std::string& selectedTrackName);
@@ -523,7 +520,6 @@ uilo::Row* TimelineComponent::track(
         Modifier().align(Align::CENTER_X | Align::CENTER_Y).setfixedWidth(16).setfixedHeight(16).setColor(app->resources.activeTheme->mute_color)
             .onLClick([this, trackName](){
                 if (!app->getWindow().hasFocus()) return;
-                std::cout << "Removing track: " + trackName + "\n";
                 app->removeTrack(trackName);
             }),
         ButtonStyle::Pill,

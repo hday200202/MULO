@@ -79,9 +79,6 @@ void Application::initialise(const juce::String& commandLine) {
     loadComponents();
 
     ui->forceUpdate();
-    
-    // TEST: Auto-load Bitspeek to test window reopening behavior
-    // testVSTLoading();
 }
 
 Application::~Application() {}
@@ -111,10 +108,7 @@ void Application::update() {
     bool ctrlShftR = isKeyPressed(kb::LControl) && isKeyPressed(kb::LShift) && isKeyPressed(kb::R);
 
     if (lClick || rClick) shouldForceUpdate = true;
-    if (ctrlShftR && !prevCtrlShftR) {
-        std::cout << "Ctrl+Shift+R\n";
-        rebuildUI();
-    }
+    if (ctrlShftR && !prevCtrlShftR) rebuildUI();
 
     ui->forceUpdate(windowView);
 
@@ -129,7 +123,6 @@ void Application::update() {
 }
 
 void Application::render() {
-    // Test: Add back UI rendering to see what specifically breaks VST windows
     if (ui->windowShouldUpdate()) {
         window.clear(sf::Color::Black);
         ui->render();
@@ -159,10 +152,10 @@ void Application::handleEvents() {
             if (effect) {
                 effect->openWindow();
             } else {
-                std::cout << "Failed to load effect: " << pendingEffectPath << std::endl;
+                DEBUG_PRINT("Failed to load effect: " << pendingEffectPath);
             }
         } else {
-            std::cout << "No selected track for effect loading" << std::endl;
+            DEBUG_PRINT("No selected track for effect loading");
         }
         hasPendingEffect = false;
         pendingEffectPath.clear();
@@ -175,10 +168,10 @@ void Application::handleEvents() {
             if (pendingEffectWindowIndex < effects.size()) {
                 effects[pendingEffectWindowIndex]->openWindow();
             } else {
-                std::cout << "Invalid effect index: " << pendingEffectWindowIndex << std::endl;
+                DEBUG_PRINT("Invalid effect index: " << pendingEffectWindowIndex);
             }
         } else {
-            std::cout << "No selected track for effect window opening" << std::endl;
+            DEBUG_PRINT("No selected track for effect window opening");
         }
         hasPendingEffectWindow = false;
         pendingEffectWindowIndex = SIZE_MAX;
@@ -220,15 +213,15 @@ void Application::handleEvents() {
                     effect->closeWindow();
                 }
                 
-                std::cout << "Loaded deferred effect: " << effect->getName() << " for track: " << deferredEffect.trackName << std::endl;
+                DEBUG_PRINT("Loaded deferred effect: " << effect->getName() << " for track: " << deferredEffect.trackName);
             }
         } else {
-            std::cout << "Track not found for deferred effect: " << deferredEffect.trackName << std::endl;
+            DEBUG_PRINT("Track not found for deferred effect: " << deferredEffect.trackName);
         }
         
         if (deferredEffects.empty()) {
             hasDeferredEffects = false;
-            std::cout << "All deferred effects loaded" << std::endl;
+            DEBUG_PRINT("All deferred effects loaded");
         }
     }
 
@@ -252,8 +245,19 @@ void Application::handleEvents() {
         engine.clearPendingEffects();
         
         if (hasDeferredEffects) {
-            std::cout << "Processing " << deferredEffects.size() << " pending effects from save file" << std::endl;
+            DEBUG_PRINT("Processing " << deferredEffects.size() << " pending effects from save file" << std::endl);
         }
+    }
+
+    if (pendingTrackRemoveName != "") {
+        auto track = engine.getTrackByName(pendingTrackRemoveName);
+        
+        if (track)
+            track->clearEffects();
+            
+        DEBUG_PRINT("Removing track: " << pendingTrackRemoveName);
+        engine.removeTrackByName(pendingTrackRemoveName);
+        pendingTrackRemoveName = "";
     }
 }
 
