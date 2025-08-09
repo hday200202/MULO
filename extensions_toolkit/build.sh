@@ -25,8 +25,11 @@ for arg in "$@"; do
         debug|Debug)
             BUILD_TYPE="Debug"
             ;;
-        rdbi|RDBI)
+        rdbi|RDBI|RelWithDebInfo)
             BUILD_TYPE="RelWithDebInfo"
+            ;;
+        msr|MSR|MinSizeRel)
+            BUILD_TYPE="MinSizeRel"
             ;;
         clean|Clean)
             DO_CLEAN=1

@@ -64,12 +64,14 @@ inline void FXRack::update() {
 inline bool FXRack::handleEvents() {
     bool forceUpdate = false;
     
-    if (app->getSelectedTrackPtr()->getName() != selectedTrackName 
-    || app->getSelectedTrackPtr()->getEffectCount() != selectedTrackEffectsSize) {
-        selectedTrackName = app->getSelectedTrackPtr()->getName();
-        selectedTrackEffectsSize = app->getSelectedTrackPtr()->getEffectCount();
-        rebuildUI();
-        forceUpdate = true;
+    if (app->getSelectedTrackPtr()) {
+        if (app->getSelectedTrackPtr()->getName() != selectedTrackName 
+        || app->getSelectedTrackPtr()->getEffectCount() != selectedTrackEffectsSize) {
+            selectedTrackName = app->getSelectedTrackPtr()->getName();
+            selectedTrackEffectsSize = app->getSelectedTrackPtr()->getEffectCount();
+            rebuildUI();
+            forceUpdate = true;
+        }
     }
 
     if (needsUIRebuild) {
