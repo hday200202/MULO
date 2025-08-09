@@ -77,6 +77,7 @@ void Application::initialise(const juce::String& commandLine) {
     running = ui->isRunning();
 
     loadComponents();
+    loadLayoutConfig();
 
     ui->forceUpdate();
 }
@@ -95,10 +96,7 @@ void Application::update() {
     using kb = sf::Keyboard::Key;
     
     running = ui->isRunning();
-    shouldForceUpdate = forceUpdatePoll;
-
-    if (ui->getVerticalScrollDelta() != 0 || ui->getHorizontalScrollDelta() != 0)
-        shouldForceUpdate = true;
+    if (!running) return;
     
     // handle all input, determines if shouldForceUpdate
     handleEvents();
@@ -106,7 +104,7 @@ void Application::update() {
     bool rClick = isButtonPressed(mb::Right);
     bool lClick = isButtonPressed(mb::Left);
     bool ctrlShftR = isKeyPressed(kb::LControl) && isKeyPressed(kb::LShift) && isKeyPressed(kb::R);
-
+    
     if (lClick || rClick) shouldForceUpdate = true;
     if (ctrlShftR && !prevCtrlShftR) rebuildUI();
 
@@ -126,6 +124,7 @@ void Application::render() {
     if (ui->windowShouldUpdate()) {
         window.clear(sf::Color::Black);
         ui->render();
+        window.draw(dragOverlay); // Draw the drag overlay if active
         window.display();
     }
 }
@@ -259,6 +258,122 @@ void Application::handleEvents() {
         engine.removeTrackByName(pendingTrackRemoveName);
         pendingTrackRemoveName = "";
     }
+
+    handleDragAndDrop();
+}
+
+void Application::handleDragAndDrop() {
+    using namespace sf::Keyboard;
+    using namespace sf::Mouse;
+    using mb = sf::Mouse::Button;
+    using kb = sf::Keyboard::Key;
+
+    bool alt = isKeyPressed(kb::LAlt) || isKeyPressed(kb::RAlt);
+    bool dragging = alt && ui->isMouseDragging();
+    // Drag-and-drop logic: record drag start and perform swap on drag end
+    static Container* dragParentContainer = nullptr;
+    static Element* draggedElement = nullptr;
+    static int dragStartIndex = -1;
+
+    // If alt is pressed, highlight the component under the mouse
+    if (alt) {
+        for (auto& [name, component] : muloComponents) {
+            if (component->getLayout() && component->isVisible()) {
+                if (component->getLayout()->m_bounds.getGlobalBounds().contains(ui->getMousePosition())) {
+                    // don't highlight components not in the same parent container
+                    if (dragParentContainer && component->getParentContainer() != dragParentContainer) {
+                        dragOverlay.setSize({0.f, 0.f}); // Hide overlay if not in same container
+                        continue;
+                    }
+                    else {
+                        dragOverlay.setSize(component->getLayout()->m_bounds.getSize());
+                        dragOverlay.setPosition(component->getLayout()->m_bounds.getPosition());
+                        dragOverlay.setFillColor(sf::Color(255, 255, 255, 20));
+                    }
+                }
+            }
+        }
+    } else {
+        dragOverlay.setSize({0.f, 0.f}); // Hide overlay when not dragging
+    }
+
+    // On drag start: record dragged element and its parent container/index
+    if (dragging && !prevDragging) {
+        dragParentContainer = nullptr;
+        draggedElement = nullptr;
+        dragStartIndex = -1;
+        for (auto& [name, component] : muloComponents) {
+            if (component->getLayout() && component->isVisible()) {
+                if (component->getLayout()->m_bounds.getGlobalBounds().contains(ui->getMousePosition())) {
+                    Container* parent = component->getParentContainer();
+                    Element* elem = component->getLayout();
+                    int idx = parent ? parent->getElementIndex(elem) : -1;
+                    if (parent && elem && idx != -1) {
+                        dragParentContainer = parent;
+                        draggedElement = elem;
+                        dragStartIndex = idx;
+                        std::cout << "Dragging component: " << name << " at index: " << dragStartIndex << std::endl;
+                    } else {
+                        std::cout << "Dragging component: " << name << " at index: -1 (not found in parent)" << std::endl;
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    // On drag end: find drop target and swap/move if valid
+    if (!dragging && prevDragging && dragParentContainer && draggedElement && dragStartIndex != -1) {
+        // Find the drop target element under the mouse (any container)
+        Element* dropTarget = nullptr;
+        Container* dropParentContainer = nullptr;
+        int dropIndex = -1;
+        std::string draggedComponentName, dropTargetComponentName;
+        for (auto& [name, component] : muloComponents) {
+            if (component->getLayout() && component->isVisible()) {
+                if (component->getLayout()->m_bounds.getGlobalBounds().contains(ui->getMousePosition())) {
+                    dropTarget = component->getLayout();
+                    dropParentContainer = component->getParentContainer();
+                    dropIndex = dropParentContainer ? dropParentContainer->getElementIndex(dropTarget) : -1;
+                    dropTargetComponentName = name;
+                    break;
+                }
+            }
+        }
+        // Find the name of the dragged component
+        for (auto& [name, component] : muloComponents) {
+            if (component->getLayout() == draggedElement) {
+                draggedComponentName = name;
+                break;
+            }
+        }
+        if (dropTarget && dropParentContainer && dropIndex != -1) {
+            if (dropParentContainer == dragParentContainer && dropIndex != dragStartIndex) {
+                // Only allow swap within the same container
+                dragParentContainer->swapElements(dragStartIndex, dropIndex);
+                Align alignA = draggedElement->m_modifier.getAlignment();
+                Align alignB = dropTarget->m_modifier.getAlignment();
+                draggedElement->m_modifier.align(alignB);
+                dropTarget->m_modifier.align(alignA);
+                std::cout << "Swapped elements at indices: " << dragStartIndex << " <-> " << dropIndex << ", and alignments." << std::endl;
+
+                // Update componentLayouts for both components
+                for (auto& [name, component] : muloComponents) {
+                    componentLayouts[name] = { 
+                        (component->getParentContainer()) ? component->getParentContainer() : nullptr, 
+                        (component->getLayout()) ? component->getLayout()->m_modifier.getAlignment() : Align::NONE, 
+                        component->getRelativeTo() 
+                    };
+                }
+            }
+        }
+        // Reset drag state
+        dragParentContainer = nullptr;
+        draggedElement = nullptr;
+        dragStartIndex = -1;
+    }
+
+    prevDragging = dragging;
 }
 
 void Application::setComponentParentContainer(const std::string& componentName, Container* parent) {
@@ -602,7 +717,6 @@ void Application::unloadPlugin(const std::string& pluginName) {
     // Find and unload the plugin
     auto it = loadedPlugins.find(pluginName);
     if (it != loadedPlugins.end()) {
-        // Call destroy if available - this should clean up all JUCE objects
         if (it->second.plugin && it->second.plugin->destroy) {
             it->second.plugin->destroy(it->second.plugin->instance);
         }
@@ -646,4 +760,78 @@ void Application::unloadAllPlugins() {
     dropdowns.clear();
     uilo_owned_elements.clear();
     high_priority_elements.clear();
+}
+
+void Application::saveLayoutConfig() {
+    // Save componentLayouts to layout.json in exeDirectory using nlohmann_json
+    nlohmann::json j;
+    for (const auto& [name, layout] : componentLayouts) {
+        std::string parentName = layout.parent ? layout.parent->m_name : "";
+        j[name] = {
+            {"parent", parentName},
+            {"alignment", static_cast<int>(layout.alignment)},
+            {"relativeTo", layout.relativeTo}
+        };
+    }
+    std::string path = exeDirectory + "/layout.json";
+    std::ofstream ofs(path);
+    if (ofs.is_open()) {
+        ofs << j.dump(4);
+        ofs.close();
+        std::cout << "Layout saved to: " << path << std::endl;
+    } else {
+        std::cerr << "Failed to open layout.json for writing: " << path << std::endl;
+    }
+}
+
+void Application::loadLayoutConfig() {
+    std::string path = exeDirectory + "/layout.json";
+    std::ifstream ifs(path);
+    if (!ifs.is_open()) {
+        std::cerr << "Failed to open layout.json for reading: " << path << std::endl;
+        return;
+    }
+    nlohmann::json j;
+    try {
+        ifs >> j;
+    } catch (const std::exception& e) {
+        std::cerr << "Error parsing layout.json: " << e.what() << std::endl;
+        return;
+    }
+
+    std::unordered_map<std::string, Container*> containerMap;
+    for (auto& [name, component] : muloComponents) {
+        if (auto* c = dynamic_cast<Container*>(component.get())) {
+            containerMap[name] = c;
+        }
+    }
+
+    for (auto& [name, layoutData] : j.items()) {
+        if (muloComponents.find(name) == muloComponents.end()) continue;
+        auto& component = muloComponents[name];
+        auto& layout = componentLayouts[name];
+
+        // Parent
+        std::string parentName = layoutData.value("parent", "");
+        Container* parent = nullptr;
+        if (!parentName.empty() && containerMap.count(parentName)) {
+            parent = containerMap[parentName];
+            component->setParentContainer(parent);
+            layout.parent = parent;
+        }
+
+        // Alignment
+        int alignInt = layoutData.value("alignment", static_cast<int>(Align::NONE));
+        Align align = static_cast<Align>(alignInt);
+        if (component->getLayout()) {
+            component->getLayout()->m_modifier.align(align);
+        }
+        layout.alignment = align;
+
+        // RelativeTo
+        std::string relTo = layoutData.value("relativeTo", "");
+        component->setRelativeTo(relTo);
+        layout.relativeTo = relTo;
+    }
+    std::cout << "Layout loaded from: " << path << std::endl;
 }

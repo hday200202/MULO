@@ -128,10 +128,6 @@ Effect::~Effect() {
                 std::cerr << "Unknown exception during plugin preparation for destruction" << std::endl;
             }
             
-            std::cerr << "WARNING: Skipping plugin destruction for '" << name 
-                      << "' to prevent 'pure virtual method called' crash." << std::endl;
-            std::cerr << "This is a known workaround for buggy VST plugins. Memory will be leaked." << std::endl;
-            
             plugin.release();
             DEBUG_PRINT("Plugin ownership released (leaked) to prevent crash: " << name);
             DEBUG_PRINT("Plugin released successfully: " << name);

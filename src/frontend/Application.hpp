@@ -52,7 +52,6 @@ public:
     // Core application methods
     void update();
     void render();
-    void handleEvents();
     inline bool isRunning() const { return running; }
 
     // Component management
@@ -127,7 +126,7 @@ public:
     inline void addClipToTrack(const std::string& trackName, const AudioClip& clip) { engine.getTrackByName(trackName)->addClip(clip); }
     inline void removeClipFromTrack(const std::string& trackName, size_t index) { engine.getTrackByName(trackName)->removeClip(index); }
 
-    // Audio configuration
+    // App configuration
     inline double getSampleRate() const { return engine.getSampleRate(); }
     inline void setSampleRate(const double newSampleRate) { 
         DEBUG_PRINT("Application: Setting sample rate to " << newSampleRate << "Hz");
@@ -136,6 +135,7 @@ public:
         engine.configureAudioDevice(newSampleRate);
         DEBUG_PRINT("Application: Sample rate configuration completed");
     }
+    void saveLayoutConfig();
 
     // Selected track management
     inline void setSelectedTrack(const std::string& trackName) { engine.setSelectedTrack(trackName); }
@@ -165,7 +165,11 @@ private:
     bool fullscreen = false;
     bool pendingUIRebuild = false;
     bool pendingFullscreenToggle = false;
-    bool prevCtrlShftR;
+    bool prevCtrlShftR = false;
+    bool prevDragging = false;
+
+    int draggedComponentIndex = -1;
+    sf::RectangleShape dragOverlay;
 
     std::string pendingEffectPath;
     size_t pendingEffectWindowIndex = SIZE_MAX;
@@ -204,13 +208,15 @@ private:
     void createWindow();
     void loadComponents();
     void rebuildUI();
+    void loadLayoutConfig();
     void toggleFullscreen();
     void cleanup();
+
+    void handleEvents();
+    void handleDragAndDrop();
     
     void scanAndLoadPlugins();
     bool loadPlugin(const std::string& path);
     void unloadPlugin(const std::string& name);
     void unloadAllPlugins();
-    
-    void testVSTLoading();
 };

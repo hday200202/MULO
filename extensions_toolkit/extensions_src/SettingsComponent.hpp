@@ -129,6 +129,24 @@ Container* SettingsComponent::buildLayout() {
                     uiThemeDropdown,
                     spacer(Modifier().setfixedWidth(16).align(Align::RIGHT))
                 }),
+
+                row(Modifier().setfixedHeight(64), contains{
+                    spacer(Modifier().setfixedWidth(16).align(Align::LEFT)),
+                    text(Modifier().setfixedHeight(32).setColor(app->resources.activeTheme->primary_text_color).align(Align::CENTER_Y), "Save UI Layout", app->resources.dejavuSansFont),
+                    button(
+                        Modifier()
+                            .setfixedHeight(32)
+                            .setfixedWidth(96)
+                            .setColor(app->resources.activeTheme->button_color)
+                            .align(Align::CENTER_Y | Align::RIGHT)
+                            .onLClick([&](){ app->saveLayoutConfig(); }),
+                        ButtonStyle::Pill, 
+                        "save", 
+                        app->resources.dejavuSansFont, 
+                        app->resources.activeTheme->secondary_text_color
+                    ),
+                    spacer(Modifier().setfixedWidth(16).align(Align::RIGHT))
+                }),
             }
         ),
 
