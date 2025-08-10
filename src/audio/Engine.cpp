@@ -101,6 +101,62 @@ Engine::~Engine() {
     deviceManager.removeAudioCallback(this);
 }
 
+void Engine::exportMaster(const std::string& filePath) {
+    double startTime = std::numeric_limits<double>::max();
+    double endTime = 0.0;
+
+    for (const auto& track : currentComposition->tracks) {
+        for (const auto& clip : track->getClips()) {
+            if (clip.startTime < startTime) startTime = clip.startTime;
+            double clipEnd = clip.startTime + clip.duration;
+            if (clipEnd > endTime) endTime = clipEnd;
+        }
+    }
+    if (startTime == std::numeric_limits<double>::max()) startTime = 0.0;
+
+    int sampleRate = static_cast<int>(getSampleRate());
+    int numChannels = 2; // Stereo
+    int startSample = static_cast<int>(startTime * sampleRate);
+    int endSample = static_cast<int>(endTime * sampleRate);
+    int totalSamples = endSample - startSample;
+
+    juce::AudioBuffer<float> outputBuffer(numChannels, totalSamples);
+
+    setPosition(startTime);
+
+    int blockSize = 512;
+    for (int pos = 0; pos < totalSamples; pos += blockSize) {
+        int samplesToProcess = std::min(blockSize, totalSamples - pos);
+        juce::AudioBuffer<float> tempBlock(numChannels, samplesToProcess);
+        processBlock(tempBlock, samplesToProcess);
+        for (int ch = 0; ch < numChannels; ++ch)
+            outputBuffer.copyFrom(ch, pos, tempBlock, ch, 0, samplesToProcess);
+        positionSeconds += samplesToProcess / static_cast<double>(sampleRate);
+    }
+
+    // Write to WAV using JUCE
+    juce::String basePath = juce::String(filePath);
+    if (!basePath.endsWithChar('/') && !basePath.endsWithChar('\\'))
+        basePath += juce::File::getSeparatorString();
+    juce::String fileName = currentComposition->name;
+    if (!fileName.endsWithIgnoreCase(".wav"))
+        fileName += ".wav";
+    juce::File outFile(basePath + fileName);
+    outFile = outFile.getNonexistentSibling(); // Avoid overwrite
+    outFile.getParentDirectory().createDirectory(); // Ensure directory exists
+
+    juce::WavAudioFormat wavFormat;
+    std::unique_ptr<juce::FileOutputStream> stream(outFile.createOutputStream());
+    if (stream) {
+        std::unique_ptr<juce::AudioFormatWriter> writer(
+            wavFormat.createWriterFor(stream.get(), sampleRate, numChannels, 16, {}, 0));
+        if (writer) {
+            writer->writeFromAudioSampleBuffer(outputBuffer, 0, totalSamples);
+        }
+        stream.release();
+    }
+}
+
 // Directory management
 void Engine::setVSTDirectory(const std::string& directory) {
     vstDirectory = directory;

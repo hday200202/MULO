@@ -30,6 +30,8 @@ public:
     // Get list of effects that should be loaded with deferred loading
     const std::vector<PendingEffect>& getPendingEffects() const { return pendingEffects; }
     void clearPendingEffects() { pendingEffects.clear(); }
+
+    void exportMaster(const std::string& filePath);
     
     // Playback control
     void play();
