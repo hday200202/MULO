@@ -193,6 +193,8 @@ target_include_directories(tinyfiledialogs PUBLIC ${CMAKE_SOURCE_DIR}/../externa
 set_target_properties(tinyfiledialogs PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # Link libraries for all extensions
+
+# Link libraries for all extensions, and link Firebase only to MarketplaceComponent if it exists
 foreach(target ${EXTENSION_TARGETS})
     target_link_libraries(${target} PRIVATE
         # JUCE libraries
@@ -220,10 +222,66 @@ foreach(target ${EXTENSION_TARGETS})
         $<$<STREQUAL:${CMAKE_SYSTEM_NAME},Linux>:${WEBKIT2GTK_LIBRARIES}>
         $<$<AND:$<BOOL:${UNIX}>,$<NOT:$<BOOL:${APPLE}>>>:X11>
     )
-    
+
+    # Link Firebase and add include dir only to MarketplaceComponent
+    if (target STREQUAL "MarketplaceComponent")
+        # Detect platform and set Firebase lib/include paths
+        if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+            set(FIREBASE_LIB "${CMAKE_SOURCE_DIR}/../external/linux/firebase/libfirebase.a")
+            set(FIREBASE_INCLUDE "${CMAKE_SOURCE_DIR}/../external/linux/firebase/include")
+        elseif (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+            set(FIREBASE_LIB "${CMAKE_SOURCE_DIR}/../external/mac/firebase/libfirebase.a")
+            set(FIREBASE_INCLUDE "${CMAKE_SOURCE_DIR}/../external/mac/firebase/include")
+        elseif (CMAKE_SYSTEM_NAME STREQUAL "Windows")
+            set(FIREBASE_INCLUDE "${CMAKE_SOURCE_DIR}/../external/windows/firebase/include")
+            # List all required Firebase .lib files for Windows (adjust as needed for your SDK)
+            set(FIREBASE_LIBS
+                "${CMAKE_SOURCE_DIR}/../external/windows/firebase/firebase_app.lib"
+                "${CMAKE_SOURCE_DIR}/../external/windows/firebase/firebase_firestore.lib"
+                "${CMAKE_SOURCE_DIR}/../external/windows/firebase/firebase_auth.lib"
+                "${CMAKE_SOURCE_DIR}/../external/windows/firebase/firebase.lib"
+                "${CMAKE_SOURCE_DIR}/../external/windows/firebase/firebase_storage.lib"
+                # Add more .lib files if your SDK provides them and you use those features
+            )
+            # List required Windows system libraries for Firebase
+            set(FIREBASE_SYSTEM_LIBS
+                bcrypt
+                crypt32
+                ncrypt
+                ws2_32
+            )
+        endif()
+        # Link all found Firebase libs
+        set(FIREBASE_LIBS_FOUND "")
+        foreach(lib ${FIREBASE_LIBS})
+            if (EXISTS "${lib}")
+                list(APPEND FIREBASE_LIBS_FOUND "${lib}")
+            else()
+                message(WARNING "Firebase library not found for MarketplaceComponent: ${lib}")
+            endif()
+        endforeach()
+        if (FIREBASE_LIBS_FOUND)
+            target_link_libraries(${target} PRIVATE ${FIREBASE_LIBS_FOUND})
+            message(STATUS "Linked Firebase libs to MarketplaceComponent: ${FIREBASE_LIBS_FOUND}")
+        else()
+            message(WARNING "No Firebase libraries found for MarketplaceComponent!")
+        endif()
+        # Link Windows system libraries if on Windows
+        if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
+            target_link_libraries(${target} PRIVATE ${FIREBASE_SYSTEM_LIBS})
+            message(STATUS "Linked Windows system libs to MarketplaceComponent: ${FIREBASE_SYSTEM_LIBS}")
+        endif()
+        if (EXISTS "${FIREBASE_INCLUDE}")
+            target_include_directories(${target} PRIVATE "${FIREBASE_INCLUDE}")
+            message(STATUS "Added Firebase include dir to MarketplaceComponent: ${FIREBASE_INCLUDE}")
+        else()
+            message(WARNING "Firebase include dir not found for MarketplaceComponent: ${FIREBASE_INCLUDE}")
+        endif()
+    endif()
+
     # Apply common compile definitions
     target_compile_definitions(${target} PRIVATE ${COMMON_COMPILE_DEFINITIONS})
-    
+
     # Link SFML if found
     if(SFML_FOUND)
         target_link_libraries(${target} PRIVATE
@@ -235,7 +293,7 @@ foreach(target ${EXTENSION_TARGETS})
     else()
         message(STATUS "Building ${target} without SFML support")
     endif()
-    
+
     # Platform-specific settings
     if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
         # Enable symbol export for plugins on Linux
