@@ -18,6 +18,7 @@ private:
     Button* saveButton;
     Button* exportButton;
     Button* playButton;
+    Button* extStore;
     Button* mixerButton;
     Button* settingsButton;
     
@@ -112,6 +113,23 @@ void AppControls::init() {
         "play"
     );
 
+    extStore = button(
+        Modifier()
+            .align(Align::RIGHT | Align::CENTER_Y)
+            .setHeight(.75f)
+            .setfixedWidth(96)
+            .setColor(app->resources.activeTheme->button_color)
+            .onLClick([&](){
+                app->uiState.marketplaceShown = !app->uiState.marketplaceShown;
+                DEBUG_PRINT((app->uiState.marketplaceShown ? "Show Marketplace" : "Hide Marketplace"));
+            }),
+        ButtonStyle::Pill,
+        "store",
+        app->resources.dejavuSansFont,
+        app->resources.activeTheme->secondary_text_color,
+        "store"
+    );
+
     settingsButton = button(
         Modifier()
             .align(Align::RIGHT | Align::CENTER_Y)
@@ -170,6 +188,8 @@ void AppControls::init() {
             exportButton,
             spacer(Modifier().setfixedWidth(16).align(Align::LEFT)),
             playButton,
+            spacer(Modifier().setfixedWidth(16).align(Align::RIGHT)),
+            extStore,
             spacer(Modifier().setfixedWidth(16).align(Align::RIGHT)),
             settingsButton,
             spacer(Modifier().setfixedWidth(16).align(Align::RIGHT)),

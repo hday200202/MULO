@@ -28,6 +28,7 @@ struct UIState {
     double sampleRate = 44100.0;
     int autoSaveIntervalSeconds = 300;
     bool settingsShown = false;
+    bool marketplaceShown = false;
     bool enableAutoVSTScan = false;
 
     inline void printUIState() {
