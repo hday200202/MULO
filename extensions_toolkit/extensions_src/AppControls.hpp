@@ -16,6 +16,7 @@ public:
 private:
     Button* loadButton;
     Button* saveButton;
+    Button* exportButton;
     Button* playButton;
     Button* mixerButton;
     Button* settingsButton;
@@ -72,6 +73,22 @@ void AppControls::init() {
         app->resources.dejavuSansFont,
         app->resources.activeTheme->secondary_text_color,
         "save"
+    );
+
+    exportButton = button(
+        Modifier()
+            .align(Align::LEFT | Align::CENTER_Y)
+            .setfixedWidth(96).setHeight(.75f)
+            .setColor(app->resources.activeTheme->button_color)
+            .onLClick([&](){
+                DEBUG_PRINT("Exporting Master...");
+                app->exportAudio();
+            }),
+        ButtonStyle::Pill,
+        "export",
+        app->resources.dejavuSansFont,
+        app->resources.activeTheme->secondary_text_color,
+        "export"
     );
 
     playButton = button(
@@ -149,6 +166,8 @@ void AppControls::init() {
             loadButton,
             spacer(Modifier().setfixedWidth(16).align(Align::LEFT)),
             saveButton,
+            spacer(Modifier().setfixedWidth(16).align(Align::LEFT)),
+            exportButton,
             spacer(Modifier().setfixedWidth(16).align(Align::LEFT)),
             playButton,
             spacer(Modifier().setfixedWidth(16).align(Align::RIGHT)),

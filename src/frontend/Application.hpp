@@ -83,6 +83,10 @@ public:
     inline std::vector<std::unique_ptr<Track>>& getAllTracks() { return engine.getAllTracks(); }
     inline void addTrack(const std::string& name, const std::string& samplePath) { engine.addTrack(name, samplePath); }
     inline void removeTrack(const std::string& name) { pendingTrackRemoveName = name; }
+    inline void exportAudio() {
+        std::string path = selectDirectory();
+        engine.exportMaster(path);
+    }
 
     // VST Effect management
     inline void addEffect(const std::string& filePath) {
