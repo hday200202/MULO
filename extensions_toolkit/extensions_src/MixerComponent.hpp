@@ -114,6 +114,42 @@ void MixerComponent::update() {
         forceUpdate = true;
         return; // Don't update slider values during rebuild
     }
+
+    // Handle "last shown wins" logic - if mixer becomes visible, hide piano roll
+    if (mixerShown && !wasVisible) {
+        // Mixer is being shown, hide piano roll and reset its layout
+        if (auto* pianoRoll = app->getComponent("piano_roll")) {
+            if (pianoRoll->getLayout()) {
+                pianoRoll->getLayout()->m_modifier.setVisible(false);
+                pianoRoll->getLayout()->m_modifier.setWidth(0.f);
+            }
+            pianoRoll->hide();
+        }
+        wasVisible = true;
+    }
+    else if (!mixerShown && wasVisible) {
+        wasVisible = false;
+    }
+
+    // Handle timeline visibility - hide timeline when mixer is shown
+    if (auto* timelineComponent = app->getComponent("timeline")) {
+        if (timelineComponent->getLayout()) {
+            if (mixerShown) {
+                timelineComponent->getLayout()->m_modifier.setVisible(false);
+                timelineComponent->getLayout()->m_modifier.setWidth(0.f);
+                timelineComponent->hide();
+            } else {
+                // Only restore timeline if piano roll is also hidden
+                if (auto* pianoRoll = app->getComponent("piano_roll")) {
+                    if (!pianoRoll->isVisible()) {
+                        timelineComponent->getLayout()->m_modifier.setVisible(true);
+                        timelineComponent->getLayout()->m_modifier.setWidth(1.f);
+                        timelineComponent->show();
+                    }
+                }
+            }
+        }
+    }
 }
 
 bool MixerComponent::handleEvents() {
@@ -124,22 +160,15 @@ bool MixerComponent::handleEvents() {
 
     if (layout && mixerShown) {
         layout->m_modifier.setVisible(true);
-        if (auto* timelineComponent = app->getComponent("timeline")) {
-            timelineComponent->hide();
-        }
+        layout->m_modifier.setWidth(1.f);  // Ensure mixer gets full width when shown
         
         // Sync sliders to engine when component becomes visible
         if (!wasVisible) {
             syncSlidersToEngine();
-            wasVisible = true;
         }
     }
     else if (layout && !mixerShown) {
         layout->m_modifier.setVisible(false);
-        if (auto* timelineComponent = app->getComponent("timeline")) {
-            timelineComponent->show();
-        }
-        wasVisible = false;
         return false;
     }
     

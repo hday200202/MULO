@@ -19,6 +19,7 @@ private:
     Button* exportButton;
     Button* playButton;
     Button* metronomeButton;
+    Button* pianoRollButton;
     Button* extStore;
     Button* mixerButton;
     Button* settingsButton;
@@ -129,6 +130,31 @@ void AppControls::init() {
         "mn"
     );
 
+    pianoRollButton = button(
+        Modifier()
+            .align(Align::RIGHT | Align::CENTER_Y)
+            .setHeight(.75f)
+            .setfixedWidth(96)
+            .setColor(app->resources.activeTheme->button_color)
+            .onLClick([&](){
+                auto* pianoRoll = app->getComponent("piano_roll");
+                if (pianoRoll) {
+                    if (pianoRoll->isVisible()) {
+                        pianoRoll->hide();
+                    } else {
+                        pianoRoll->show();
+                    }
+                } else {
+                    DEBUG_PRINT("Piano Roll component not found!");
+                }
+            }),
+        ButtonStyle::Pill,
+        "|||",
+        app->resources.dejavuSansFont,
+        app->resources.activeTheme->secondary_text_color,
+        "piano_roll"
+    );
+
     extStore = button(
         Modifier()
             .align(Align::RIGHT | Align::CENTER_Y)
@@ -206,6 +232,8 @@ void AppControls::init() {
             playButton,
             spacer(Modifier().setfixedWidth(16).align(Align::CENTER_X)),
             metronomeButton,
+            spacer(Modifier().setfixedWidth(16).align(Align::RIGHT)),
+            pianoRollButton,
             spacer(Modifier().setfixedWidth(16).align(Align::RIGHT)),
             extStore,
             spacer(Modifier().setfixedWidth(16).align(Align::RIGHT)),
