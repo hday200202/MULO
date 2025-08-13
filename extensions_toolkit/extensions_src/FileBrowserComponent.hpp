@@ -1,10 +1,11 @@
-
 #pragma once
 
 #include "MULOComponent.hpp"
 #include "FileTree.hpp"
 #include "../../src/audio/VSTPluginManager.hpp"
 #include "../../src/DebugConfig.hpp"
+#include <nlohmann/json.hpp>
+#include <fstream>
 
 class FileBrowserComponent : public MULOComponent {
 public:
@@ -16,21 +17,42 @@ public:
     bool handleEvents() override;
 
 private:
+    // In-memory list for favorite items - just store paths as strings
+    std::vector<std::string> favoriteItems; 
+    bool isFavoritesOpen = true; // Manages expand/collapse state for favorites
+
     FileTree fileTree;
     FileTree vstTree;
+
+    // Flags to trigger UI rebuilds
+    bool favoritesTreeNeedsRebuild = false;
     bool fileTreeNeedsRebuild = false;
     bool vstTreeNeedsRebuild = false;
     
+    // Main UI builder function
     void buildFileTreeUI();
+
+    // Recursive functions to build the tree views
     void buildFileTreeUIRecursive(const FileTree& tree, int indentLevel);
     void buildVSTTreeUIRecursive(const FileTree& tree, int indentLevel);
+
+    // Functions to handle tree node interactions
     void toggleTreeNodeByPath(const std::string& path);
     void toggleVSTTreeNodeByPath(const std::string& path);
+
+    // In-memory functions to handle favorites
+    void addFavorite(const std::string& path);
+    void removeFavorite(const std::string& path);
+    void saveFavorites();
+    void loadFavorites();
+
+    // Directory browsing functions
     void browseForDirectory();
     void browseForVSTDirectory();
 };
 
 #include "Application.hpp"
+#include <algorithm> // For std::remove_if and std::find_if
 
 FileBrowserComponent::FileBrowserComponent() {
     name = "file_browser";
@@ -53,17 +75,18 @@ void FileBrowserComponent::init() {
         "file_browser_scroll_column"
     );
     
+    // Load favorites from file
+    loadFavorites();
+    
     if (!app->uiState.fileBrowserDirectory.empty() && 
         std::filesystem::is_directory(app->uiState.fileBrowserDirectory)) {
         fileTree.setRootDirectory(app->uiState.fileBrowserDirectory);
     }
     
-    // Initialize VST directory with config value only (no auto-scanning)
     if (!app->uiState.vstDirecory.empty() && 
         std::filesystem::is_directory(app->uiState.vstDirecory)) {
         vstTree.setRootDirectory(app->uiState.vstDirecory);
     }
-    // Removed auto-detection to prevent crashes - user must manually select VST directory
     
     buildFileTreeUI();
     if (parentContainer) {
@@ -73,12 +96,13 @@ void FileBrowserComponent::init() {
 }
 
 void FileBrowserComponent::update() {
-    
+    // Not needed
 }
 
 bool FileBrowserComponent::handleEvents() {
-    if (fileTreeNeedsRebuild || vstTreeNeedsRebuild) {
+    if (favoritesTreeNeedsRebuild || fileTreeNeedsRebuild || vstTreeNeedsRebuild) {
         buildFileTreeUI();
+        favoritesTreeNeedsRebuild = false;
         fileTreeNeedsRebuild = false;
         vstTreeNeedsRebuild = false;
         forceUpdate = true;
@@ -86,6 +110,8 @@ bool FileBrowserComponent::handleEvents() {
 
     return forceUpdate;
 }
+
+// --- Directory Browsing ---
 
 void FileBrowserComponent::browseForDirectory() {
     std::string selectedDir = app->selectDirectory();
@@ -107,8 +133,72 @@ void FileBrowserComponent::browseForVSTDirectory() {
         app->uiState.vstDirecory = selectedDir;
         app->uiState.saveConfig();
     }
-    // Removed auto-fallback to prevent crashes - user must manually select directory
 }
+
+// --- Favorites Management (In-Memory) ---
+
+void FileBrowserComponent::addFavorite(const std::string& path) {
+    auto it = std::find(favoriteItems.begin(), favoriteItems.end(), path);
+
+    if (it != favoriteItems.end()) {
+        return; // Already a favorite
+    }
+
+    // Convert to unix-like path with forward slashes
+    std::string unixPath = std::filesystem::path(path).generic_string();
+    favoriteItems.push_back(unixPath);
+    saveFavorites();
+    favoritesTreeNeedsRebuild = true;
+}
+
+void FileBrowserComponent::removeFavorite(const std::string& path) {
+    // Convert to unix-like path for comparison
+    std::string unixPath = std::filesystem::path(path).generic_string();
+    
+    favoriteItems.erase(
+        std::remove(favoriteItems.begin(), favoriteItems.end(), unixPath),
+        favoriteItems.end()
+    );
+    saveFavorites();
+    favoritesTreeNeedsRebuild = true;
+}
+
+void FileBrowserComponent::saveFavorites() {
+    try {
+        nlohmann::json favoritesJson = favoriteItems;
+        
+        std::ofstream file("favorites.json");
+        if (file.is_open()) {
+            file << favoritesJson.dump(2);
+            file.close();
+        }
+    } catch (const std::exception& e) {
+        // Silently handle save errors
+    }
+}
+
+void FileBrowserComponent::loadFavorites() {
+    try {
+        std::ifstream file("favorites.json");
+        if (file.is_open()) {
+            nlohmann::json favoritesJson;
+            file >> favoritesJson;
+            file.close();
+            
+            favoriteItems.clear();
+            for (const auto& path : favoritesJson) {
+                if (path.is_string() && std::filesystem::exists(path.get<std::string>())) {
+                    favoriteItems.push_back(path.get<std::string>());
+                }
+            }
+        }
+    } catch (const std::exception& e) {
+        // Silently handle load errors, start with empty favorites
+        favoriteItems.clear();
+    }
+}
+
+// --- UI Building ---
 
 void FileBrowserComponent::buildFileTreeUI() {
     auto* scrollColumn = static_cast<ScrollableColumn*>(layout);
@@ -116,8 +206,93 @@ void FileBrowserComponent::buildFileTreeUI() {
 
     scrollColumn->clear();
 
+    // Favorites Section
     scrollColumn->addElements({
-        spacer(Modifier().setfixedHeight(16).align(Align::TOP)),
+        spacer(Modifier().setfixedHeight(16)),
+        row(Modifier().setfixedHeight(48),
+        contains{
+            spacer(Modifier().setfixedWidth(16).align(Align::LEFT)),
+            text(
+                Modifier().align(Align::LEFT | Align::CENTER_Y).setfixedHeight(32).setColor(app->resources.activeTheme->primary_text_color),
+                "favorites",
+                app->resources.dejavuSansFont
+            ),
+        }),
+    });
+
+    std::string favSymbol = isFavoritesOpen ? "[-] " : "[+] ";
+    auto favRootTextElement = text(
+        Modifier()
+            .setfixedHeight(28)
+            .setColor(app->resources.activeTheme->primary_text_color)
+            .onLClick([this](){
+                isFavoritesOpen = !isFavoritesOpen;
+                favoritesTreeNeedsRebuild = true;
+            }),
+        favSymbol + "Favorites",
+        app->resources.dejavuSansFont
+    );
+
+    scrollColumn->addElements({
+        row(Modifier().setfixedHeight(28), contains{
+            spacer(Modifier().setfixedWidth(20.f)),
+            favRootTextElement,
+        }),
+        spacer(Modifier().setfixedHeight(12))
+    });
+
+    if (isFavoritesOpen) {
+        for (const auto& favPath : favoriteItems) {
+            std::string favName = std::filesystem::path(favPath).filename().string();
+            
+            if (favName.empty()) {
+                size_t lastSlash = favPath.find_last_of("/\\");
+                if (lastSlash != std::string::npos && lastSlash + 1 < favPath.length()) {
+                    favName = favPath.substr(lastSlash + 1);
+                } else {
+                    favName = "Unknown File";
+                }
+            }
+            
+            std::string displayName;
+            std::string ext = std::filesystem::path(favPath).extension().string();
+            std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+            
+            Modifier textModifier = Modifier().setfixedHeight(28).setColor(app->resources.activeTheme->primary_text_color);
+            
+            if (ext == ".vst" || ext == ".vst3") {
+                displayName = "[v] " + favName;
+                textModifier.onLClick([this, favPath](){
+                    app->addEffect(favPath);
+                });
+            } else {
+                displayName = "[f] " + favName;
+                textModifier.onLClick([this, favPath](){
+                    juce::File sampleFile(favPath);
+                    std::string trackName = sampleFile.getFileNameWithoutExtension().toStdString();
+                    app->addTrack(trackName, favPath);
+                });
+            }
+            
+            textModifier.onRClick([this, favPath](){ 
+                removeFavorite(favPath); 
+            });
+            
+            auto textElement = text(textModifier, displayName, app->resources.dejavuSansFont);
+            
+            scrollColumn->addElements({
+                row(Modifier().setfixedHeight(28), contains{
+                    spacer(Modifier().setfixedWidth(40.f)),
+                    textElement,
+                }),
+                spacer(Modifier().setfixedHeight(12))
+            });
+        }
+    }
+
+    // User Library Section
+    scrollColumn->addElements({
+        spacer(Modifier().setfixedHeight(16)),
         row(Modifier().setfixedHeight(48),
         contains{
             spacer(Modifier().setfixedWidth(16).align(Align::LEFT)),
@@ -126,7 +301,6 @@ void FileBrowserComponent::buildFileTreeUI() {
                 "user library",
                 app->resources.dejavuSansFont
             ),
-
             button(
                 Modifier()
                     .setfixedHeight(48)
@@ -157,7 +331,7 @@ void FileBrowserComponent::buildFileTreeUI() {
                 .onLClick([this](){
                     fileTree.toggleOpen();
                     fileTreeNeedsRebuild = true;
-            }),
+                }),
             displayName,
             app->resources.dejavuSansFont
         );
@@ -180,6 +354,7 @@ void FileBrowserComponent::buildFileTreeUI() {
         }
     }
 
+    // VST Plugins Section
     scrollColumn->addElements({
         spacer(Modifier().setfixedHeight(24)),
         row(Modifier().setfixedHeight(48),
@@ -190,7 +365,6 @@ void FileBrowserComponent::buildFileTreeUI() {
                 "vst3 plugins",
                 app->resources.dejavuSansFont
             ),
-
             button(
                 Modifier()
                     .setfixedHeight(48)
@@ -221,7 +395,7 @@ void FileBrowserComponent::buildFileTreeUI() {
                 .onLClick([this](){
                     vstTree.toggleOpen();
                     vstTreeNeedsRebuild = true;
-            }),
+                }),
             displayName,
             app->resources.dejavuSansFont
         );
@@ -252,35 +426,33 @@ void FileBrowserComponent::buildFileTreeUIRecursive(const FileTree& tree, int in
     float indent = indentLevel * 20.f;
     std::string displayName = tree.getName();
     Modifier textModifier = Modifier().setfixedHeight(28).setColor(app->resources.activeTheme->primary_text_color);
+    std::string filePath = tree.getPath();
     
+    // Convert to unix-like path for comparison with favorites
+    std::string unixPath = std::filesystem::path(filePath).generic_string();
+    auto favIt = std::find(favoriteItems.begin(), favoriteItems.end(), unixPath);
+    bool isFavorite = favIt != favoriteItems.end();
+
     if (tree.isDirectory()) {
         std::string symbol = tree.isOpen() ? "[-] " : "[+] ";
         displayName = symbol + displayName;
-        std::string treePath = tree.getPath();
-        
-        textModifier.onLClick([this, treePath](){
-            toggleTreeNodeByPath(treePath);
+        textModifier.onLClick([this, filePath](){
+            toggleTreeNodeByPath(filePath);
             fileTreeNeedsRebuild = true;
         });
     } else if (tree.isAudioFile()) {
         displayName = "[f] " + displayName;
-        std::string filePath = tree.getPath();
-        
         textModifier.onLClick([this, filePath](){
             juce::File sampleFile(filePath);
             std::string trackName = sampleFile.getFileNameWithoutExtension().toStdString();
-
             app->addTrack(trackName, filePath);
         });
-    } else if (tree.isVSTFile()) {
-        displayName = "[v] " + displayName;
-        std::string filePath = tree.getPath();
         
-        // Add VST to currently selected track - DEFERRED to avoid OpenGL context conflicts
-        textModifier.onLClick([this, filePath](){
-            std::cout << "FileBrowser: Requesting VST load via unified system: " << filePath << std::endl;
-            app->addEffect(filePath);
-        });
+        if (isFavorite) {
+            textModifier.onRClick([this, filePath](){ removeFavorite(filePath); });
+        } else {
+            textModifier.onRClick([this, filePath](){ addFavorite(filePath); });
+        }
     }
 
     auto textElement = text(textModifier, displayName, app->resources.dejavuSansFont);
@@ -303,6 +475,7 @@ void FileBrowserComponent::buildFileTreeUIRecursive(const FileTree& tree, int in
     }
 }
 
+
 void FileBrowserComponent::buildVSTTreeUIRecursive(const FileTree& tree, int indentLevel) {
     auto* scrollColumn = static_cast<ScrollableColumn*>(layout);
     if (!scrollColumn) return;
@@ -310,25 +483,31 @@ void FileBrowserComponent::buildVSTTreeUIRecursive(const FileTree& tree, int ind
     float indent = indentLevel * 20.f;
     std::string displayName = tree.getName();
     Modifier textModifier = Modifier().setfixedHeight(28).setColor(app->resources.activeTheme->primary_text_color);
-    
+    std::string filePath = tree.getPath();
+
+    // Convert to unix-like path for comparison with favorites
+    std::string unixPath = std::filesystem::path(filePath).generic_string();
+    auto favIt = std::find(favoriteItems.begin(), favoriteItems.end(), unixPath);
+    bool isFavorite = favIt != favoriteItems.end();
+
     if (tree.isDirectory()) {
         std::string symbol = tree.isOpen() ? "[-] " : "[+] ";
         displayName = symbol + displayName;
-        std::string treePath = tree.getPath();
-        
-        textModifier.onLClick([this, treePath](){
-            toggleVSTTreeNodeByPath(treePath);
+        textModifier.onLClick([this, filePath](){
+            toggleVSTTreeNodeByPath(filePath);
             vstTreeNeedsRebuild = true;
         });
     } else if (tree.isVSTFile()) {
         displayName = "[v] " + displayName;
-        std::string filePath = tree.getPath();
-        
-        // Add VST to currently selected track - DEFERRED to avoid OpenGL context conflicts
         textModifier.onLClick([this, filePath](){
-            std::cout << "FileBrowser: Requesting VST load via unified system: " << filePath << std::endl;
             app->addEffect(filePath);
         });
+
+        if (isFavorite) {
+            textModifier.onRClick([this, filePath](){ removeFavorite(filePath); });
+        } else {
+            textModifier.onRClick([this, filePath](){ addFavorite(filePath); });
+        }
     }
 
     auto textElement = text(textModifier, displayName, app->resources.dejavuSansFont);

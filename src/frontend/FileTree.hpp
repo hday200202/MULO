@@ -31,7 +31,8 @@ public:
     const std::string& getPath() const;
     
     const std::string& getName() const;
-    
+    inline void setName(const std::string& newName) { name = newName; }
+
     bool isDirectory() const;
     
     bool isAudioFile() const;
