@@ -87,6 +87,11 @@ public:
         std::string path = selectDirectory();
         engine.exportMaster(path);
     }
+    inline void setMetronomeEnabled(bool enabled) { engine.setMetronomeEnabled(enabled); }
+    inline bool isMetronomeEnabled() const { return engine.isMetronomeEnabled(); }
+
+    inline void playSound(const std::string& filePath, float db) { engine.playSound(filePath, db); }
+    inline void playSound(const juce::File& file, float db) { engine.playSound(file, db); }
 
     // VST Effect management
     inline void addEffect(const std::string& filePath) {
@@ -124,6 +129,7 @@ public:
     inline float getBpm() const { return engine.getBpm(); }
     inline double getPosition() const { return engine.getPosition(); }
     inline void setPosition(double seconds) { engine.setPosition(seconds); }
+    inline std::pair<int, int> getTimeSignature() {return engine.getTimeSignature(); }
 
     // Audio clip management
     inline AudioClip* getReferenceClip(const std::string& trackName) { return engine.getTrackByName(trackName)->getReferenceClip(); }
@@ -148,7 +154,7 @@ public:
     inline bool hasSelectedTrack() const { return engine.hasSelectedTrack(); }
 
     // Composition management
-    inline void loadComposition(const std::string& path) { engine.loadComposition(path); }
+    inline void loadComposition(const std::string& path) { engine.loadComposition(path); engine.generateMetronomeTrack(); }
     inline std::string getCurrentCompositionName() const { return engine.getCurrentCompositionName(); }
     inline void saveState() { engine.saveState(); }
     inline void saveToFile(const std::string& path) const { engine.save(path); }

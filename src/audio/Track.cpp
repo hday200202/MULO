@@ -1,4 +1,3 @@
-
 #include "Track.hpp"
 #include "../DebugConfig.hpp"
 #include <juce_dsp/juce_dsp.h>
@@ -32,115 +31,91 @@ void Track::process(double playheadSeconds,
                     juce::AudioBuffer<float>& output,
                     int numSamples,
                     double sampleRate) {
-    const AudioClip* active = nullptr;
-
+    // Mix all overlapping clips
     for (const auto& c : clips) {
         if (playheadSeconds < c.startTime + c.duration &&
             playheadSeconds + (double)numSamples / sampleRate > c.startTime)
         {
-            active = &c;
-            break;
-        }
-    }
+            auto reader = std::unique_ptr<juce::AudioFormatReader>(
+                formatManager.createReaderFor(c.sourceFile));
+            if (!reader) {
+                DBG("Failed to create reader for: " << c.sourceFile.getFullPathName());
+                continue;
+            }
 
-    if (!active)
-        return;
+            double blockStartTimeSeconds = playheadSeconds;
+            double blockEndTimeSeconds = playheadSeconds + (double)numSamples / sampleRate;
 
-    auto reader = std::unique_ptr<juce::AudioFormatReader>(
-        formatManager.createReaderFor(active->sourceFile));
+            double readStartTimeInClip = juce::jmax(0.0, blockStartTimeSeconds - c.startTime);
+            double readEndTimeInClip = juce::jmin(c.duration, blockEndTimeSeconds - c.startTime);
 
-    if (!reader) {
-        DBG("Failed to create reader for: " << active->sourceFile.getFullPathName());
-        return;
-    }
+            if (readStartTimeInClip >= c.duration || readEndTimeInClip <= 0.0) {
+                continue;
+            }
 
-    double blockStartTimeSeconds = playheadSeconds;
-    double blockEndTimeSeconds = playheadSeconds + (double)numSamples / sampleRate;
+            double sourceSampleRate = reader->sampleRate;
+            juce::int64 sourceFileStartSample = static_cast<juce::int64>((c.offset + readStartTimeInClip) * sourceSampleRate);
+            juce::int64 sourceFileEndSample = static_cast<juce::int64>((c.offset + readEndTimeInClip) * sourceSampleRate);
+            juce::int64 numSourceSamplesToRead = sourceFileEndSample - sourceFileStartSample;
 
-    double readStartTimeInClip = juce::jmax(0.0, blockStartTimeSeconds - active->startTime);
-    double readEndTimeInClip = juce::jmin(active->duration, blockEndTimeSeconds - active->startTime);
+            juce::int64 outputBufferStartSample = static_cast<juce::int64>(juce::jmax(0.0, (c.startTime - blockStartTimeSeconds) * sampleRate));
+            if (numSourceSamplesToRead <= 0) {
+                continue;
+            }
+            outputBufferStartSample = juce::jmax((juce::int64)0, outputBufferStartSample);
 
-    if (readStartTimeInClip >= active->duration || readEndTimeInClip <= 0.0) {
-        return;
-    }
+            juce::AudioBuffer<float> tempClipBuf(reader->numChannels, (int)numSourceSamplesToRead);
+            tempClipBuf.clear();
+            reader->read(&tempClipBuf, 0, (int)numSourceSamplesToRead, sourceFileStartSample, true, true);
 
-    double sourceSampleRate = reader->sampleRate;
-    juce::int64 sourceFileStartSample = static_cast<juce::int64>((active->offset + readStartTimeInClip) * sourceSampleRate);
-    juce::int64 sourceFileEndSample = static_cast<juce::int64>((active->offset + readEndTimeInClip) * sourceSampleRate);
-    juce::int64 numSourceSamplesToRead = sourceFileEndSample - sourceFileStartSample;
-
-    juce::int64 outputBufferStartSample = static_cast<juce::int64>(juce::jmax(0.0, (active->startTime - blockStartTimeSeconds) * sampleRate));
-    
-    if (numSourceSamplesToRead <= 0) {
-        return;
-    }
-    
-    outputBufferStartSample = juce::jmax((juce::int64)0, outputBufferStartSample);
-
-    juce::AudioBuffer<float> tempClipBuf(reader->numChannels, (int)numSourceSamplesToRead);
-    tempClipBuf.clear();
-    reader->read(&tempClipBuf, 0, (int)numSourceSamplesToRead, sourceFileStartSample, true, true);
-
-    if (std::abs(sourceSampleRate - sampleRate) > 0.1) {
-        double ratio = sampleRate / sourceSampleRate;
-        int numOutputSamples = static_cast<int>(numSourceSamplesToRead * ratio + 0.5);
-        
-        juce::AudioBuffer<float> resampledBuffer(reader->numChannels, numOutputSamples);
-        resampledBuffer.clear();
-        
-        for (int ch = 0; ch < tempClipBuf.getNumChannels(); ++ch) {
-            const float* inputData = tempClipBuf.getReadPointer(ch);
-            float* outputData = resampledBuffer.getWritePointer(ch);
-            
-            for (int i = 0; i < numOutputSamples; ++i) {
-                double sourcePos = (double)i / ratio;
-                int baseIndex = (int)sourcePos;
-                double fraction = sourcePos - baseIndex;
-                
-                float sample = 0.0f;
-                
-                if (baseIndex >= 0 && baseIndex < numSourceSamplesToRead - 1) {
-                    float y0 = inputData[baseIndex];
-                    float y1 = inputData[baseIndex + 1];
-                    
-                    double t = fraction;
-                    double t2 = t * t;
-                    double t3 = t2 * t;
-                    
-                    double h00 = 2.0 * t3 - 3.0 * t2 + 1.0;
-                    double h01 = -2.0 * t3 + 3.0 * t2;
-                    
-                    sample = (float)(h00 * y0 + h01 * y1);
-                    
-                } else if (baseIndex >= 0 && baseIndex < numSourceSamplesToRead) {
-                    sample = inputData[baseIndex];
+            if (std::abs(sourceSampleRate - sampleRate) > 0.1) {
+                double ratio = sampleRate / sourceSampleRate;
+                int numOutputSamples = static_cast<int>(numSourceSamplesToRead * ratio + 0.5);
+                juce::AudioBuffer<float> resampledBuffer(reader->numChannels, numOutputSamples);
+                resampledBuffer.clear();
+                for (int ch = 0; ch < tempClipBuf.getNumChannels(); ++ch) {
+                    const float* inputData = tempClipBuf.getReadPointer(ch);
+                    float* outputData = resampledBuffer.getWritePointer(ch);
+                    for (int i = 0; i < numOutputSamples; ++i) {
+                        double sourcePos = (double)i / ratio;
+                        int baseIndex = (int)sourcePos;
+                        double fraction = sourcePos - baseIndex;
+                        float sample = 0.0f;
+                        if (baseIndex >= 0 && baseIndex < numSourceSamplesToRead - 1) {
+                            float y0 = inputData[baseIndex];
+                            float y1 = inputData[baseIndex + 1];
+                            double t = fraction;
+                            double t2 = t * t;
+                            double t3 = t2 * t;
+                            double h00 = 2.0 * t3 - 3.0 * t2 + 1.0;
+                            double h01 = -2.0 * t3 + 3.0 * t2;
+                            sample = (float)(h00 * y0 + h01 * y1);
+                        } else if (baseIndex >= 0 && baseIndex < numSourceSamplesToRead) {
+                            sample = inputData[baseIndex];
+                        }
+                        outputData[i] = sample;
+                    }
                 }
-                
-                outputData[i] = sample;
+                tempClipBuf = std::move(resampledBuffer);
+                numSourceSamplesToRead = numOutputSamples;
+            }
+
+            juce::int64 numSamplesToWrite = juce::jmin((juce::int64)numSamples - outputBufferStartSample, numSourceSamplesToRead);
+            if (numSamplesToWrite <= 0) {
+                continue;
+            }
+
+            float gain = juce::Decibels::decibelsToGain(volumeDb) * c.volume;
+            for (int ch = 0; ch < output.getNumChannels(); ++ch) {
+                float panL = (1.0f - juce::jlimit(-1.f, 1.f, pan)) * 0.5f;
+                float panR = (1.0f + juce::jlimit(-1.f, 1.f, pan)) * 0.5f;
+                float panGain = (ch == 0) ? panL : panR;
+                output.addFrom(ch, (int)outputBufferStartSample,
+                               tempClipBuf, ch % tempClipBuf.getNumChannels(),
+                               0, (int)numSamplesToWrite,
+                               gain * panGain);
             }
         }
-        
-        tempClipBuf = std::move(resampledBuffer);
-        numSourceSamplesToRead = numOutputSamples;
-    }
-
-    juce::int64 numSamplesToWrite = juce::jmin((juce::int64)numSamples - outputBufferStartSample, numSourceSamplesToRead);
-    
-    if (numSamplesToWrite <= 0) {
-        return;
-    }
-
-    float gain = juce::Decibels::decibelsToGain(volumeDb) * active->volume;
-
-    for (int ch = 0; ch < output.getNumChannels(); ++ch) {
-        float panL = (1.0f - juce::jlimit(-1.f, 1.f, pan)) * 0.5f;
-        float panR = (1.0f + juce::jlimit(-1.f, 1.f, pan)) * 0.5f;
-        float panGain = (ch == 0) ? panL : panR;
-        
-        output.addFrom(ch, (int)outputBufferStartSample,
-                       tempClipBuf, ch % tempClipBuf.getNumChannels(),
-                       0, (int)numSamplesToWrite,
-                       gain * panGain);
     }
 }
 
@@ -298,4 +273,8 @@ void Track::updateEffectIndices() {
             effects[i]->setIndex(static_cast<int>(i));
         }
     }
+}
+
+void Track::clearClips() {
+    clips.clear();
 }

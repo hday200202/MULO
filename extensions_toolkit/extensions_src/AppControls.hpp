@@ -18,6 +18,7 @@ private:
     Button* saveButton;
     Button* exportButton;
     Button* playButton;
+    Button* metronomeButton;
     Button* extStore;
     Button* mixerButton;
     Button* settingsButton;
@@ -113,6 +114,21 @@ void AppControls::init() {
         "play"
     );
 
+    metronomeButton =  button(
+        Modifier()
+            .align(Align::CENTER_X | Align::CENTER_Y)
+            .setfixedWidth(96).setHeight(.75f)
+            .setColor(app->resources.activeTheme->button_color)
+            .onLClick([&](){
+                app->setMetronomeEnabled(!app->isMetronomeEnabled());
+            }),
+        ButtonStyle::Pill,
+        "mn",
+        app->resources.dejavuSansFont,
+        app->resources.activeTheme->secondary_text_color,
+        "mn"
+    );
+
     extStore = button(
         Modifier()
             .align(Align::RIGHT | Align::CENTER_Y)
@@ -188,6 +204,8 @@ void AppControls::init() {
             exportButton,
             spacer(Modifier().setfixedWidth(16).align(Align::LEFT)),
             playButton,
+            spacer(Modifier().setfixedWidth(16).align(Align::CENTER_X)),
+            metronomeButton,
             spacer(Modifier().setfixedWidth(16).align(Align::RIGHT)),
             extStore,
             spacer(Modifier().setfixedWidth(16).align(Align::RIGHT)),

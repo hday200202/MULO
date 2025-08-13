@@ -103,9 +103,29 @@ public:
     void undo();
     void redo();
 
+    void playSound(const std::string& filePath, float volume);
+    void playSound(const juce::File& file, float volume);
+
+    // Metronome track support
+    void setMetronomeEnabled(bool enabled);
+    inline bool isMetronomeEnabled() const { return metronomeEnabled; }
+    void generateMetronomeTrack();
+
 private:
     juce::AudioDeviceManager deviceManager;
     std::unique_ptr<Composition> currentComposition;
+
+    // Metronome and sample preview
+    std::unique_ptr<juce::AudioFormatReaderSource> previewSource;
+    juce::AudioTransportSource previewTransport;
+
+    // Metronome track support
+    std::unique_ptr<Track> metronomeTrack;
+    bool metronomeEnabled = false;
+    std::string metronomeDownbeatSample = "metronomeDown.wav";
+    std::string metronomeUpbeatSample = "metronomeUp.wav";
+    juce::File metronomeDownbeatFile;
+    juce::File metronomeUpbeatFile;
 
     bool playing = false;
     double sampleRate = 44100.0;
@@ -124,7 +144,6 @@ private:
     std::string currentState;  // Current serialized engine state
     std::vector<PendingEffect> pendingEffects;  // Effects to be loaded with deferred loading
 
-    void processBlock(juce::AudioBuffer<float>& outputBuffer, int numSamples);
 };
 
 inline float floatToDecibels(float linear, float minusInfinityDb = -100.0f) {

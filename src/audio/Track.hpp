@@ -26,6 +26,7 @@ public:
     void addClip(const AudioClip& clip);
     void removeClip(int index);
     const std::vector<AudioClip>& getClips() const;
+    void clearClips();
     void setReferenceClip(const AudioClip& clip);
     AudioClip* getReferenceClip();
 

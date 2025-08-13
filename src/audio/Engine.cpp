@@ -46,8 +46,18 @@ Engine::Engine() {
 
     masterTrack = std::make_unique<Track>(formatManager);
     masterTrack->setName("Master");
-    
     selectedTrackName = "Master";
+
+    // Directly set metronome sample files based on known path relative to executable
+    juce::File exeFile = juce::File::getSpecialLocation(juce::File::SpecialLocationType::currentExecutableFile);
+    juce::File exeDir = exeFile.getParentDirectory();
+    // Walk up until we find the directory containing 'assets'
+    while (!exeDir.isRoot() && !exeDir.getChildFile("assets").isDirectory()) {
+        exeDir = exeDir.getParentDirectory();
+    }
+    juce::File soundsDir = exeDir.getChildFile("assets").getChildFile("sounds");
+    metronomeDownbeatFile = soundsDir.getChildFile(metronomeDownbeatSample);
+    metronomeUpbeatFile = soundsDir.getChildFile(metronomeUpbeatSample);
 }
 
 bool Engine::configureAudioDevice(double desiredSampleRate, int bufferSize) {
@@ -101,16 +111,75 @@ Engine::~Engine() {
     deviceManager.removeAudioCallback(this);
 }
 
+void Engine::setMetronomeEnabled(bool enabled) {
+    metronomeEnabled = enabled;
+}
+
+void Engine::generateMetronomeTrack() {
+    if (!currentComposition) {
+        currentComposition = std::make_unique<Composition>();
+    }
+    metronomeTrack = std::make_unique<Track>(formatManager);
+    metronomeTrack->setName("__metronome__");
+    metronomeTrack->prepareToPlay(sampleRate, currentBufferSize);
+    metronomeTrack->clearClips();
+
+    double bpm = getBpm();
+    auto [num, den] = getTimeSignature();
+    double beatLength = 60.0 / bpm;
+    double barLength = beatLength * num;
+    double projectLength = 0.0;
+    bool hasClips = false;
+    for (const auto& track : currentComposition->tracks) {
+        for (const auto& clip : track->getClips()) {
+            hasClips = true;
+            double end = clip.startTime + clip.duration;
+            if (end > projectLength) projectLength = end;
+        }
+    }
+    // If no clips, set a default project length (e.g., 4 bars)
+    if (!hasClips) {
+        projectLength = 4 * barLength;
+    }
+    int numBars = static_cast<int>(std::ceil(projectLength / barLength));
+    for (int bar = 0; bar < numBars; ++bar) {
+        double barStart = bar * barLength;
+        for (int beat = 0; beat < num; ++beat) {
+            double beatTime = barStart + beat * beatLength;
+            const juce::File& sampleFile = (beat == 0) ? metronomeDownbeatFile : metronomeUpbeatFile;
+            if (sampleFile.existsAsFile()) {
+                double lengthSeconds = 0.1;
+                if (auto* reader = formatManager.createReaderFor(sampleFile)) {
+                    lengthSeconds = static_cast<double>(reader->lengthInSamples) / reader->sampleRate;
+                    delete reader;
+                }
+                metronomeTrack->addClip({sampleFile, beatTime, 0.0, lengthSeconds, 1.0f});
+            }
+        }
+    }
+}
+
 void Engine::exportMaster(const std::string& filePath) {
     double startTime = std::numeric_limits<double>::max();
     double endTime = 0.0;
 
+    bool hasClips = false;
     for (const auto& track : currentComposition->tracks) {
         for (const auto& clip : track->getClips()) {
+            hasClips = true;
             if (clip.startTime < startTime) startTime = clip.startTime;
             double clipEnd = clip.startTime + clip.duration;
             if (clipEnd > endTime) endTime = clipEnd;
         }
+    }
+    // If no clips, set a default export length (e.g., 4 bars)
+    if (!hasClips) {
+        startTime = 0.0;
+        double bpm = getBpm();
+        auto [num, den] = getTimeSignature();
+        double beatLength = 60.0 / bpm;
+        double barLength = beatLength * num;
+        endTime = 4 * barLength;
     }
     if (startTime == std::numeric_limits<double>::max()) startTime = 0.0;
 
@@ -127,10 +196,56 @@ void Engine::exportMaster(const std::string& filePath) {
     int blockSize = 512;
     for (int pos = 0; pos < totalSamples; pos += blockSize) {
         int samplesToProcess = std::min(blockSize, totalSamples - pos);
-        juce::AudioBuffer<float> tempBlock(numChannels, samplesToProcess);
-        processBlock(tempBlock, samplesToProcess);
+        juce::AudioBuffer<float> tempMixBuffer(numChannels, samplesToProcess);
+        tempMixBuffer.clear();
+
+        // Mix main composition if playing (for export, always mix)
+        if (currentComposition) {
+            bool anyTrackSoloed = false;
+            for (const auto& track : currentComposition->tracks) {
+                if (track && track->isSolo()) {
+                    anyTrackSoloed = true;
+                    break;
+                }
+            }
+            for (const auto& track : currentComposition->tracks) {
+                if (track) {
+                    bool shouldPlay = !anyTrackSoloed ? !track->isMuted() : track->isSolo();
+                    if (shouldPlay) {
+                        juce::AudioBuffer<float> trackBuffer(numChannels, samplesToProcess);
+                        trackBuffer.clear();
+                        track->process(positionSeconds, trackBuffer, samplesToProcess, sampleRate);
+                        track->processEffects(trackBuffer);
+                        for (int ch = 0; ch < numChannels; ++ch) {
+                            tempMixBuffer.addFrom(ch, 0, trackBuffer, ch, 0, samplesToProcess);
+                        }
+                    }
+                }
+            }
+        }
+
+        // No preview/one-shot for export
+
+        // Apply master effects and gain
+        if (masterTrack && !masterTrack->isMuted()) {
+            masterTrack->processEffects(tempMixBuffer);
+            float masterGain = juce::Decibels::decibelsToGain(masterTrack->getVolume());
+            float masterPan = masterTrack->getPan();
+            float panL = std::cos((masterPan + 1.0f) * juce::MathConstants<float>::pi * 0.25f);
+            float panR = std::sin((masterPan + 1.0f) * juce::MathConstants<float>::pi * 0.25f);
+            if (numChannels >= 2) {
+                tempMixBuffer.applyGain(0, 0, samplesToProcess, masterGain * panL);
+                tempMixBuffer.applyGain(1, 0, samplesToProcess, masterGain * panR);
+                for (int ch = 2; ch < numChannels; ++ch)
+                    tempMixBuffer.applyGain(ch, 0, samplesToProcess, masterGain);
+            } else if (numChannels == 1) {
+                tempMixBuffer.applyGain(0, 0, samplesToProcess, masterGain);
+            }
+        }
+
+        // Copy to output
         for (int ch = 0; ch < numChannels; ++ch)
-            outputBuffer.copyFrom(ch, pos, tempBlock, ch, 0, samplesToProcess);
+            outputBuffer.copyFrom(ch, pos, tempMixBuffer, ch, 0, samplesToProcess);
         positionSeconds += samplesToProcess / static_cast<double>(sampleRate);
     }
 
@@ -177,53 +292,87 @@ std::string Engine::getSampleDirectory() const {
 }
 
 juce::File Engine::findSampleFile(const std::string& sampleName) const {
-    if (sampleDirectory.empty() || sampleName.empty()) {
+    if (sampleName.empty()) {
         return juce::File();
     }
-    
-    juce::File directory(sampleDirectory);
-    if (!directory.exists() || !directory.isDirectory()) {
-        DEBUG_PRINT("Sample directory does not exist: " + sampleDirectory);
-        return juce::File();
-    }
-    
-    // First try exact filename match (with extension)
-    juce::File exactFile = directory.getChildFile(sampleName);
-    if (exactFile.existsAsFile()) {
-        DEBUG_PRINT("Found sample file (exact match): " + exactFile.getFullPathName().toStdString());
-        return exactFile;
-    }
-    
-    // If no exact match, try adding common audio file extensions
-    std::vector<std::string> extensions = {".wav", ".mp3", ".flac", ".ogg", ".aiff", ".m4a"};
-    
-    for (const auto& ext : extensions) {
-        juce::File file = directory.getChildFile(sampleName + ext);
-        if (file.existsAsFile()) {
-            DEBUG_PRINT("Found sample file (with extension): " + file.getFullPathName().toStdString());
-            return file;
+
+    // 1. Try user sample directory if set
+    if (!sampleDirectory.empty()) {
+        juce::File directory(sampleDirectory);
+        if (directory.exists() && directory.isDirectory()) {
+            // Exact filename match
+            juce::File exactFile = directory.getChildFile(sampleName);
+            if (exactFile.existsAsFile()) {
+                DEBUG_PRINT("Found sample file (exact match): " + exactFile.getFullPathName().toStdString());
+                return exactFile;
+            }
+            // Try common extensions
+            std::vector<std::string> extensions = {".wav", ".mp3", ".flac", ".ogg", ".aiff", ".m4a"};
+            for (const auto& ext : extensions) {
+                juce::File file = directory.getChildFile(sampleName + ext);
+                if (file.existsAsFile()) {
+                    DEBUG_PRINT("Found sample file (with extension): " + file.getFullPathName().toStdString());
+                    return file;
+                }
+            }
+            // Case-insensitive search
+            juce::Array<juce::File> allFiles;
+            directory.findChildFiles(allFiles, juce::File::findFiles, false);
+            for (const auto& file : allFiles) {
+                std::string fileName = file.getFileName().toStdString();
+                std::string targetName = sampleName;
+                std::transform(fileName.begin(), fileName.end(), fileName.begin(), ::tolower);
+                std::transform(targetName.begin(), targetName.end(), targetName.begin(), ::tolower);
+                if (fileName == targetName) {
+                    DEBUG_PRINT("Found sample file (case-insensitive): " + file.getFullPathName().toStdString());
+                    return file;
+                }
+            }
         }
     }
-    
-    // If still no match, try case-insensitive search
-    juce::Array<juce::File> allFiles;
-    directory.findChildFiles(allFiles, juce::File::findFiles, false);
-    
-    for (const auto& file : allFiles) {
-        std::string fileName = file.getFileName().toStdString();
-        std::string targetName = sampleName;
-        
-        // Convert to lowercase for comparison
-        std::transform(fileName.begin(), fileName.end(), fileName.begin(), ::tolower);
-        std::transform(targetName.begin(), targetName.end(), targetName.begin(), ::tolower);
-        
-        if (fileName == targetName) {
-            DEBUG_PRINT("Found sample file (case-insensitive): " + file.getFullPathName().toStdString());
-            return file;
+
+    // 2. Try assets/sounds folder in executable directory only
+    juce::File exeFile = juce::File::getSpecialLocation(juce::File::SpecialLocationType::currentExecutableFile);
+    // Always use the top-level executable directory, not any subfolder
+    juce::File exeDir = exeFile.getParentDirectory();
+    // If the exe is inside a subfolder (like extensions), go up until we find the directory containing 'assets'
+    while (!exeDir.isRoot() && !exeDir.getChildFile("assets").isDirectory()) {
+        exeDir = exeDir.getParentDirectory();
+    }
+    juce::File soundsDir = exeDir.getChildFile("assets").getChildFile("sounds");
+    DEBUG_PRINT("Checking sounds dir: " + soundsDir.getFullPathName().toStdString());
+    if (soundsDir.exists() && soundsDir.isDirectory()) {
+        // Exact filename match
+        juce::File exactFile = soundsDir.getChildFile(sampleName);
+        if (exactFile.existsAsFile()) {
+            DEBUG_PRINT("Found sample file in assets/sounds (exact match): " + exactFile.getFullPathName().toStdString());
+            return exactFile;
+        }
+        // Try common extensions
+        std::vector<std::string> extensions = {".wav", ".mp3", ".flac", ".ogg", ".aiff", ".m4a"};
+        for (const auto& ext : extensions) {
+            juce::File file = soundsDir.getChildFile(sampleName + ext);
+            if (file.existsAsFile()) {
+                DEBUG_PRINT("Found sample file in assets/sounds (with extension): " + file.getFullPathName().toStdString());
+                return file;
+            }
+        }
+        // Case-insensitive search
+        juce::Array<juce::File> allFiles;
+        soundsDir.findChildFiles(allFiles, juce::File::findFiles, false);
+        for (const auto& file : allFiles) {
+            std::string fileName = file.getFileName().toStdString();
+            std::string targetName = sampleName;
+            std::transform(fileName.begin(), fileName.end(), fileName.begin(), ::tolower);
+            std::transform(targetName.begin(), targetName.end(), targetName.begin(), ::tolower);
+            if (fileName == targetName) {
+                DEBUG_PRINT("Found sample file in assets/sounds (case-insensitive): " + file.getFullPathName().toStdString());
+                return file;
+            }
         }
     }
-    
-    DEBUG_PRINT("Sample file not found: " + sampleName + " in directory: " + sampleDirectory);
+
+    DEBUG_PRINT("Sample file not found: " + sampleName + " in sampleDirectory or assets folder");
     return juce::File();
 }
 
@@ -281,7 +430,10 @@ juce::File Engine::findVSTFile(const std::string& vstName) const {
 void Engine::play() {
     if (hasSaved) {
         positionSeconds = savedPosition;
-        hasSaved = false; // Clear saved position after using it
+        hasSaved = false;
+    }
+    if (metronomeEnabled) {
+        generateMetronomeTrack();
     }
     playing = true;
 }
@@ -321,11 +473,13 @@ bool Engine::hasSavedPosition() const {
 }
 
 void Engine::newComposition(const std::string& name) {
+    stop();
     currentComposition = std::make_unique<Composition>();
     currentComposition->name = name;
 }
 
 void Engine::loadComposition(const std::string& path) {
+    stop();
     std::ifstream file(path);
     if (!file.is_open()) {
         std::cerr << "Failed to open composition file: " << path << "\n";
@@ -342,6 +496,9 @@ void Engine::loadComposition(const std::string& path) {
     // Use loadState to parse the JSON format
     DEBUG_PRINT("Loading project file: " << path);
     loadState(content);
+    if (metronomeEnabled) {
+        generateMetronomeTrack();
+    }
 }
 
 void Engine::saveComposition(const std::string&) {}
@@ -362,7 +519,10 @@ double Engine::getBpm() const {
 
 void Engine::setBpm(double newBpm) { 
     if (currentComposition) {
-        currentComposition->bpm = newBpm; 
+        currentComposition->bpm = newBpm;
+        if (metronomeEnabled) {
+            generateMetronomeTrack();
+        }
     }
 }
 
@@ -514,12 +674,79 @@ void Engine::audioDeviceIOCallbackWithContext(
     float* const* outputChannelData, int numOutputChannels,
     int numSamples, const juce::AudioIODeviceCallbackContext&
 ) {
-    juce::AudioBuffer<float> out(outputChannelData, numOutputChannels, numSamples);
-    out.clear();
+    if (tempMixBuffer.getNumChannels() != numOutputChannels || tempMixBuffer.getNumSamples() != numSamples) {
+        tempMixBuffer.setSize(numOutputChannels, numSamples, false, false, true);
+    }
+    tempMixBuffer.clear();
 
-    if (playing) {
-        processBlock(out, numSamples);
+    // 1. Process main composition if the transport is playing.
+    if (playing && currentComposition)
+    {
+        juce::AudioBuffer<float> trackBuffer(numOutputChannels, numSamples);
+        bool anyTrackSoloed = false;
+        for (const auto& track : currentComposition->tracks) {
+            if (track && track->isSolo()) {
+                anyTrackSoloed = true;
+                break;
+            }
+        }
+        for (const auto& track : currentComposition->tracks) {
+            if (track) {
+                bool shouldPlay = !anyTrackSoloed ? !track->isMuted() : track->isSolo();
+                if (shouldPlay) {
+                    trackBuffer.clear();
+                    track->process(positionSeconds, trackBuffer, numSamples, sampleRate);
+                    track->processEffects(trackBuffer);
+                    for (int ch = 0; ch < numOutputChannels; ++ch) {
+                        tempMixBuffer.addFrom(ch, 0, trackBuffer, ch, 0, numSamples);
+                    }
+                }
+            }
+        }
+        // --- Mix metronome track if enabled ---
+        if (metronomeEnabled && metronomeTrack) {
+            trackBuffer.clear();
+            metronomeTrack->process(positionSeconds, trackBuffer, numSamples, sampleRate);
+            for (int ch = 0; ch < numOutputChannels; ++ch) {
+                tempMixBuffer.addFrom(ch, 0, trackBuffer, ch, 0, numSamples);
+            }
+        }
         positionSeconds += static_cast<double>(numSamples) / sampleRate;
+    }
+
+    // 2. Process and mix the one-shot preview sound (ALWAYS).
+    if (previewSource && previewTransport.isPlaying())
+    {
+        juce::AudioBuffer<float> previewBuffer(numOutputChannels, numSamples); // stack-allocated
+        juce::AudioSourceChannelInfo previewInfo(&previewBuffer, 0, numSamples);
+        previewTransport.getNextAudioBlock(previewInfo);
+        for (int ch = 0; ch < numOutputChannels; ++ch) {
+            tempMixBuffer.addFrom(ch, 0, previewBuffer, ch, 0, numSamples);
+        }
+    }
+
+    // 3. Apply master track effects and gain to the final mix.
+    if (masterTrack && !masterTrack->isMuted())
+    {
+        masterTrack->processEffects(tempMixBuffer);
+        float masterGain = juce::Decibels::decibelsToGain(masterTrack->getVolume());
+        float masterPan = masterTrack->getPan();
+        float panL = std::cos((masterPan + 1.0f) * juce::MathConstants<float>::pi * 0.25f);
+        float panR = std::sin((masterPan + 1.0f) * juce::MathConstants<float>::pi * 0.25f);
+        if (numOutputChannels >= 2) {
+            tempMixBuffer.applyGain(0, 0, numSamples, masterGain * panL);
+            tempMixBuffer.applyGain(1, 0, numSamples, masterGain * panR);
+            for (int ch = 2; ch < numOutputChannels; ++ch)
+                tempMixBuffer.applyGain(ch, 0, numSamples, masterGain);
+        } else if (numOutputChannels == 1) {
+            tempMixBuffer.applyGain(0, 0, numSamples, masterGain);
+        }
+    }
+
+    // 4. Finally, copy our processed audio to the hardware output.
+    juce::AudioBuffer<float> out(outputChannelData, numOutputChannels, numSamples);
+    for (int ch = 0; ch < numOutputChannels; ++ch) {
+        out.copyFrom(ch, 0, tempMixBuffer, ch, 0, numSamples);
     }
 }
 
@@ -1023,59 +1250,6 @@ void Engine::audioDeviceStopped() {
     tempMixBuffer.setSize(0, 0);
 }
 
-void Engine::processBlock(juce::AudioBuffer<float>& outputBuffer, int numSamples) {
-    outputBuffer.clear();
-    tempMixBuffer.setSize(outputBuffer.getNumChannels(), numSamples, false, false, true);
-    tempMixBuffer.clear();
-
-    if (!currentComposition) return;
-
-    bool anyTrackSoloed = false;
-    for (const auto& track : currentComposition->tracks) {
-        if (track && track->isSolo()) {
-            anyTrackSoloed = true;
-            break;
-        }
-    }
-
-    for (const auto& track : currentComposition->tracks) {
-        if (track) {
-            bool shouldPlay = !anyTrackSoloed ? !track->isMuted() : track->isSolo();
-            if (shouldPlay) {
-                juce::AudioBuffer<float> trackBuffer;
-                trackBuffer.setSize(tempMixBuffer.getNumChannels(), numSamples);
-                trackBuffer.clear();
-                
-                track->process(positionSeconds, trackBuffer, numSamples, sampleRate);
-                track->processEffects(trackBuffer);
-                
-                for (int ch = 0; ch < tempMixBuffer.getNumChannels(); ++ch) {
-                    tempMixBuffer.addFrom(ch, 0, trackBuffer, ch, 0, numSamples);
-                }
-            }
-        }
-    }
-
-    if (masterTrack && !masterTrack->isMuted()) {
-        float masterGain = juce::Decibels::decibelsToGain(masterTrack->getVolume());
-        float masterPan = masterTrack->getPan();
-
-        float panL = (1.0f - juce::jlimit(-1.f, 1.f, masterPan)) * 0.5f;
-        float panR = (1.0f + juce::jlimit(-1.f, 1.f, masterPan)) * 0.5f;
-        
-        if (tempMixBuffer.getNumChannels() >= 2) {
-            tempMixBuffer.applyGain(0, 0, numSamples, masterGain * panL);
-            tempMixBuffer.applyGain(1, 0, numSamples, masterGain * panR);
-        } 
-        else if (tempMixBuffer.getNumChannels() == 1) {
-            tempMixBuffer.applyGain(0, 0, numSamples, masterGain);
-        }
-
-        masterTrack->processEffects(tempMixBuffer);
-
-        outputBuffer.makeCopyOf(tempMixBuffer);
-    }
-}
 
 std::vector<float> Engine::generateWaveformPeaks(const juce::File& audioFile, float duration, float peakResolution) {
     if (!audioFile.existsAsFile()) return {};
@@ -1120,4 +1294,37 @@ std::vector<float> Engine::generateWaveformPeaks(const juce::File& audioFile, fl
     }
     
     return peaks;
+}
+
+void Engine::playSound(const std::string& filePath, float volume) {
+    juce::File file(filePath);
+    if (!file.existsAsFile()) {
+        return;
+    }
+
+    playSound(file, volume);
+}
+
+void Engine::playSound(const juce::File& file, float volume) {
+    const juce::ScopedLock lock (deviceManager.getAudioCallbackLock());
+
+    previewTransport.stop();
+    previewTransport.setSource(nullptr);
+    previewSource.reset();
+
+    if (!file.existsAsFile()) {
+        return;
+    }
+
+    std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(file));
+    if (!reader) {
+        return;
+    }
+
+    previewSource = std::make_unique<juce::AudioFormatReaderSource>(reader.release(), true);
+    previewTransport.prepareToPlay(currentBufferSize, sampleRate);
+    previewTransport.setSource(previewSource.get(), 0, nullptr, sampleRate);
+    previewTransport.setGain(juce::jlimit(0.0f, 2.0f, volume));
+    previewTransport.setPosition(0.0);
+    previewTransport.start();
 }
