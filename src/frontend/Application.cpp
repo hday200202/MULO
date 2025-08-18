@@ -79,6 +79,8 @@ void Application::initialise(const juce::String& commandLine) {
     loadComponents();
     loadLayoutConfig();
 
+    ui->setScale(1.f);
+
     ui->forceUpdate();
 }
 
@@ -108,7 +110,7 @@ void Application::update() {
     if (lClick || rClick) shouldForceUpdate = true;
     if (ctrlShftR && !prevCtrlShftR) rebuildUI();
 
-    ui->forceUpdate(windowView);
+    ui->forceUpdate();
 
     for (const auto& [name, component] : muloComponents)
         if (component)
@@ -403,11 +405,40 @@ void Application::initUIResources() {
         return "";
     };
 
+    auto findIcon = [&](const std::string& filename) -> std::string {
+        fs::path cwdIcon = fs::current_path() / "assets" / "icons" / filename;
+        if (fs::exists(cwdIcon)) return cwdIcon.string();
+
+        fs::path exeIcon = fs::path(exeDirectory) / "assets" / "icons" / filename;
+        if (fs::exists(exeIcon)) return exeIcon.string();
+
+        return "";
+    };
+
     resources.dejavuSansFont    = findFont("DejaVuSans.ttf");
     resources.spaceMonoFont     = findFont("SpaceMono-Regular.ttf");
     resources.ubuntuBoldFont    = findFont("ubuntu.bold.ttf");
     resources.ubuntuMonoFont    = findFont("ubuntu.mono.ttf");
     resources.ubuntuMonoBoldFont= findFont("ubuntu.mono-bold.ttf");
+
+    resources.playIcon          = sf::Image(findIcon("play.png"));
+    resources.pauseIcon         = sf::Image(findIcon("pause.png"));
+    resources.settingsIcon      = sf::Image(findIcon("settings.png"));
+    resources.pianoRollIcon     = sf::Image(findIcon("piano.png"));
+    resources.playIcon          = sf::Image(findIcon("play.png"));
+    resources.pauseIcon         = sf::Image(findIcon("pause.png"));
+    resources.settingsIcon      = sf::Image(findIcon("settings.png"));
+    resources.pianoRollIcon     = sf::Image(findIcon("piano.png"));
+    resources.loadIcon          = sf::Image(findIcon("load.png"));
+    resources.saveIcon          = sf::Image(findIcon("save.png"));
+    resources.exportIcon        = sf::Image(findIcon("export.png"));
+    resources.folderIcon        = sf::Image(findIcon("folder.png"));
+    resources.pluginFileIcon    = sf::Image(findIcon("pluginfile.png"));
+    resources.audioFileIcon     = sf::Image(findIcon("audiofile.png"));
+    resources.metronomeIcon     = sf::Image(findIcon("metronome.png"));
+    resources.mixerIcon         = sf::Image(findIcon("mixer.png"));
+    resources.storeIcon         = sf::Image(findIcon("store.png"));
+    resources.fileIcon          = sf::Image(findIcon("file.png"));
 }
 
 std::string Application::selectDirectory() {

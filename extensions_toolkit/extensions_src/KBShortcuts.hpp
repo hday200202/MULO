@@ -25,8 +25,10 @@ bool KBShortcuts::handleEvents() {
     bool f11 = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::F11);
 
     if (space && !prevSpace) {
-        if (app->isPlaying())
+        if (app->isPlaying()) {
             app->pause();
+            app->setPosition(app->getSavedPosition());
+        }
         else
             app->play();
 

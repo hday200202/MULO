@@ -221,6 +221,20 @@ void FileBrowserComponent::buildFileTreeUI() {
     });
 
     std::string favSymbol = isFavoritesOpen ? "[-] " : "[+] ";
+    auto favExpandIcon = image(
+        Modifier()
+            .setfixedHeight(25)
+            .setfixedWidth(25)
+            .align(Align::CENTER_Y)
+            .setColor(app->resources.activeTheme->primary_text_color)
+            .onLClick([this](){
+                isFavoritesOpen = !isFavoritesOpen;
+                favoritesTreeNeedsRebuild = true;
+            }),
+        app->resources.folderIcon,
+        true
+    );
+    
     auto favRootTextElement = text(
         Modifier()
             .setfixedHeight(28)
@@ -229,13 +243,15 @@ void FileBrowserComponent::buildFileTreeUI() {
                 isFavoritesOpen = !isFavoritesOpen;
                 favoritesTreeNeedsRebuild = true;
             }),
-        favSymbol + "Favorites",
+        "Favorites",
         app->resources.dejavuSansFont
     );
 
     scrollColumn->addElements({
         row(Modifier().setfixedHeight(28), contains{
             spacer(Modifier().setfixedWidth(20.f)),
+            favExpandIcon,
+            spacer(Modifier().setfixedWidth(8.f)),
             favRootTextElement,
         }),
         spacer(Modifier().setfixedHeight(12))
@@ -259,14 +275,41 @@ void FileBrowserComponent::buildFileTreeUI() {
             std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
             
             Modifier textModifier = Modifier().setfixedHeight(28).setColor(app->resources.activeTheme->primary_text_color);
+            Image* iconElement = nullptr;
             
             if (ext == ".vst" || ext == ".vst3") {
-                displayName = "[v] " + favName;
+                displayName = favName;
+                iconElement = image(
+                    Modifier()
+                        .setfixedHeight(25)
+                        .setfixedWidth(25)
+                        .align(Align::CENTER_Y)
+                        .setColor(app->resources.activeTheme->primary_text_color)
+                        .onLClick([this, favPath](){
+                            app->addEffect(favPath);
+                        }),
+                    app->resources.pluginFileIcon,
+                    true
+                );
                 textModifier.onLClick([this, favPath](){
                     app->addEffect(favPath);
                 });
             } else {
-                displayName = "[f] " + favName;
+                displayName = favName;
+                iconElement = image(
+                    Modifier()
+                        .setfixedHeight(25)
+                        .setfixedWidth(25)
+                        .align(Align::CENTER_Y)
+                        .setColor(app->resources.activeTheme->primary_text_color)
+                        .onLClick([this, favPath](){
+                            juce::File sampleFile(favPath);
+                            std::string trackName = sampleFile.getFileNameWithoutExtension().toStdString();
+                            app->addTrack(trackName, favPath);
+                        }),
+                    app->resources.audioFileIcon,
+                    true
+                );
                 textModifier.onLClick([this, favPath](){
                     juce::File sampleFile(favPath);
                     std::string trackName = sampleFile.getFileNameWithoutExtension().toStdString();
@@ -283,6 +326,8 @@ void FileBrowserComponent::buildFileTreeUI() {
             scrollColumn->addElements({
                 row(Modifier().setfixedHeight(28), contains{
                     spacer(Modifier().setfixedWidth(40.f)),
+                    iconElement,
+                    spacer(Modifier().setfixedWidth(8.f)),
                     textElement,
                 }),
                 spacer(Modifier().setfixedHeight(12))
@@ -322,7 +367,20 @@ void FileBrowserComponent::buildFileTreeUI() {
     if (!fileTree.getPath().empty()) {
         std::string displayName = fileTree.getName();
         std::string symbol = fileTree.isOpen() ? "[-] " : "[+] ";
-        displayName = symbol + displayName;
+        
+        auto expandIcon = image(
+            Modifier()
+                .setfixedHeight(25)
+                .setfixedWidth(25)
+                .align(Align::CENTER_Y)
+                .setColor(app->resources.activeTheme->primary_text_color)
+                .onLClick([this](){
+                    fileTree.toggleOpen();
+                    fileTreeNeedsRebuild = true;
+                }),
+            app->resources.folderIcon,
+            true
+        );
 
         auto rootTextElement = text(
             Modifier()
@@ -339,6 +397,8 @@ void FileBrowserComponent::buildFileTreeUI() {
         scrollColumn->addElements({
             row(Modifier().setfixedHeight(28), contains{
                 spacer(Modifier().setfixedWidth(20.f)),
+                expandIcon,
+                spacer(Modifier().setfixedWidth(8.f)),
                 rootTextElement,
             }),
             spacer(Modifier().setfixedHeight(12))
@@ -386,7 +446,20 @@ void FileBrowserComponent::buildFileTreeUI() {
     if (!vstTree.getPath().empty()) {
         std::string displayName = vstTree.getName();
         std::string symbol = vstTree.isOpen() ? "[-] " : "[+] ";
-        displayName = symbol + displayName;
+        
+        auto vstExpandIcon = image(
+            Modifier()
+                .setfixedHeight(25)
+                .setfixedWidth(25)
+                .align(Align::CENTER_Y)
+                .setColor(app->resources.activeTheme->primary_text_color)
+                .onLClick([this](){
+                    vstTree.toggleOpen();
+                    vstTreeNeedsRebuild = true;
+                }),
+            app->resources.folderIcon,
+            true
+        );
 
         auto vstRootTextElement = text(
             Modifier()
@@ -403,6 +476,8 @@ void FileBrowserComponent::buildFileTreeUI() {
         scrollColumn->addElements({
             row(Modifier().setfixedHeight(28), contains{
                 spacer(Modifier().setfixedWidth(20.f)),
+                vstExpandIcon,
+                spacer(Modifier().setfixedWidth(8.f)),
                 vstRootTextElement,
             }),
             spacer(Modifier().setfixedHeight(12))
@@ -433,15 +508,41 @@ void FileBrowserComponent::buildFileTreeUIRecursive(const FileTree& tree, int in
     auto favIt = std::find(favoriteItems.begin(), favoriteItems.end(), unixPath);
     bool isFavorite = favIt != favoriteItems.end();
 
+    Image* iconElement = nullptr;
+
     if (tree.isDirectory()) {
-        std::string symbol = tree.isOpen() ? "[-] " : "[+] ";
-        displayName = symbol + displayName;
+        iconElement = image(
+            Modifier()
+                .setfixedHeight(25)
+                .setfixedWidth(25)
+                .align(Align::CENTER_Y)
+                .setColor(app->resources.activeTheme->primary_text_color)
+                .onLClick([this, filePath](){
+                    toggleTreeNodeByPath(filePath);
+                    fileTreeNeedsRebuild = true;
+                }),
+            app->resources.folderIcon,
+            true
+        );
         textModifier.onLClick([this, filePath](){
             toggleTreeNodeByPath(filePath);
             fileTreeNeedsRebuild = true;
         });
     } else if (tree.isAudioFile()) {
-        displayName = "[f] " + displayName;
+        iconElement = image(
+            Modifier()
+                .setfixedHeight(25)
+                .setfixedWidth(25)
+                .align(Align::CENTER_Y)
+                .setColor(app->resources.activeTheme->primary_text_color)
+                .onLClick([this, filePath](){
+                    juce::File sampleFile(filePath);
+                    std::string trackName = sampleFile.getFileNameWithoutExtension().toStdString();
+                    app->addTrack(trackName, filePath);
+                }),
+            app->resources.audioFileIcon,
+            true
+        );
         textModifier.onLClick([this, filePath](){
             juce::File sampleFile(filePath);
             std::string trackName = sampleFile.getFileNameWithoutExtension().toStdString();
@@ -453,6 +554,17 @@ void FileBrowserComponent::buildFileTreeUIRecursive(const FileTree& tree, int in
         } else {
             textModifier.onRClick([this, filePath](){ addFavorite(filePath); });
         }
+    } else {
+        // Default icon for unknown file types
+        iconElement = image(
+            Modifier()
+                .setfixedHeight(25)
+                .setfixedWidth(25)
+                .align(Align::CENTER_Y)
+                .setColor(app->resources.activeTheme->primary_text_color),
+            app->resources.fileIcon,
+            true
+        );
     }
 
     auto textElement = text(textModifier, displayName, app->resources.dejavuSansFont);
@@ -460,6 +572,8 @@ void FileBrowserComponent::buildFileTreeUIRecursive(const FileTree& tree, int in
     scrollColumn->addElements({
         row(Modifier().setfixedHeight(28), contains{
             spacer(Modifier().setfixedWidth(indent)),
+            iconElement,
+            spacer(Modifier().setfixedWidth(8.f)),
             textElement,
         }),
         spacer(Modifier().setfixedHeight(12))
@@ -490,15 +604,39 @@ void FileBrowserComponent::buildVSTTreeUIRecursive(const FileTree& tree, int ind
     auto favIt = std::find(favoriteItems.begin(), favoriteItems.end(), unixPath);
     bool isFavorite = favIt != favoriteItems.end();
 
+    Image* iconElement = nullptr;
+
     if (tree.isDirectory()) {
-        std::string symbol = tree.isOpen() ? "[-] " : "[+] ";
-        displayName = symbol + displayName;
+        iconElement = image(
+            Modifier()
+                .setfixedHeight(25)
+                .setfixedWidth(25)
+                .align(Align::CENTER_Y)
+                .setColor(app->resources.activeTheme->primary_text_color)
+                .onLClick([this, filePath](){
+                    toggleVSTTreeNodeByPath(filePath);
+                    vstTreeNeedsRebuild = true;
+                }),
+            app->resources.folderIcon,
+            true
+        );
         textModifier.onLClick([this, filePath](){
             toggleVSTTreeNodeByPath(filePath);
             vstTreeNeedsRebuild = true;
         });
     } else if (tree.isVSTFile()) {
-        displayName = "[v] " + displayName;
+        iconElement = image(
+            Modifier()
+                .setfixedHeight(25)
+                .setfixedWidth(25)
+                .align(Align::CENTER_Y)
+                .setColor(app->resources.activeTheme->primary_text_color)
+                .onLClick([this, filePath](){
+                    app->addEffect(filePath);
+                }),
+            app->resources.pluginFileIcon,
+            true
+        );
         textModifier.onLClick([this, filePath](){
             app->addEffect(filePath);
         });
@@ -508,6 +646,17 @@ void FileBrowserComponent::buildVSTTreeUIRecursive(const FileTree& tree, int ind
         } else {
             textModifier.onRClick([this, filePath](){ addFavorite(filePath); });
         }
+    } else {
+        // Default icon for unknown file types
+        iconElement = image(
+            Modifier()
+                .setfixedHeight(25)
+                .setfixedWidth(25)
+                .align(Align::CENTER_Y)
+                .setColor(app->resources.activeTheme->primary_text_color),
+            app->resources.fileIcon,
+            true
+        );
     }
 
     auto textElement = text(textModifier, displayName, app->resources.dejavuSansFont);
@@ -515,6 +664,8 @@ void FileBrowserComponent::buildVSTTreeUIRecursive(const FileTree& tree, int ind
     scrollColumn->addElements({
         row(Modifier().setfixedHeight(28), contains{
             spacer(Modifier().setfixedWidth(indent)),
+            iconElement,
+            spacer(Modifier().setfixedWidth(8.f)),
             textElement,
         }),
         spacer(Modifier().setfixedHeight(12))

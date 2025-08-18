@@ -7,7 +7,7 @@
 #include <unordered_map>
 #include <iostream>
 #include <filesystem>
-#include <SFML/Graphics/Color.hpp>
+#include <SFML/Graphics.hpp>
 #include <nlohmann/json.hpp>
 #include "Engine.hpp"
 #include "../DebugConfig.hpp"
@@ -138,6 +138,22 @@ struct UIResources {
     std::string ubuntuBoldFont;
     std::string ubuntuMonoFont;
     std::string ubuntuMonoBoldFont;
+
+    sf::Image playIcon;
+    sf::Image pauseIcon;
+    sf::Image settingsIcon;
+    sf::Image pianoRollIcon;
+    sf::Image loadIcon;
+    sf::Image saveIcon;
+    sf::Image exportIcon;
+    sf::Image folderIcon;
+    sf::Image pluginFileIcon;
+    sf::Image audioFileIcon;
+    sf::Image metronomeIcon;
+    sf::Image mixerIcon;
+    sf::Image storeIcon;
+    sf::Image fileIcon;
+
     UITheme* activeTheme = nullptr;
     // Add more resources as needed
 };

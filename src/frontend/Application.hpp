@@ -128,6 +128,7 @@ public:
     inline void setBpm(float bpm) { engine.setBpm(bpm); }
     inline float getBpm() const { return engine.getBpm(); }
     inline double getPosition() const { return engine.getPosition(); }
+    inline double getSavedPosition() const { return engine.getSavedPosition(); }
     inline void setPosition(double seconds) { engine.setPosition(seconds); }
     inline std::pair<int, int> getTimeSignature() {return engine.getTimeSignature(); }
 
