@@ -147,6 +147,7 @@ struct UIResources {
     sf::Image saveIcon;
     sf::Image exportIcon;
     sf::Image folderIcon;
+    sf::Image openFolderIcon;
     sf::Image pluginFileIcon;
     sf::Image audioFileIcon;
     sf::Image metronomeIcon;

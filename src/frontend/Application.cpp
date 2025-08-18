@@ -433,6 +433,7 @@ void Application::initUIResources() {
     resources.saveIcon          = sf::Image(findIcon("save.png"));
     resources.exportIcon        = sf::Image(findIcon("export.png"));
     resources.folderIcon        = sf::Image(findIcon("folder.png"));
+    resources.openFolderIcon    = sf::Image(findIcon("openfolder.png"));
     resources.pluginFileIcon    = sf::Image(findIcon("pluginfile.png"));
     resources.audioFileIcon     = sf::Image(findIcon("audiofile.png"));
     resources.metronomeIcon     = sf::Image(findIcon("metronome.png"));

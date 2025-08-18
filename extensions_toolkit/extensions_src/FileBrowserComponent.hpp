@@ -231,7 +231,7 @@ void FileBrowserComponent::buildFileTreeUI() {
                 isFavoritesOpen = !isFavoritesOpen;
                 favoritesTreeNeedsRebuild = true;
             }),
-        app->resources.folderIcon,
+        isFavoritesOpen ? app->resources.openFolderIcon : app->resources.folderIcon,
         true
     );
     
@@ -378,7 +378,7 @@ void FileBrowserComponent::buildFileTreeUI() {
                     fileTree.toggleOpen();
                     fileTreeNeedsRebuild = true;
                 }),
-            app->resources.folderIcon,
+            fileTree.isOpen() ? app->resources.openFolderIcon : app->resources.folderIcon,
             true
         );
 
@@ -457,7 +457,7 @@ void FileBrowserComponent::buildFileTreeUI() {
                     vstTree.toggleOpen();
                     vstTreeNeedsRebuild = true;
                 }),
-            app->resources.folderIcon,
+            vstTree.isOpen() ? app->resources.openFolderIcon : app->resources.folderIcon,
             true
         );
 
@@ -521,7 +521,7 @@ void FileBrowserComponent::buildFileTreeUIRecursive(const FileTree& tree, int in
                     toggleTreeNodeByPath(filePath);
                     fileTreeNeedsRebuild = true;
                 }),
-            app->resources.folderIcon,
+            tree.isOpen() ? app->resources.openFolderIcon : app->resources.folderIcon,
             true
         );
         textModifier.onLClick([this, filePath](){
@@ -617,7 +617,7 @@ void FileBrowserComponent::buildVSTTreeUIRecursive(const FileTree& tree, int ind
                     toggleVSTTreeNodeByPath(filePath);
                     vstTreeNeedsRebuild = true;
                 }),
-            app->resources.folderIcon,
+            tree.isOpen() ? app->resources.openFolderIcon : app->resources.folderIcon,
             true
         );
         textModifier.onLClick([this, filePath](){
