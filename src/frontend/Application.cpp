@@ -439,7 +439,8 @@ void Application::initUIResources() {
     resources.metronomeIcon     = sf::Image(findIcon("metronome.png"));
     resources.mixerIcon         = sf::Image(findIcon("mixer.png"));
     resources.storeIcon         = sf::Image(findIcon("store.png"));
-    resources.fileIcon          = sf::Image(findIcon("file.png"));
+    // Need to add file.png
+    resources.fileIcon          = sf::Image(findIcon("audiofile.png"));
 }
 
 std::string Application::selectDirectory() {
