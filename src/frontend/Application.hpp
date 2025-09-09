@@ -5,6 +5,7 @@
 #include "UIData.hpp"
 #include "FileTree.hpp"
 #include "MULOComponent.hpp"
+#include <nlohmann/json.hpp>
 #include <iostream>
 #include <juce_core/juce_core.h>
 #include <juce_gui_basics/juce_gui_basics.h>
@@ -38,6 +39,7 @@ public:
     std::unique_ptr<UILO> ui = nullptr;
     UIState uiState;
     UIResources resources;
+    nlohmann::json config; // Central config that extensions can write to
 
     // JUCE Application interface
     const juce::String getApplicationName() override { return "MDAW"; }
@@ -142,9 +144,44 @@ public:
     inline void setSampleRate(const double newSampleRate) { 
         DEBUG_PRINT("Application: Setting sample rate to " << newSampleRate << "Hz");
         uiState.sampleRate = newSampleRate;
-        uiState.saveConfig(); 
+        writeConfig("sampleRate", newSampleRate);
         engine.configureAudioDevice(newSampleRate);
         DEBUG_PRINT("Application: Sample rate configuration completed");
+    }
+
+    // Central config management - Extensions can write to this
+    template<typename T>
+    void writeConfig(const std::string& key, const T& value) {
+        config[key] = value;
+        saveConfig();
+    }
+
+    template<typename T>
+    T readConfig(const std::string& key, const T& defaultValue = T{}) const {
+        if (config.contains(key)) {
+            try {
+                return config[key].get<T>();
+            } catch (const std::exception& e) {
+                DEBUG_PRINT("Error reading config key '" << key << "': " << e.what());
+                return defaultValue;
+            }
+        }
+        return defaultValue;
+    }
+
+    void saveConfig();
+    void loadConfig();
+    
+    // Sync UIState to central config
+    void syncUIStateToConfig() {
+        writeConfig("fileBrowserDirectory", uiState.fileBrowserDirectory);
+        writeConfig("vstDirectory", uiState.vstDirecory);
+        writeConfig("vstDirectories", uiState.vstDirectories);
+        writeConfig("saveDirectory", uiState.saveDirectory);
+        writeConfig("selectedTheme", uiState.selectedTheme);
+        writeConfig("sampleRate", uiState.sampleRate);
+        writeConfig("autoSaveIntervalSeconds", uiState.autoSaveIntervalSeconds);
+        writeConfig("enableAutoVSTScan", uiState.enableAutoVSTScan);
     }
     void saveLayoutConfig();
 

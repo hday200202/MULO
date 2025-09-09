@@ -229,7 +229,8 @@ void SettingsComponent::applySettings() {
     if (getDropdown("ui_theme_dropdown")->getSelected() != app->uiState.selectedTheme) {
         std::string newTheme = getDropdown("ui_theme_dropdown")->getSelected();
         app->uiState.selectedTheme = newTheme;
-
+        app->writeConfig("selectedTheme", newTheme);
+        
         app->requestUIRebuild();
     }
 

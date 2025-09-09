@@ -53,7 +53,18 @@ void Application::initialise(const juce::String& commandLine) {
     exeDirectory = fs::canonical("/proc/self/exe").parent_path().string();
 #endif
     
-    uiState.loadConfig();
+    // Load central config
+    loadConfig();
+    
+    // Populate UIState from central config
+    uiState.fileBrowserDirectory = readConfig<std::string>("fileBrowserDirectory", "");
+    uiState.vstDirecory = readConfig<std::string>("vstDirectory", "");
+    uiState.vstDirectories = readConfig<std::vector<std::string>>("vstDirectories", std::vector<std::string>{});
+    uiState.saveDirectory = readConfig<std::string>("saveDirectory", "");
+    uiState.selectedTheme = readConfig<std::string>("selectedTheme", "Dark");
+    uiState.sampleRate = readConfig<double>("sampleRate", 44100.0);
+    uiState.autoSaveIntervalSeconds = readConfig<int>("autoSaveIntervalSeconds", 300);
+    uiState.enableAutoVSTScan = readConfig<bool>("enableAutoVSTScan", false);
     
     // Configure engine directories from UI state
     engine.setVSTDirectory(uiState.vstDirecory);
@@ -439,8 +450,7 @@ void Application::initUIResources() {
     resources.metronomeIcon     = sf::Image(findIcon("metronome.png"));
     resources.mixerIcon         = sf::Image(findIcon("mixer.png"));
     resources.storeIcon         = sf::Image(findIcon("store.png"));
-    // Need to add file.png
-    resources.fileIcon          = sf::Image(findIcon("audiofile.png"));
+    resources.fileIcon          = sf::Image(findIcon("file.png"));
 }
 
 std::string Application::selectDirectory() {
@@ -867,4 +877,43 @@ void Application::loadLayoutConfig() {
         layout.relativeTo = relTo;
     }
     std::cout << "Layout loaded from: " << path << std::endl;
+}
+
+void Application::saveConfig() {
+    try {
+        std::string configPath = exeDirectory + "/config.json";
+        std::ofstream file(configPath);
+        if (!file.is_open()) {
+            DEBUG_PRINT("Failed to open config file for writing: " << configPath);
+            return;
+        }
+        
+        file << config.dump(2); // Pretty print with 2-space indentation
+        file.close();
+        
+        DEBUG_PRINT("Configuration saved to: " << configPath);
+    } catch (const std::exception& e) {
+        DEBUG_PRINT("Error saving config: " << e.what());
+    }
+}
+
+void Application::loadConfig() {
+    try {
+        std::string configPath = exeDirectory + "/config.json";
+        std::ifstream file(configPath);
+        
+        if (!file.is_open()) {
+            DEBUG_PRINT("Config file not found, using defaults: " << configPath);
+            return;
+        }
+
+        file >> config;
+        file.close();
+        
+        DEBUG_PRINT("Configuration loaded from: " << configPath);
+    } catch (const nlohmann::json::parse_error& e) {
+        DEBUG_PRINT("JSON parse error loading config: " << e.what());
+    } catch (const std::exception& e) {
+        DEBUG_PRINT("Error loading config: " << e.what());
+    }
 }

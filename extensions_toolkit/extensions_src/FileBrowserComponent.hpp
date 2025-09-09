@@ -75,17 +75,17 @@ void FileBrowserComponent::init() {
         "file_browser_scroll_column"
     );
     
-    // Load favorites from file
+    // Load favorites from config
     loadFavorites();
     
-    if (!app->uiState.fileBrowserDirectory.empty() && 
-        std::filesystem::is_directory(app->uiState.fileBrowserDirectory)) {
-        fileTree.setRootDirectory(app->uiState.fileBrowserDirectory);
+    std::string fileBrowserDir = app->readConfig<std::string>("fileBrowserDirectory");
+    if (!fileBrowserDir.empty() && std::filesystem::is_directory(fileBrowserDir)) {
+        fileTree.setRootDirectory(fileBrowserDir);
     }
     
-    if (!app->uiState.vstDirecory.empty() && 
-        std::filesystem::is_directory(app->uiState.vstDirecory)) {
-        vstTree.setRootDirectory(app->uiState.vstDirecory);
+    std::string vstDir = app->readConfig<std::string>("vstDirectory");
+    if (!vstDir.empty() && std::filesystem::is_directory(vstDir)) {
+        vstTree.setRootDirectory(vstDir);
     }
     
     buildFileTreeUI();
@@ -119,8 +119,7 @@ void FileBrowserComponent::browseForDirectory() {
         fileTree.setRootDirectory(selectedDir);
         fileTreeNeedsRebuild = true;
         
-        app->uiState.fileBrowserDirectory = selectedDir;
-        app->uiState.saveConfig();
+        app->writeConfig("fileBrowserDirectory", selectedDir);
     }
 }
 
@@ -130,8 +129,7 @@ void FileBrowserComponent::browseForVSTDirectory() {
         vstTree.setRootDirectory(selectedDir);
         vstTreeNeedsRebuild = true;
         
-        app->uiState.vstDirecory = selectedDir;
-        app->uiState.saveConfig();
+        app->writeConfig("vstDirectory", selectedDir);
     }
 }
 
@@ -165,13 +163,7 @@ void FileBrowserComponent::removeFavorite(const std::string& path) {
 
 void FileBrowserComponent::saveFavorites() {
     try {
-        nlohmann::json favoritesJson = favoriteItems;
-        
-        std::ofstream file("favorites.json");
-        if (file.is_open()) {
-            file << favoritesJson.dump(2);
-            file.close();
-        }
+        app->writeConfig("favoriteItems", favoriteItems);
     } catch (const std::exception& e) {
         // Silently handle save errors
     }
@@ -179,17 +171,12 @@ void FileBrowserComponent::saveFavorites() {
 
 void FileBrowserComponent::loadFavorites() {
     try {
-        std::ifstream file("favorites.json");
-        if (file.is_open()) {
-            nlohmann::json favoritesJson;
-            file >> favoritesJson;
-            file.close();
-            
-            favoriteItems.clear();
-            for (const auto& path : favoritesJson) {
-                if (path.is_string() && std::filesystem::exists(path.get<std::string>())) {
-                    favoriteItems.push_back(path.get<std::string>());
-                }
+        auto favoritesFromConfig = app->readConfig<std::vector<std::string>>("favoriteItems");
+        
+        favoriteItems.clear();
+        for (const auto& path : favoritesFromConfig) {
+            if (std::filesystem::exists(path)) {
+                favoriteItems.push_back(path);
             }
         }
     } catch (const std::exception& e) {
