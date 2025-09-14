@@ -1,4 +1,5 @@
 #include "Engine.hpp"
+#include "AudioTrack.hpp"
 #include "../DebugConfig.hpp"
 #include <chrono>
 #include <algorithm>
@@ -44,7 +45,7 @@ Engine::Engine() {
     
     deviceManager.addAudioCallback(this);
 
-    masterTrack = std::make_unique<Track>(formatManager);
+    masterTrack = std::make_unique<AudioTrack>(formatManager);
     masterTrack->setName("Master");
     selectedTrackName = "Master";
 
@@ -119,7 +120,7 @@ void Engine::generateMetronomeTrack() {
     if (!currentComposition) {
         currentComposition = std::make_unique<Composition>();
     }
-    metronomeTrack = std::make_unique<Track>(formatManager);
+    metronomeTrack = std::make_unique<AudioTrack>(formatManager);
     metronomeTrack->setName("__metronome__");
     metronomeTrack->prepareToPlay(sampleRate, currentBufferSize);
     metronomeTrack->clearClips();
@@ -545,7 +546,7 @@ void Engine::addTrack(const std::string& name, const std::string& samplePath) {
         uniqueName = baseName + "_" + std::to_string(suffix++);
     }
 
-    auto t = std::make_unique<Track>(formatManager);
+    auto t = std::make_unique<AudioTrack>(formatManager);
     t->setName(uniqueName);
     
     t->prepareToPlay(sampleRate, currentBufferSize);
@@ -997,7 +998,7 @@ void Engine::loadState(const std::string& stateData) {
                 const auto& masterTrackData = composition["masterTrack"];
                 
                 if (!masterTrack) {
-                    masterTrack = std::make_unique<Track>(formatManager);
+                    masterTrack = std::make_unique<AudioTrack>(formatManager);
                 }
                 
                 if (masterTrackData.contains("name")) {
@@ -1070,7 +1071,7 @@ void Engine::loadState(const std::string& stateData) {
                     if (!trackData.contains("name")) continue;
                     
                     std::string trackName = trackData["name"].get<std::string>();
-                    auto track = std::make_unique<Track>(formatManager);
+                    auto track = std::make_unique<AudioTrack>(formatManager);
                     track->setName(trackName);
                     
                     if (trackData.contains("volume")) {

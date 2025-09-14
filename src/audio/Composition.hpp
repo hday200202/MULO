@@ -4,7 +4,7 @@
 #include <vector>
 #include <memory>
 
-#include "Track.hpp"
+#include "AllTracks.hpp"
 
 struct Composition {
     std::string name = "untitled";
