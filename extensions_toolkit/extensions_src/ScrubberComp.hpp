@@ -11,6 +11,7 @@ class ScrubberComp : public MULOComponent {
         void init() override;
         bool handleEvents() override;
         void update() override;
+        float grabValue();
 
     private:
         Slider* scrubber_slider;
@@ -26,11 +27,15 @@ void ScrubberComp::init() {
 }
 
 bool ScrubberComp::handleEvents() {
-    return true;
+    return false;
 }
 
 void ScrubberComp::update() {
 
+}
+
+float ScrubberComp::grabValue() {
+    return scrubber_slider.getValue();
 }
 
 GET_INTERFACE
