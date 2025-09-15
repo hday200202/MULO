@@ -33,6 +33,10 @@ public:
     void removeMIDIClip(size_t index);
     MIDIClip* getMIDIClip(size_t index);
     size_t getMIDIClipCount() const;
+    
+    // MIDI control methods
+    void sendAllNotesOff();
+    void sendMIDIMessage(const juce::MidiMessage& message);
 
 private:
     // MIDI-specific data members
@@ -40,4 +44,7 @@ private:
     
     // Temporary empty AudioClip vector for compatibility
     std::vector<AudioClip> emptyClips;
+    
+    // MIDI-specific effect processing
+    void processEffectsWithMidi(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiBuffer);
 };

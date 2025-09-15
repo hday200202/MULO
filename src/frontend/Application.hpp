@@ -51,12 +51,10 @@ public:
     Application();
     ~Application();
 
-    // Core application methods
     void update();
     void render();
     inline bool isRunning() const { return running; }
 
-    // Component management
     inline Container* getComponentLayout(const std::string& componentName) { 
         if (muloComponents.find(componentName) != muloComponents.end()) 
             return muloComponents[componentName]->getLayout(); 
@@ -70,16 +68,14 @@ public:
     inline Row* getMainContentRow() { return mainContentRow; }
     void setComponentParentContainer(const std::string& componentName, Container* parent);
 
-    // File operations
     std::string selectDirectory();
     std::string selectFile(std::initializer_list<std::string> filters);
 
-    // Window management
     inline const sf::RenderWindow& getWindow() const { return window; }
     inline void requestUIRebuild() { pendingUIRebuild = true; }
     inline void requestFullscreenToggle() { pendingFullscreenToggle = true; }
 
-    // Engine interface - Track management
+    // Engine interface
     inline Track* getMasterTrack() { return engine.getMasterTrack(); }
     inline Track* getTrack(const std::string& name) { return engine.getTrackByName(name); }
     inline std::vector<std::unique_ptr<Track>>& getAllTracks() { return engine.getAllTracks(); }
@@ -95,19 +91,25 @@ public:
     inline void playSound(const std::string& filePath, float db) { engine.playSound(filePath, db); }
     inline void playSound(const juce::File& file, float db) { engine.playSound(file, db); }
 
-    // VST Effect management
+    inline void sendMIDINote(int noteNumber, int velocity, bool noteOn = true) {
+        engine.sendRealtimeMIDI(noteNumber, velocity, noteOn);
+    }
+
     inline void addEffect(const std::string& filePath) {
         pendingEffectPath = filePath;
         hasPendingEffect = true;
-        std::cout << "Queued effect for loading: " << filePath << std::endl;
     }
+    
+    inline void addSynthesizer(const std::string& filePath) {
+        pendingSynthPath = filePath;
+        hasPendingSynth = true;
+    }
+    
     inline void requestOpenEffectWindow(size_t effectIndex) {
         pendingEffectWindowIndex = effectIndex;
         hasPendingEffectWindow = true;
-        std::cout << "Queued effect window opening for index: " << effectIndex << std::endl;
     }
 
-    // Method to defer VST loading for save file restoration
     inline void deferEffectLoading(const std::string& trackName, const std::string& vstPath, bool openWindow = false, bool enabled = true, int index = -1, const std::vector<std::pair<int, float>>& parameters = {}) {
         DeferredEffect def;
         def.trackName = trackName;
@@ -119,10 +121,8 @@ public:
         
         deferredEffects.push_back(def);
         hasDeferredEffects = true;
-        std::cout << "Deferred effect loading: " << vstPath << " for track: " << trackName << std::endl;
     }
 
-    // Playback control
     inline void play() { engine.play(); }
     inline void pause() { engine.pause(); }
     inline void setSavedPosition(double seconds) { engine.setPosition(seconds); }
@@ -134,12 +134,10 @@ public:
     inline void setPosition(double seconds) { engine.setPosition(seconds); }
     inline std::pair<int, int> getTimeSignature() {return engine.getTimeSignature(); }
 
-    // Audio clip management
     inline AudioClip* getReferenceClip(const std::string& trackName) { return engine.getTrackByName(trackName)->getReferenceClip(); }
     inline void addClipToTrack(const std::string& trackName, const AudioClip& clip) { engine.getTrackByName(trackName)->addClip(clip); }
     inline void removeClipFromTrack(const std::string& trackName, size_t index) { engine.getTrackByName(trackName)->removeClip(index); }
 
-    // App configuration
     inline double getSampleRate() const { return engine.getSampleRate(); }
     inline void setSampleRate(const double newSampleRate) { 
         DEBUG_PRINT("Application: Setting sample rate to " << newSampleRate << "Hz");
@@ -149,7 +147,6 @@ public:
         DEBUG_PRINT("Application: Sample rate configuration completed");
     }
 
-    // Central config management - Extensions can write to this
     template<typename T>
     void writeConfig(const std::string& key, const T& value) {
         config[key] = value;
@@ -172,7 +169,6 @@ public:
     void saveConfig();
     void loadConfig();
     
-    // Sync UIState to central config
     void syncUIStateToConfig() {
         writeConfig("fileBrowserDirectory", uiState.fileBrowserDirectory);
         writeConfig("vstDirectory", uiState.vstDirecory);
@@ -185,13 +181,11 @@ public:
     }
     void saveLayoutConfig();
 
-    // Selected track management
     inline void setSelectedTrack(const std::string& trackName) { engine.setSelectedTrack(trackName); }
     inline std::string getSelectedTrack() const { return engine.getSelectedTrack(); }
     inline Track* getSelectedTrackPtr() { return engine.getSelectedTrackPtr(); }
     inline bool hasSelectedTrack() const { return engine.hasSelectedTrack(); }
 
-    // Composition management
     inline void loadComposition(const std::string& path) { engine.loadComposition(path); engine.generateMetronomeTrack(); }
     inline std::string getCurrentCompositionName() const { return engine.getCurrentCompositionName(); }
     inline void saveState() { engine.saveState(); }
@@ -224,16 +218,18 @@ private:
     bool hasPendingEffect = false;
     bool hasPendingEffectWindow = false;
 
+    std::string pendingSynthPath;
+    bool hasPendingSynth = false;
+
     std::string pendingTrackRemoveName = "";
 
-    // Deferred effect loading structure for save file restoration
     struct DeferredEffect {
         std::string trackName;
         std::string vstPath;
         bool shouldOpenWindow;
         bool enabled = true;
         int index = -1;
-        std::vector<std::pair<int, float>> parameters;  // parameter index, value pairs
+        std::vector<std::pair<int, float>> parameters;
     };
     std::vector<DeferredEffect> deferredEffects;
     bool hasDeferredEffects = false;

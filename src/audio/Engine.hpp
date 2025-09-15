@@ -11,14 +11,53 @@
 #include "Composition.hpp"
 #include "../DebugConfig.hpp"
 
-class Engine : public juce::AudioIODeviceCallback {
+class EnginePlayHead : public juce::AudioPlayHead {
+public:
+    EnginePlayHead() = default;
+    
+    void updatePosition(double positionSeconds, double bpm, bool isPlaying, double sampleRate) {
+        const juce::ScopedLock lock(positionLock);
+        
+        currentPosition = juce::AudioPlayHead::PositionInfo();
+        currentPosition.setTimeInSamples(juce::int64(positionSeconds * sampleRate));
+        currentPosition.setTimeInSeconds(positionSeconds);
+        currentPosition.setBpm(bpm);
+        
+        if (isPlaying) {
+            currentPosition.setIsPlaying(true);
+            currentPosition.setIsRecording(false);
+        } else {
+            currentPosition.setIsPlaying(false);
+        }
+        
+        currentPosition.setTimeSignature(juce::AudioPlayHead::TimeSignature{4, 4});
+        
+        double secondsPerBeat = 60.0 / bpm;
+        double currentBeat = positionSeconds / secondsPerBeat;
+        double currentBar = currentBeat / 4.0;
+        
+        currentPosition.setBarCount(juce::int64(currentBar));
+        currentPosition.setPpqPosition(currentBeat);
+        currentPosition.setPpqPositionOfLastBarStart(std::floor(currentBar) * 4.0);
+    }
+    
+    juce::Optional<juce::AudioPlayHead::PositionInfo> getPosition() const override {
+        const juce::ScopedLock lock(positionLock);
+        return currentPosition;
+    }
+    
+private:
+    juce::CriticalSection positionLock;
+    juce::AudioPlayHead::PositionInfo currentPosition;
+};
+
+class Engine : public juce::AudioIODeviceCallback, public juce::MidiInputCallback {
 public:
     juce::AudioFormatManager formatManager;
     
     Engine();
     ~Engine();
     
-    // Structure for deferred effect loading
     struct PendingEffect {
         std::string trackName;
         std::string vstPath;
@@ -27,7 +66,6 @@ public:
         std::vector<std::pair<int, float>> parameters;
     };
     
-    // Get list of effects that should be loaded with deferred loading
     const std::vector<PendingEffect>& getPendingEffects() const { return pendingEffects; }
     void clearPendingEffects() { pendingEffects.clear(); }
 
@@ -52,9 +90,11 @@ public:
     std::pair<int, int> getTimeSignature() const;
     double getBpm() const;
     void setBpm(double newBpm);
+    void sendBpmToSynthesizers();
     
     // Track management
     void addTrack(const std::string& name = "", const std::string& samplePath = "");
+    std::string addMIDITrack(const std::string& name = "");
     void removeTrack(int index);
     void removeTrackByName(const std::string& name);
     Track* getTrack(int index);
@@ -78,8 +118,8 @@ public:
     juce::File findVSTFile(const std::string& vstName) const;
     
     // State management
-    void saveState();  // Updates currentState string
-    void save(const std::string& path = "untitled.mpf") const;  // Writes currentState to file
+    void saveState();
+    void save(const std::string& path = "untitled.mpf") const;
     std::string getStateString() const;
     void loadState(const std::string& state);
     
@@ -87,6 +127,9 @@ public:
     void audioDeviceIOCallbackWithContext(const float* const* inputChannelData, int numInputChannels, float* const* outputChannelData, int numOutputChannels, int numSamples, const juce::AudioIODeviceCallbackContext& context) override;
     void audioDeviceAboutToStart(juce::AudioIODevice* device) override;
     void audioDeviceStopped() override;
+    
+    // MIDI input callback
+    void handleIncomingMidiMessage(juce::MidiInput* source, const juce::MidiMessage& message) override;
     
     std::string getCurrentCompositionName() const;
     void setCurrentCompositionName(const std::string& newName);
@@ -106,7 +149,8 @@ public:
     void playSound(const std::string& filePath, float volume);
     void playSound(const juce::File& file, float volume);
 
-    // Metronome track support
+    void sendRealtimeMIDI(int noteNumber, int velocity, bool noteOn = true);
+
     void setMetronomeEnabled(bool enabled);
     inline bool isMetronomeEnabled() const { return metronomeEnabled; }
     void generateMetronomeTrack();
@@ -114,12 +158,11 @@ public:
 private:
     juce::AudioDeviceManager deviceManager;
     std::unique_ptr<Composition> currentComposition;
+    std::unique_ptr<EnginePlayHead> playHead;
 
-    // Metronome and sample preview
     std::unique_ptr<juce::AudioFormatReaderSource> previewSource;
     juce::AudioTransportSource previewTransport;
 
-    // Metronome track support
     std::unique_ptr<Track> metronomeTrack;
     bool metronomeEnabled = false;
     std::string metronomeDownbeatSample = "metronomeDown.wav";
@@ -138,23 +181,27 @@ private:
     std::unique_ptr<Track> masterTrack;
     std::string selectedTrackName;
     
+    juce::MidiBuffer incomingMidiBuffer;
+    juce::CriticalSection midiInputLock;
+    
+    int synthSilenceCountdown = 0;
+    static const int SYNTH_SILENCE_CYCLES = 10;
+    
     std::string vstDirectory;
     std::string sampleDirectory;
-    
-    std::string currentState;  // Current serialized engine state
-    std::vector<PendingEffect> pendingEffects;  // Effects to be loaded with deferred loading
-
+    std::string currentState;
+    std::vector<PendingEffect> pendingEffects;
 };
 
 inline float floatToDecibels(float linear, float minusInfinityDb = -100.0f) {
-    constexpr double reference = 0.75;  // 0.75 linear = 0 dB
+    constexpr double reference = 0.75;
     if (linear <= 0.0)
         return minusInfinityDb;
     return static_cast<float>(20.0 * std::log10(static_cast<double>(linear) / reference));
 }
 
 inline float decibelsToFloat(float db, float minusInfinityDb = -100.0f) {
-    constexpr double reference = 0.75;  // 0.75 linear = 0 dB
+    constexpr double reference = 0.75;
     if (db <= minusInfinityDb)
         return 0.0f;
     return static_cast<float>(reference * std::pow(10.0, static_cast<double>(db) / 20.0));

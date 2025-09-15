@@ -14,8 +14,19 @@ float Track::getPan() const { return pan; }
 Effect* Track::addEffect(const std::string& vstPath) {
     auto effect = std::make_unique<Effect>();
     if (effect->loadVST(vstPath)) {
+        if (currentSampleRate > 0 && currentBufferSize > 0) {
+            effect->prepareToPlay(currentSampleRate, currentBufferSize);
+        }
+        
         effects.push_back(std::move(effect));
-        return effects.back().get();
+        updateEffectIndices();
+        
+        Effect* addedEffect = effects.back().get();
+        
+        if (addedEffect && addedEffect->isSynthesizer()) {
+        }
+        
+        return addedEffect;
     }
     return nullptr;
 }
@@ -24,18 +35,16 @@ bool Track::removeEffect(int index) {
     if (index >= 0 && index < effects.size()) {
         effects.erase(effects.begin() + index);
         updateEffectIndices();
-        DEBUG_PRINT("Removed effect at index " << index << " from track " << name);
         return true;
     }
     return false;
 }
 
 bool Track::removeEffect(const std::string& name) {
-    for (size_t i = 0; i < effects.size(); ++i) {
-        if (effects[i] && effects[i]->getName() == name) {
-            effects.erase(effects.begin() + i);
+    for (auto it = effects.begin(); it != effects.end(); ++it) {
+        if ((*it)->getName() == name) {
+            effects.erase(it);
             updateEffectIndices();
-            DEBUG_PRINT("Removed effect " << name << " from track " << this->name);
             return true;
         }
     }
@@ -87,13 +96,11 @@ bool Track::moveEffect(int fromIndex, int toIndex) {
     effects.insert(effects.begin() + toIndex, std::move(effect));
     updateEffectIndices();
     
-    DEBUG_PRINT("Moved effect from index " << fromIndex << " to " << toIndex << " on track " << name);
     return true;
 }
 
 void Track::clearEffects() {
     effects.clear();
-    DEBUG_PRINT("Cleared all effects from track " << name);
 }
 
 void Track::updateEffectIndices() {

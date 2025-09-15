@@ -1,5 +1,7 @@
 #include "Engine.hpp"
 #include "AudioTrack.hpp"
+#include "MIDITrack.hpp"
+#include "Track.hpp"
 #include "../DebugConfig.hpp"
 #include <chrono>
 #include <algorithm>
@@ -11,10 +13,10 @@ using json = nlohmann::json;
 Engine::Engine() {
     formatManager.registerBasicFormats();
     
+    playHead = std::make_unique<EnginePlayHead>();
+    
     deviceManager.initialise(0, 2, nullptr, false);
     
-    // Don't force a specific sample rate here - let the application configure it
-    // after loading the config file
     auto currentSetup = deviceManager.getAudioDeviceSetup();
     
     currentSetup.bufferSize = 256;
@@ -28,37 +30,32 @@ Engine::Engine() {
         if (error.isNotEmpty()) {
             currentSetup.bufferSize = 1024;
             error = deviceManager.setAudioDeviceSetup(currentSetup, true);
-            
-            if (error.isNotEmpty()) {
-                DEBUG_PRINT("Warning: Could not set low-latency audio buffer. Using default settings.");
-                DEBUG_PRINT("Audio setup error: " << error.toStdString());
-            }
         }
     }
     
-    auto finalSetup = deviceManager.getAudioDeviceSetup();
-    DEBUG_PRINT("Audio device setup (initial):");
-    DEBUG_PRINT("  Sample rate: " << finalSetup.sampleRate << " Hz");
-    DEBUG_PRINT("  Buffer size: " << finalSetup.bufferSize << " samples");
-    DEBUG_PRINT_INLINE("  Latency: ~" << std::fixed << std::setprecision(1) 
-              << (finalSetup.bufferSize / finalSetup.sampleRate * 1000.0) << " ms");
-    
     deviceManager.addAudioCallback(this);
+    
+    auto midiInputs = juce::MidiInput::getAvailableDevices();
+    for (const auto& deviceInfo : midiInputs) {
+        deviceManager.setMidiInputDeviceEnabled(deviceInfo.identifier, true);
+        deviceManager.addMidiInputDeviceCallback(deviceInfo.identifier, this);
+    }
 
     masterTrack = std::make_unique<AudioTrack>(formatManager);
     masterTrack->setName("Master");
     selectedTrackName = "Master";
 
-    // Directly set metronome sample files based on known path relative to executable
     juce::File exeFile = juce::File::getSpecialLocation(juce::File::SpecialLocationType::currentExecutableFile);
     juce::File exeDir = exeFile.getParentDirectory();
-    // Walk up until we find the directory containing 'assets'
     while (!exeDir.isRoot() && !exeDir.getChildFile("assets").isDirectory()) {
         exeDir = exeDir.getParentDirectory();
     }
     juce::File soundsDir = exeDir.getChildFile("assets").getChildFile("sounds");
     metronomeDownbeatFile = soundsDir.getChildFile(metronomeDownbeatSample);
     metronomeUpbeatFile = soundsDir.getChildFile(metronomeUpbeatSample);
+    
+    // Initialize play head with default tempo (will be updated when composition is loaded)
+    playHead->updatePosition(0.0, 120.0, false, sampleRate);
 }
 
 bool Engine::configureAudioDevice(double desiredSampleRate, int bufferSize) {
@@ -71,36 +68,22 @@ bool Engine::configureAudioDevice(double desiredSampleRate, int bufferSize) {
     juce::String error = deviceManager.setAudioDeviceSetup(currentSetup, true);
     
     if (error.isNotEmpty()) {
-        DEBUG_PRINT("Failed to set desired audio setup, trying fallback buffer sizes...");
-        DEBUG_PRINT("Error: " << error.toStdString());
-        
-        // Try with larger buffer sizes if the desired one fails
         std::vector<int> fallbackBuffers = {512, 1024, 2048};
         for (int fallbackBuffer : fallbackBuffers) {
             currentSetup.bufferSize = fallbackBuffer;
             error = deviceManager.setAudioDeviceSetup(currentSetup, true);
             
             if (error.isEmpty()) {
-                DEBUG_PRINT("Successfully set audio device with fallback buffer: " << fallbackBuffer);
                 break;
             }
         }
         
         if (error.isNotEmpty()) {
-            DEBUG_PRINT("Failed to configure audio device with desired sample rate: " << desiredSampleRate);
-            DEBUG_PRINT("Final error: " << error.toStdString());
             return false;
         }
     }
     
     auto finalSetup = deviceManager.getAudioDeviceSetup();
-    DEBUG_PRINT("Audio device configured:");
-    DEBUG_PRINT("  Sample rate: " << finalSetup.sampleRate << " Hz");
-    DEBUG_PRINT("  Buffer size: " << finalSetup.bufferSize << " samples");
-    DEBUG_PRINT_INLINE("  Latency: ~" << std::fixed << std::setprecision(1) 
-              << (finalSetup.bufferSize / finalSetup.sampleRate * 1000.0) << " ms");
-              
-    // Update internal sample rate to match what was actually set
     sampleRate = finalSetup.sampleRate;
     currentBufferSize = finalSetup.bufferSize;
     
@@ -108,6 +91,12 @@ bool Engine::configureAudioDevice(double desiredSampleRate, int bufferSize) {
 }
 
 Engine::~Engine() {
+    auto midiInputs = juce::MidiInput::getAvailableDevices();
+    for (const auto& deviceInfo : midiInputs) {
+        deviceManager.removeMidiInputDeviceCallback(deviceInfo.identifier, this);
+        deviceManager.setMidiInputDeviceEnabled(deviceInfo.identifier, false);
+    }
+    
     deviceManager.closeAudioDevice();
     deviceManager.removeAudioCallback(this);
 }
@@ -276,12 +265,10 @@ void Engine::exportMaster(const std::string& filePath) {
 // Directory management
 void Engine::setVSTDirectory(const std::string& directory) {
     vstDirectory = directory;
-    DEBUG_PRINT("VST directory set to: " + directory);
 }
 
 void Engine::setSampleDirectory(const std::string& directory) {
     sampleDirectory = directory;
-    DEBUG_PRINT("Sample directory set to: " + directory);
 }
 
 std::string Engine::getVSTDirectory() const {
@@ -304,7 +291,6 @@ juce::File Engine::findSampleFile(const std::string& sampleName) const {
             // Exact filename match
             juce::File exactFile = directory.getChildFile(sampleName);
             if (exactFile.existsAsFile()) {
-                DEBUG_PRINT("Found sample file (exact match): " + exactFile.getFullPathName().toStdString());
                 return exactFile;
             }
             // Try common extensions
@@ -312,7 +298,6 @@ juce::File Engine::findSampleFile(const std::string& sampleName) const {
             for (const auto& ext : extensions) {
                 juce::File file = directory.getChildFile(sampleName + ext);
                 if (file.existsAsFile()) {
-                    DEBUG_PRINT("Found sample file (with extension): " + file.getFullPathName().toStdString());
                     return file;
                 }
             }
@@ -325,7 +310,6 @@ juce::File Engine::findSampleFile(const std::string& sampleName) const {
                 std::transform(fileName.begin(), fileName.end(), fileName.begin(), ::tolower);
                 std::transform(targetName.begin(), targetName.end(), targetName.begin(), ::tolower);
                 if (fileName == targetName) {
-                    DEBUG_PRINT("Found sample file (case-insensitive): " + file.getFullPathName().toStdString());
                     return file;
                 }
             }
@@ -341,12 +325,10 @@ juce::File Engine::findSampleFile(const std::string& sampleName) const {
         exeDir = exeDir.getParentDirectory();
     }
     juce::File soundsDir = exeDir.getChildFile("assets").getChildFile("sounds");
-    DEBUG_PRINT("Checking sounds dir: " + soundsDir.getFullPathName().toStdString());
     if (soundsDir.exists() && soundsDir.isDirectory()) {
         // Exact filename match
         juce::File exactFile = soundsDir.getChildFile(sampleName);
         if (exactFile.existsAsFile()) {
-            DEBUG_PRINT("Found sample file in assets/sounds (exact match): " + exactFile.getFullPathName().toStdString());
             return exactFile;
         }
         // Try common extensions
@@ -354,7 +336,6 @@ juce::File Engine::findSampleFile(const std::string& sampleName) const {
         for (const auto& ext : extensions) {
             juce::File file = soundsDir.getChildFile(sampleName + ext);
             if (file.existsAsFile()) {
-                DEBUG_PRINT("Found sample file in assets/sounds (with extension): " + file.getFullPathName().toStdString());
                 return file;
             }
         }
@@ -367,13 +348,11 @@ juce::File Engine::findSampleFile(const std::string& sampleName) const {
             std::transform(fileName.begin(), fileName.end(), fileName.begin(), ::tolower);
             std::transform(targetName.begin(), targetName.end(), targetName.begin(), ::tolower);
             if (fileName == targetName) {
-                DEBUG_PRINT("Found sample file in assets/sounds (case-insensitive): " + file.getFullPathName().toStdString());
                 return file;
             }
         }
     }
 
-    DEBUG_PRINT("Sample file not found: " + sampleName + " in sampleDirectory or assets folder");
     return juce::File();
 }
 
@@ -384,14 +363,12 @@ juce::File Engine::findVSTFile(const std::string& vstName) const {
     
     juce::File directory(vstDirectory);
     if (!directory.exists() || !directory.isDirectory()) {
-        DEBUG_PRINT("VST directory does not exist: " + vstDirectory);
         return juce::File();
     }
     
     // First try exact filename match (with extension)
     juce::File exactFile = directory.getChildFile(vstName);
     if (exactFile.existsAsFile()) {
-        DEBUG_PRINT("Found VST file (exact match): " + exactFile.getFullPathName().toStdString());
         return exactFile;
     }
     
@@ -401,7 +378,6 @@ juce::File Engine::findVSTFile(const std::string& vstName) const {
     for (const auto& ext : extensions) {
         juce::File file = directory.getChildFile(vstName + ext);
         if (file.existsAsFile()) {
-            DEBUG_PRINT("Found VST file (with extension): " + file.getFullPathName().toStdString());
             return file;
         }
     }
@@ -419,12 +395,10 @@ juce::File Engine::findVSTFile(const std::string& vstName) const {
         std::transform(targetName.begin(), targetName.end(), targetName.begin(), ::tolower);
         
         if (fileName == targetName) {
-            DEBUG_PRINT("Found VST file (case-insensitive): " + file.getFullPathName().toStdString());
             return file;
         }
     }
     
-    DEBUG_PRINT("VST file not found: " + vstName + " in directory: " + vstDirectory);
     return juce::File();
 }
 
@@ -436,16 +410,77 @@ void Engine::play() {
     if (metronomeEnabled) {
         generateMetronomeTrack();
     }
+    
+    // Clear all synthesizer buffers when playback starts
+    // This stops reverb tails, delay feedback, and other sustained effects
+    if (currentComposition) {
+        DEBUG_PRINT("Clearing synthesizer buffers on playback start...");
+        
+        // Set countdown to keep synthesizers silenced for a few audio cycles
+        synthSilenceCountdown = SYNTH_SILENCE_CYCLES;
+        
+        // Send current BPM to all synthesizers before clearing buffers
+        // This ensures they have the correct tempo for any LFOs or tempo-synced effects
+        sendBpmToSynthesizers();
+        
+        for (const auto& track : currentComposition->tracks) {
+            if (track && track->getType() == Track::TrackType::MIDI) {
+                auto midiTrack = dynamic_cast<MIDITrack*>(track.get());
+                if (midiTrack) {
+                    for (const auto& effect : midiTrack->getEffects()) {
+                        if (effect && effect->enabled() && effect->isSynthesizer()) {
+                            DEBUG_PRINT("Resetting buffers for synthesizer: " << effect->getName());
+                            effect->resetBuffers();
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Also clear master track effects if they're synthesizers (unlikely but possible)
+        if (masterTrack) {
+            for (const auto& effect : masterTrack->getEffects()) {
+                if (effect && effect->enabled() && effect->isSynthesizer()) {
+                    DEBUG_PRINT("Resetting buffers for master synthesizer: " << effect->getName());
+                    effect->resetBuffers();
+                }
+            }
+        }
+        
+        DEBUG_PRINT("Synthesizer buffer clearing complete. Silencing for " << SYNTH_SILENCE_CYCLES << " audio cycles.");
+    }
+    
     playing = true;
 }
 
 void Engine::pause() {
     playing = false;
+    
+    // Send "All Notes Off" to prevent stuck notes when pausing
+    if (currentComposition) {
+        for (const auto& track : currentComposition->tracks) {
+            if (auto midiTrack = dynamic_cast<MIDITrack*>(track.get())) {
+                midiTrack->sendAllNotesOff();
+            }
+        }
+    }
 }
 
 void Engine::stop() {
     playing = false;
     positionSeconds = 0.0;
+    
+    // Send "All Notes Off" (MIDI CC 123) to all synthesizers to prevent stuck notes
+    if (currentComposition) {
+        for (const auto& track : currentComposition->tracks) {
+            if (track && track->getType() == Track::TrackType::MIDI) {
+                MIDITrack* midiTrack = dynamic_cast<MIDITrack*>(track.get());
+                if (midiTrack) {
+                    midiTrack->sendAllNotesOff();
+                }
+            }
+        }
+    }
 }
 
 void Engine::setPosition(double s) {
@@ -477,6 +512,11 @@ void Engine::newComposition(const std::string& name) {
     stop();
     currentComposition = std::make_unique<Composition>();
     currentComposition->name = name;
+    
+    DEBUG_PRINT("Created new composition '" << name << "'");
+    
+    // Send BPM to any existing synthesizers (in case user has loaded synths before creating composition)
+    sendBpmToSynthesizers();
 }
 
 void Engine::loadComposition(const std::string& path) {
@@ -524,6 +564,37 @@ void Engine::setBpm(double newBpm) {
         if (metronomeEnabled) {
             generateMetronomeTrack();
         }
+        
+        // Send the new BPM to all synthesizers for tempo sync
+        sendBpmToSynthesizers();
+    }
+}
+
+void Engine::sendBpmToSynthesizers() {
+    if (!currentComposition) {
+        return;
+    }
+    
+    double currentBpm = getBpm();
+    
+    // Update play head with current tempo even when not playing
+    double sampleRate = getSampleRate();
+    playHead->updatePosition(positionSeconds, currentBpm, playing, sampleRate);
+    
+    // Iterate through all tracks to find synthesizers
+    for (const auto& track : currentComposition->tracks) {
+        if (track && track->getType() == Track::TrackType::MIDI) {
+            auto midiTrack = dynamic_cast<MIDITrack*>(track.get());
+            if (midiTrack) {
+                // Send BPM to all effects that are synthesizers
+                for (const auto& effect : midiTrack->getEffects()) {
+                    if (effect && effect->enabled() && effect->isSynthesizer()) {
+                        effect->setBpm(currentBpm);
+                        effect->setPlayHead(playHead.get());  // Connect our custom playhead
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -562,6 +633,35 @@ void Engine::addTrack(const std::string& name, const std::string& samplePath) {
     }
 
     currentComposition->tracks.push_back(std::move(t));
+}
+
+std::string Engine::addMIDITrack(const std::string& name) {
+    if (!currentComposition) {
+        currentComposition = std::make_unique<Composition>();
+        currentComposition->name = "untitled";
+    }
+    
+    std::string baseName = name.empty() ? "MIDI Track" : name;
+    std::string uniqueName = baseName;
+    int suffix = 1;
+    auto nameExists = [&](const std::string& n) {
+        for (const auto& track : currentComposition->tracks) {
+            if (track && track->getName() == n) return true;
+        }
+        return false;
+    };
+    while (nameExists(uniqueName)) {
+        uniqueName = baseName + "_" + std::to_string(suffix++);
+    }
+
+    auto midiTrack = std::make_unique<MIDITrack>();
+    midiTrack->setName(uniqueName);
+    midiTrack->prepareToPlay(sampleRate, currentBufferSize);
+    
+    currentComposition->tracks.push_back(std::move(midiTrack));
+    
+    DEBUG_PRINT("Added MIDI track '" << uniqueName << "'");
+    return uniqueName;
 }
 
 void Engine::removeTrack(int idx) {
@@ -680,9 +780,133 @@ void Engine::audioDeviceIOCallbackWithContext(
     }
     tempMixBuffer.clear();
 
+    // Manage synthesizer silence countdown after playback starts
+    if (synthSilenceCountdown > 0) {
+        synthSilenceCountdown--;
+        if (synthSilenceCountdown == 0) {
+            // Re-enable all synthesizers after silence period
+            DEBUG_PRINT("Re-enabling synthesizers after silence period");
+            if (currentComposition) {
+                for (const auto& track : currentComposition->tracks) {
+                    if (track && track->getType() == Track::TrackType::MIDI) {
+                        auto midiTrack = dynamic_cast<MIDITrack*>(track.get());
+                        if (midiTrack) {
+                            for (const auto& effect : midiTrack->getEffects()) {
+                                if (effect && effect->enabled() && effect->isSynthesizer()) {
+                                    effect->setSilenced(false);
+                                }
+                            }
+                        }
+                    }
+                }
+                // Also handle master track synthesizers
+                if (masterTrack) {
+                    for (const auto& effect : masterTrack->getEffects()) {
+                        if (effect && effect->enabled() && effect->isSynthesizer()) {
+                            effect->setSilenced(false);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 0. Process real-time MIDI input (works even when paused)
+    bool processedRealtimeMidi = false;
+    {
+        juce::ScopedLock lock(midiInputLock);
+        if (!incomingMidiBuffer.isEmpty()) {
+            processedRealtimeMidi = true;
+            DEBUG_PRINT("Processing real-time MIDI messages");
+            
+            // Update AudioPlayHead with current tempo for real-time MIDI processing
+            if (playHead && currentComposition) {
+                double currentBpm = currentComposition->bpm;
+                playHead->updatePosition(positionSeconds, currentBpm, false, sampleRate);
+            }
+            
+            auto selectedTrack = getSelectedTrackPtr();
+            if (selectedTrack) {
+                auto midiTrack = dynamic_cast<MIDITrack*>(selectedTrack);
+                if (midiTrack) {
+                    DEBUG_PRINT("Sending MIDI to track: " << midiTrack->getName());
+                    // Process real-time MIDI through the selected MIDI track
+                    juce::AudioBuffer<float> realtimeBuffer(numOutputChannels, numSamples);
+                    realtimeBuffer.clear();
+                    
+                    // Process MIDI directly without any processing modifications
+                    for (const auto& effect : midiTrack->getEffects()) {
+                        if (effect && effect->enabled() && effect->isSynthesizer()) {
+                            effect->processAudio(realtimeBuffer, incomingMidiBuffer);
+                        }
+                    }
+                    
+                    // Mix the real-time MIDI output into the main buffer
+                    for (int ch = 0; ch < numOutputChannels; ++ch) {
+                        tempMixBuffer.addFrom(ch, 0, realtimeBuffer, ch, 0, numSamples);
+                    }
+                } else {
+                    DEBUG_PRINT("Selected track is not a MIDI track");
+                }
+            } else {
+                DEBUG_PRINT("No track selected for real-time MIDI");
+            }
+            incomingMidiBuffer.clear(); // Clear processed MIDI messages
+        }
+    }
+
+    // 0.5. Process synthesizers continuously to maintain audio (only when NOT playing to avoid interference)
+    if (!playing && currentComposition) {
+        // Update play head even when not playing so synthesizers have correct tempo
+        double currentBpm = getBpm();
+        double sampleRate = getSampleRate();
+        playHead->updatePosition(positionSeconds, currentBpm, playing, sampleRate);
+        
+        juce::AudioBuffer<float> synthBuffer(numOutputChannels, numSamples);
+        juce::MidiBuffer emptyMidiBuffer; // Empty MIDI buffer for continuous processing
+        
+        // Get selected track to avoid double processing
+        auto selectedTrack = getSelectedTrackPtr();
+        
+        for (const auto& track : currentComposition->tracks) {
+            if (track && track->getType() == Track::TrackType::MIDI) {
+                auto midiTrack = dynamic_cast<MIDITrack*>(track.get());
+                if (midiTrack && (!midiTrack->isMuted())) {
+                    
+                    // Skip the selected track if we just processed real-time MIDI for it
+                    // This prevents double processing and audio conflicts
+                    if (processedRealtimeMidi && track.get() == selectedTrack) {
+                        DEBUG_PRINT("Skipping continuous synthesis for selected track to avoid conflicts");
+                        continue;
+                    }
+                    
+                    synthBuffer.clear();
+                    
+                    // Process synthesizers with empty MIDI to maintain sustain/envelope states
+                    for (const auto& effect : midiTrack->getEffects()) {
+                        if (effect && effect->enabled() && effect->isSynthesizer()) {
+                            effect->processAudio(synthBuffer, emptyMidiBuffer);
+                        }
+                    }
+                    
+                    // Apply track volume and mix into main buffer
+                    float trackGain = juce::Decibels::decibelsToGain(midiTrack->getVolume());
+                    for (int ch = 0; ch < numOutputChannels; ++ch) {
+                        tempMixBuffer.addFrom(ch, 0, synthBuffer, ch, 0, numSamples, trackGain);
+                    }
+                }
+            }
+        }
+    }
+
     // 1. Process main composition if the transport is playing.
     if (playing && currentComposition)
     {
+        // Update play head with current position and tempo
+        double currentBpm = getBpm();
+        double sampleRate = getSampleRate();
+        playHead->updatePosition(positionSeconds, currentBpm, playing, sampleRate);
+        
         juce::AudioBuffer<float> trackBuffer(numOutputChannels, numSamples);
         bool anyTrackSoloed = false;
         for (const auto& track : currentComposition->tracks) {
@@ -697,7 +921,24 @@ void Engine::audioDeviceIOCallbackWithContext(
                 if (shouldPlay) {
                     trackBuffer.clear();
                     track->process(positionSeconds, trackBuffer, numSamples, sampleRate);
-                    track->processEffects(trackBuffer);
+                    
+                    // For MIDI tracks, effects are processed internally with MIDI data
+                    // For Audio tracks, we need to process effects separately
+                    if (track->getType() != Track::TrackType::MIDI) {
+                        track->processEffects(trackBuffer);
+                    }
+                    
+                    // Check for audio output from this track
+                    float trackPeak = 0.0f;
+                    for (int ch = 0; ch < numOutputChannels; ++ch) {
+                        for (int i = 0; i < numSamples; ++i) {
+                            trackPeak = std::max(trackPeak, std::abs(trackBuffer.getSample(ch, i)));
+                        }
+                    }
+                    if (trackPeak > 0.001f) { // Only log if there's significant audio
+                        DEBUG_PRINT("Track '" << track->getName() << "' peak: " << trackPeak);
+                    }
+                    
                     for (int ch = 0; ch < numOutputChannels; ++ch) {
                         tempMixBuffer.addFrom(ch, 0, trackBuffer, ch, 0, numSamples);
                     }
@@ -1212,6 +1453,9 @@ void Engine::loadState(const std::string& stateData) {
         DEBUG_PRINT("Tracks loaded: " + std::to_string(currentComposition ? currentComposition->tracks.size() : 0));
         DEBUG_PRINT("Selected track: " + selectedTrackName);
         
+        // Send BPM to all loaded synthesizers after project load
+        sendBpmToSynthesizers();
+        
     } catch (const json::parse_error& e) {
         DEBUG_PRINT("JSON parse error in loadState: " + std::string(e.what()));
     } catch (const json::exception& e) {
@@ -1249,6 +1493,36 @@ void Engine::audioDeviceAboutToStart(juce::AudioIODevice* device) {
 
 void Engine::audioDeviceStopped() {
     tempMixBuffer.setSize(0, 0);
+}
+
+void Engine::handleIncomingMidiMessage(juce::MidiInput* source, const juce::MidiMessage& message) {
+    // Only process MIDI note messages (note on/off)
+    if (!message.isNoteOnOrOff()) return;
+    
+    DEBUG_PRINT("MIDI Input: " << message.getDescription().toStdString());
+    
+    // Queue the MIDI message for processing in the audio thread
+    juce::ScopedLock lock(midiInputLock);
+    incomingMidiBuffer.addEvent(message, 0);
+}
+
+void Engine::sendRealtimeMIDI(int noteNumber, int velocity, bool noteOn) {
+    // Create the MIDI message
+    juce::MidiMessage message;
+    if (noteOn) {
+        message = juce::MidiMessage::noteOn(1, noteNumber, static_cast<juce::uint8>(velocity));
+        DEBUG_PRINT("Queuing realtime MIDI Note On: " << noteNumber << " velocity: " << velocity);
+    } else {
+        // Use a moderate release velocity (64) for smoother note-off
+        message = juce::MidiMessage::noteOff(1, noteNumber, static_cast<juce::uint8>(64));
+        DEBUG_PRINT("Queuing realtime MIDI Note Off: " << noteNumber);
+    }
+    
+    // Queue the message for processing in the audio thread (no direct processing)
+    {
+        juce::ScopedLock lock(midiInputLock);
+        incomingMidiBuffer.addEvent(message, 0);
+    }
 }
 
 

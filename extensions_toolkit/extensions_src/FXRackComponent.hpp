@@ -85,8 +85,10 @@ inline bool FXRack::handleEvents() {
 
 inline Row* FXRack::effectRow(const std::string& effectName, const int index) {
     sf::Color initialColor = app->resources.activeTheme->middle_color;
-    if (index >= 0 && index < app->getSelectedTrackPtr()->getEffectCount()) {
-        Effect* effect = app->getSelectedTrackPtr()->getEffect(index);
+    
+    Track* selectedTrack = app->getSelectedTrackPtr();
+    if (selectedTrack && index >= 0 && index < selectedTrack->getEffectCount()) {
+        Effect* effect = selectedTrack->getEffect(index);
         if (effect && effect->enabled()) {
             initialColor = app->resources.activeTheme->clip_color;
         }
@@ -98,11 +100,18 @@ inline Row* FXRack::effectRow(const std::string& effectName, const int index) {
             .setfixedWidth(24)
             .setColor(initialColor)
             .onLClick([this, index](){
-                app->getSelectedTrackPtr()->getEffect(index)->enabled() ?
-                app->getSelectedTrackPtr()->getEffect(index)->disable():
-                app->getSelectedTrackPtr()->getEffect(index)->enable();
-                
-                needsUIRebuild = true;
+                Track* selectedTrack = app->getSelectedTrackPtr();
+                if (selectedTrack && index >= 0 && index < selectedTrack->getEffectCount()) {
+                    Effect* effect = selectedTrack->getEffect(index);
+                    if (effect) {
+                        if (effect->enabled()) {
+                            effect->disable();
+                        } else {
+                            effect->enable();
+                        }
+                        needsUIRebuild = true;
+                    }
+                }
             })
         .align(Align::CENTER_X | Align::CENTER_Y),
         ButtonStyle::Pill,
@@ -119,7 +128,10 @@ inline Row* FXRack::effectRow(const std::string& effectName, const int index) {
             .setColor(app->resources.activeTheme->mute_color)
             .align(Align::CENTER_X | Align::CENTER_Y)
             .onLClick([this, index](){
-                app->getSelectedTrackPtr()->removeEffect(index);
+                Track* selectedTrack = app->getSelectedTrackPtr();
+                if (selectedTrack && index >= 0 && index < selectedTrack->getEffectCount()) {
+                    selectedTrack->removeEffect(index);
+                }
             }),
         ButtonStyle::Pill,
         "",
@@ -135,7 +147,13 @@ inline Row* FXRack::effectRow(const std::string& effectName, const int index) {
             .setfixedHeight(96)
             .align(Align::CENTER_Y)
             .onLClick([this, index](){
-                app->getSelectedTrackPtr()->getEffect(index)->openWindow();
+                Track* selectedTrack = app->getSelectedTrackPtr();
+                if (selectedTrack && index >= 0 && index < selectedTrack->getEffectCount()) {
+                    Effect* effect = selectedTrack->getEffect(index);
+                    if (effect) {
+                        effect->openWindow();
+                    }
+                }
             }),
         contains{
             spacer(Modifier().setfixedWidth(16)),
@@ -162,8 +180,12 @@ inline void FXRack::rebuildUI() {
     fxRackRow->clear();
     enableButtons.clear();
     lastEffectStates.clear();
-    for (auto& e : app->getSelectedTrackPtr()->getEffects())
-        fxRackRow->addElements({spacer(Modifier().setfixedWidth(8)), effectRow(e->getName(), e->getIndex())});
+    
+    Track* selectedTrack = app->getSelectedTrackPtr();
+    if (selectedTrack) {
+        for (auto& e : selectedTrack->getEffects())
+            fxRackRow->addElements({spacer(Modifier().setfixedWidth(8)), effectRow(e->getName(), e->getIndex())});
+    }
 }
 
 GET_INTERFACE

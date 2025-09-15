@@ -9,9 +9,7 @@ void MIDITrack::process(double playheadSeconds, juce::AudioBuffer<float>& output
     // Clear the audio buffer first
     outputBuffer.clear();
     
-    // Process MIDI clips and generate audio if we have virtual instruments
-    // TODO: Add virtual instrument support here
-    // For now, we'll create a temporary MIDI buffer to process MIDI events
+    // Create MIDI buffer to collect all MIDI events for this time range
     juce::MidiBuffer midiBuffer;
     
     // Calculate time range for this buffer
@@ -25,14 +23,8 @@ void MIDITrack::process(double playheadSeconds, juce::AudioBuffer<float>& output
         }
     }
     
-    // TODO: Route MIDI events to virtual instruments
-    // For now, we'll just log MIDI events for debugging
-    if (!midiBuffer.isEmpty()) {
-        DEBUG_PRINT("MIDI Track '" << name << "' processed " << midiBuffer.getNumEvents() << " MIDI events");
-    }
-    
-    // Apply effects (MIDI tracks can still have audio effects like reverb)
-    processEffects(outputBuffer);
+    // Process effects, passing MIDI data to synthesizers
+    processEffectsWithMidi(outputBuffer, midiBuffer);
     
     // Apply track volume and mute
     if (muted) {
@@ -81,7 +73,6 @@ AudioClip* MIDITrack::getReferenceClip() {
 // MIDI clip management - the actual functionality for MIDI tracks
 void MIDITrack::clearMIDIClips() {
     midiClips.clear();
-    DEBUG_PRINT("Cleared all MIDI clips from track '" << name << "'");
 }
 
 const std::vector<MIDIClip>& MIDITrack::getMIDIClips() const {
@@ -90,13 +81,10 @@ const std::vector<MIDIClip>& MIDITrack::getMIDIClips() const {
 
 void MIDITrack::addMIDIClip(const MIDIClip& clip) {
     midiClips.push_back(clip);
-    DEBUG_PRINT("Added MIDI clip to track '" << name << "' - start: " << clip.startTime 
-                << " duration: " << clip.duration << " channel: " << clip.channel);
 }
 
 void MIDITrack::removeMIDIClip(size_t index) {
     if (index < midiClips.size()) {
-        DEBUG_PRINT("Removed MIDI clip " << index << " from track '" << name << "'");
         midiClips.erase(midiClips.begin() + index);
     }
 }
@@ -110,4 +98,48 @@ MIDIClip* MIDITrack::getMIDIClip(size_t index) {
 
 size_t MIDITrack::getMIDIClipCount() const {
     return midiClips.size();
+}
+
+void MIDITrack::processEffectsWithMidi(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiBuffer) {
+    for (const auto& effect : effects) {
+        if (effect && effect->enabled()) {
+            if (effect->isSynthesizer()) {
+                // Synthesizers need both audio buffer and MIDI data
+                effect->processAudio(buffer, midiBuffer);
+            } else {
+                // Regular effects only process audio
+                effect->processAudio(buffer);
+            }
+        }
+    }
+}
+
+void MIDITrack::sendAllNotesOff() {
+    // Send "All Notes Off" (MIDI CC 123) to all synthesizers
+    juce::MidiMessage allNotesOff = juce::MidiMessage::allNotesOff(1); // Channel 1
+    sendMIDIMessage(allNotesOff);
+    
+    // Also send on other common MIDI channels
+    for (int channel = 1; channel <= 16; ++channel) {
+        juce::MidiMessage msg = juce::MidiMessage::allNotesOff(channel);
+        sendMIDIMessage(msg);
+    }
+}
+
+void MIDITrack::sendMIDIMessage(const juce::MidiMessage& message) {
+    // Create a temporary MIDI buffer with the message
+    juce::MidiBuffer midiBuffer;
+    midiBuffer.addEvent(message, 0);
+    
+    // Use standard buffer size for occasional direct MIDI sends (like All Notes Off)
+    int bufferSize = std::max(256, currentBufferSize);
+    juce::AudioBuffer<float> tempBuffer(2, bufferSize);
+    tempBuffer.clear();
+    
+    // Send the MIDI message to all synthesizer effects
+    for (const auto& effect : effects) {
+        if (effect && effect->enabled() && effect->isSynthesizer()) {
+            effect->processAudio(tempBuffer, midiBuffer);
+        }
+    }
 }

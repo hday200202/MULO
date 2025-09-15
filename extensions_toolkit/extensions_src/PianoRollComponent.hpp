@@ -39,6 +39,7 @@ private:
     int keyboardOctave = 4;
 
     std::unordered_map<std::string, sf::Keyboard::Key> noteKeys = {
+        // First octave (C4-B4)
         {"C", sf::Keyboard::Key::A},
         {"C#", sf::Keyboard::Key::W},
         {"D", sf::Keyboard::Key::S},
@@ -50,7 +51,14 @@ private:
         {"G#", sf::Keyboard::Key::Y},
         {"A", sf::Keyboard::Key::H},
         {"A#", sf::Keyboard::Key::U},
-        {"B", sf::Keyboard::Key::J}
+        {"B", sf::Keyboard::Key::J},
+        // Next octave partial (C5-F5)
+        {"C5", sf::Keyboard::Key::K},
+        {"C#5", sf::Keyboard::Key::O},
+        {"D5", sf::Keyboard::Key::L},
+        {"D#5", sf::Keyboard::Key::P},
+        {"E5", sf::Keyboard::Key::Semicolon},
+        {"F5", sf::Keyboard::Key::Apostrophe}
     };
 
     ScrollableColumn* baseColumn;
@@ -67,6 +75,7 @@ private:
     Row* noteRow(const std::string& note);
     void handleScrollSynchronization();
     void handleMeasureLines();
+    int calculateNoteNumber(const std::string& noteName, int octave);
     const std::vector<std::shared_ptr<sf::Drawable>>& getCachedMeasureLines(
         float measureWidth, 
         float scrollOffset, 
@@ -249,6 +258,70 @@ const std::vector<std::shared_ptr<sf::Drawable>>& PianoRoll::getCachedMeasureLin
 }
 
 bool PianoRoll::handleEvents() {
+    // Handle keyboard input for playing MIDI notes
+    static std::unordered_map<sf::Keyboard::Key, bool> keyStates;
+    
+    // Handle octave shifting
+    static bool zPressed = false;
+    static bool xPressed = false;
+    
+    bool zCurrentlyPressed = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Z);
+    bool xCurrentlyPressed = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::X);
+    
+    if (zCurrentlyPressed && !zPressed) {
+        // Z key pressed - decrease octave
+        keyboardOctave = std::max(-1, keyboardOctave - 1);
+        DEBUG_PRINT("Octave decreased to: " << keyboardOctave);
+    }
+    
+    if (xCurrentlyPressed && !xPressed) {
+        // X key pressed - increase octave
+        keyboardOctave = std::min(10, keyboardOctave + 1);
+        DEBUG_PRINT("Octave increased to: " << keyboardOctave);
+    }
+    
+    zPressed = zCurrentlyPressed;
+    xPressed = xCurrentlyPressed;
+    
+    for (const auto& [noteName, key] : noteKeys) {
+        bool keyPressed = sf::Keyboard::isKeyPressed(key);
+        bool wasPressed = keyStates[key];
+        
+        if (keyPressed && !wasPressed) {
+            // Key just pressed - send note on
+            int noteNumber;
+            if (noteName.length() > 1 && noteName.back() == '5') {
+                // Higher octave keys (C5, C#5, etc.) - use keyboardOctave + 1
+                std::string baseNote = noteName.substr(0, noteName.length() - 1);
+                noteNumber = calculateNoteNumber(baseNote, keyboardOctave + 1);
+            } else {
+                // Regular keys - use keyboardOctave
+                noteNumber = calculateNoteNumber(noteName, keyboardOctave);
+            }
+            DEBUG_PRINT("Piano Key Pressed: " << noteName << " (MIDI: " << noteNumber << ")");
+            if (app) {
+                app->sendMIDINote(noteNumber, 127, true); // Note on with full velocity
+            }
+        } else if (!keyPressed && wasPressed) {
+            // Key just released - send note off
+            int noteNumber;
+            if (noteName.length() > 1 && noteName.back() == '5') {
+                // Higher octave keys (C5, C#5, etc.) - use keyboardOctave + 1
+                std::string baseNote = noteName.substr(0, noteName.length() - 1);
+                noteNumber = calculateNoteNumber(baseNote, keyboardOctave + 1);
+            } else {
+                // Regular keys - use keyboardOctave
+                noteNumber = calculateNoteNumber(noteName, keyboardOctave);
+            }
+            DEBUG_PRINT("Piano Key Released: " << noteName << " (MIDI: " << noteNumber << ")");
+            if (app) {
+                app->sendMIDINote(noteNumber, 127, false); // Note off
+            }
+        }
+        
+        keyStates[key] = keyPressed;
+    }
+    
     return false;
 }
 
@@ -301,6 +374,31 @@ void PianoRoll::handleScrollSynchronization() {
             }
         }
     }
+}
+
+int PianoRoll::calculateNoteNumber(const std::string& noteName, int octave) {
+    // MIDI note numbers: C4 = 60 (middle C)
+    // Each octave has 12 notes, C is note 0 in each octave
+    
+    int noteOffset = 0;
+    
+    // Get note offset within the octave
+    if (noteName == "C") noteOffset = 0;
+    else if (noteName == "C#") noteOffset = 1;
+    else if (noteName == "D") noteOffset = 2;
+    else if (noteName == "D#") noteOffset = 3;
+    else if (noteName == "E") noteOffset = 4;
+    else if (noteName == "F") noteOffset = 5;
+    else if (noteName == "F#") noteOffset = 6;
+    else if (noteName == "G") noteOffset = 7;
+    else if (noteName == "G#") noteOffset = 8;
+    else if (noteName == "A") noteOffset = 9;
+    else if (noteName == "A#") noteOffset = 10;
+    else if (noteName == "B") noteOffset = 11;
+    
+    // MIDI note number = (octave + 1) * 12 + noteOffset
+    // C4 = 60, so (4 + 1) * 12 + 0 = 60
+    return (octave + 1) * 12 + noteOffset;
 }
 
 GET_INTERFACE

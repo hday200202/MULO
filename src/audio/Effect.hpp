@@ -14,10 +14,11 @@ public:
     bool loadVST(const std::string& vstPath, double sampleRate);
     void prepareToPlay(double sampleRate, int bufferSize);
     void processAudio(juce::AudioBuffer<float>& buffer);
+    void processAudio(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiBuffer);
     void openWindow();
     void closeWindow() {
         if (editorWindow) {
-            editorWindow->setVisible(false);
+            editorWindow.reset(); // Properly destroy the window
         }
     }
     bool hasEditor() const { return hasEditorCached; }
@@ -31,6 +32,14 @@ public:
     void setParameter(int index, float value);
     float getParameter(int index) const;
     int getNumParameters() const;
+    
+    void resetBuffers();  // Clear internal audio buffers (reverb, delay, etc.)
+    void setBpm(double bpm);  // Send BPM to synthesizer for tempo sync
+    void setPlayHead(juce::AudioPlayHead* playHead);  // Set AudioPlayHead for tempo sync
+    
+    // Silencing methods for synthesizer control during engine transitions
+    void setSilenced(bool silenced) { silencedFlag = silenced; }
+    bool isSilenced() const { return silencedFlag; }
 
     inline void enable() { isEnabled = true; }
     inline void disable() { isEnabled = false; }
@@ -41,6 +50,9 @@ public:
     
     void setIndex(int idx) { index = idx; }
     int getIndex() const { return index; }
+    
+    bool isSynthesizer() const;
+    static bool isVSTSynthesizer(const std::string& vstPath);
 
 private:
     std::unique_ptr<juce::AudioPluginInstance> plugin;
@@ -48,6 +60,7 @@ private:
     std::string vstPath;
     bool isEnabled = true;
     bool hasEditorCached = false;
+    bool silencedFlag = false;  // Temporary silencing for synthesizers during transitions
     int index = -1;
     
     std::unique_ptr<VSTEditorWindow> editorWindow;

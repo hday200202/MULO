@@ -1,6 +1,7 @@
 
 
 #include "Application.hpp"
+#include "../audio/MIDIClip.hpp"
 
 #include <tinyfiledialogs/tinyfiledialogs.hpp>
 #include <filesystem>
@@ -52,29 +53,12 @@ void Application::initialise(const juce::String& commandLine) {
 #else
     exeDirectory = fs::canonical("/proc/self/exe").parent_path().string();
 #endif
-    
-    // Load central config
     loadConfig();
-    
-    // Populate UIState from central config
-    uiState.fileBrowserDirectory = readConfig<std::string>("fileBrowserDirectory", "");
-    uiState.vstDirecory = readConfig<std::string>("vstDirectory", "");
-    uiState.vstDirectories = readConfig<std::vector<std::string>>("vstDirectories", std::vector<std::string>{});
-    uiState.saveDirectory = readConfig<std::string>("saveDirectory", "");
-    uiState.selectedTheme = readConfig<std::string>("selectedTheme", "Dark");
-    uiState.sampleRate = readConfig<double>("sampleRate", 44100.0);
-    uiState.autoSaveIntervalSeconds = readConfig<int>("autoSaveIntervalSeconds", 300);
-    uiState.enableAutoVSTScan = readConfig<bool>("enableAutoVSTScan", false);
-    
-    // Configure engine directories from UI state
-    engine.setVSTDirectory(uiState.vstDirecory);
-    engine.setSampleDirectory(uiState.fileBrowserDirectory);
-    
-    if (uiState.sampleRate > 0) {
-        engine.configureAudioDevice(uiState.sampleRate);
-        DEBUG_PRINT("Configured engine with sample rate from config: " << uiState.sampleRate << " Hz");
-    } else {
-        DEBUG_PRINT("Using default audio device configuration");
+    if (!uiState.vstDirecory.empty()) {
+        engine.setVSTDirectory(uiState.vstDirecory);
+    }
+    if (!uiState.saveDirectory.empty()) {
+        engine.setSampleDirectory(uiState.saveDirectory);
     }
     
     createWindow();
@@ -111,7 +95,6 @@ void Application::update() {
     running = ui->isRunning();
     if (!running) return;
     
-    // handle all input, determines if shouldForceUpdate
     handleEvents();
 
     bool rClick = isButtonPressed(mb::Right);
@@ -137,7 +120,7 @@ void Application::render() {
     if (ui->windowShouldUpdate()) {
         window.clear(sf::Color::Black);
         ui->render();
-        window.draw(dragOverlay); // Draw the drag overlay if active
+        window.draw(dragOverlay);
         window.display();
     }
 }
@@ -156,21 +139,75 @@ void Application::handleEvents() {
         pendingFullscreenToggle = false;
     }
 
-    // Process pending VST effect operations in main thread context
     if (hasPendingEffect) {
-        Track* selectedTrack = getSelectedTrackPtr();
-        if (selectedTrack) {
-            Effect* effect = selectedTrack->addEffect(pendingEffectPath);
-            if (effect) {
-                effect->openWindow();
+        if (Effect::isVSTSynthesizer(pendingEffectPath)) {
+            DEBUG_PRINT("Detected synthesizer VST, creating MIDI track: " << pendingEffectPath);
+            juce::File vstFile(pendingEffectPath);
+            std::string synthName = vstFile.getFileNameWithoutExtension().toStdString();
+            std::string trackName = synthName;
+            
+            std::string actualTrackName = engine.addMIDITrack(trackName);
+            MIDITrack* midiTrack = dynamic_cast<MIDITrack*>(engine.getTrackByName(actualTrackName));
+            if (midiTrack) {
+                Effect* synthEffect = midiTrack->addEffect(pendingEffectPath);
+                if (synthEffect) {
+                    synthEffect->enable();
+                    synthEffect->openWindow();
+                    engine.setSelectedTrack(actualTrackName);
+                    DEBUG_PRINT("Created MIDI track '" << actualTrackName << "' with synthesizer: " << synthName);
+                } else {
+                    DEBUG_PRINT("Failed to add synthesizer to MIDI track: " << pendingEffectPath);
+                }
             } else {
-                DEBUG_PRINT("Failed to load effect: " << pendingEffectPath);
+                DEBUG_PRINT("Failed to create MIDI track for synthesizer");
             }
         } else {
-            DEBUG_PRINT("No selected track for effect loading");
+            Track* selectedTrack = getSelectedTrackPtr();
+            if (selectedTrack) {
+                Effect* effect = selectedTrack->addEffect(pendingEffectPath);
+                if (effect) {
+                    effect->openWindow();
+                    
+                    if (effect->isSynthesizer()) {
+                        engine.sendBpmToSynthesizers();
+                        DEBUG_PRINT("Sent BPM to newly loaded synthesizer effect: " << effect->getName());
+                    }
+                } else {
+                    DEBUG_PRINT("Failed to load effect: " << pendingEffectPath);
+                }
+            } else {
+                DEBUG_PRINT("No selected track for effect loading");
+            }
         }
         hasPendingEffect = false;
         pendingEffectPath.clear();
+    }
+
+    if (hasPendingSynth) {
+        juce::File vstFile(pendingSynthPath);
+        std::string synthName = vstFile.getFileNameWithoutExtension().toStdString();
+        std::string trackName = synthName + " Synth";
+        
+        engine.addMIDITrack(trackName);
+        MIDITrack* midiTrack = dynamic_cast<MIDITrack*>(engine.getTrackByName(trackName));
+        if (midiTrack) {
+            Effect* synthEffect = midiTrack->addEffect(pendingSynthPath);
+            if (synthEffect) {
+                synthEffect->enable();
+                synthEffect->openWindow();
+                engine.setSelectedTrack(trackName);
+                
+                engine.sendBpmToSynthesizers();
+                DEBUG_PRINT("Sent BPM to newly loaded synthesizer: " << synthName);
+                DEBUG_PRINT("Created MIDI track '" << trackName << "' with synthesizer: " << synthName);
+            } else {
+                DEBUG_PRINT("Failed to add synthesizer to MIDI track: " << pendingSynthPath);
+            }
+        } else {
+            DEBUG_PRINT("Failed to create MIDI track for synthesizer");
+        }
+        hasPendingSynth = false;
+        pendingSynthPath.clear();
     }
 
     if (hasPendingEffectWindow) {
@@ -204,7 +241,6 @@ void Application::handleEvents() {
         if (targetTrack) {
             Effect* effect = targetTrack->addEffect(deferredEffect.vstPath);
             if (effect) {
-                // Apply saved effect settings
                 if (!deferredEffect.enabled) {
                     effect->disable();
                 }
@@ -212,16 +248,18 @@ void Application::handleEvents() {
                     effect->setIndex(deferredEffect.index);
                 }
                 
-                // Apply saved parameters
                 for (const auto& paramPair : deferredEffect.parameters) {
                     effect->setParameter(paramPair.first, paramPair.second);
                 }
                 
-                // Prime the VST window to prevent blank window issues
-                // by opening it briefly then closing it
+                if (effect->isSynthesizer()) {
+                    engine.sendBpmToSynthesizers();
+                    DEBUG_PRINT("Sent BPM to deferred synthesizer: " << effect->getName());
+                }
+                
                 if (effect->hasEditor()) {
                     effect->openWindow();
-                    std::this_thread::sleep_for(std::chrono::milliseconds(50)); // Give it time to fully initialize
+                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
                     effect->closeWindow();
                 }
                 
@@ -237,15 +275,13 @@ void Application::handleEvents() {
         }
     }
 
-    // Check for pending effects from engine state loading
     const auto& enginePendingEffects = engine.getPendingEffects();
     if (!enginePendingEffects.empty()) {
         for (const auto& pendingEffect : enginePendingEffects) {
-            // Convert engine pending effect to application deferred effect
             DeferredEffect def;
             def.trackName = pendingEffect.trackName;
             def.vstPath = pendingEffect.vstPath;
-            def.shouldOpenWindow = false;  // Don't auto-open windows from save file loading
+            def.shouldOpenWindow = false;
             def.enabled = pendingEffect.enabled;
             def.index = pendingEffect.index;
             def.parameters = pendingEffect.parameters;
@@ -283,12 +319,10 @@ void Application::handleDragAndDrop() {
 
     bool alt = isKeyPressed(kb::LAlt) || isKeyPressed(kb::RAlt);
     bool dragging = alt && ui->isMouseDragging();
-    // Drag-and-drop logic: record drag start and perform swap on drag end
     static Container* dragParentContainer = nullptr;
     static Element* draggedElement = nullptr;
     static int dragStartIndex = -1;
 
-    // If alt is pressed, highlight the component under the mouse
     if (alt) {
         for (auto& [name, component] : muloComponents) {
             if (component->getLayout() && component->isVisible()) {
