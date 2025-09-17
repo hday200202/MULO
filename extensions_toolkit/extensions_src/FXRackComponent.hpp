@@ -89,7 +89,7 @@ inline Row* FXRack::effectRow(const std::string& effectName, const int index) {
     Track* selectedTrack = app->getSelectedTrackPtr();
     if (selectedTrack && index >= 0 && index < selectedTrack->getEffectCount()) {
         Effect* effect = selectedTrack->getEffect(index);
-        if (effect && effect->enabled()) {
+        if (effect && !effect->isScheduledForCleanup() && effect->enabled()) {
             initialColor = app->resources.activeTheme->clip_color;
         }
     }
@@ -103,7 +103,7 @@ inline Row* FXRack::effectRow(const std::string& effectName, const int index) {
                 Track* selectedTrack = app->getSelectedTrackPtr();
                 if (selectedTrack && index >= 0 && index < selectedTrack->getEffectCount()) {
                     Effect* effect = selectedTrack->getEffect(index);
-                    if (effect) {
+                    if (effect && !effect->isScheduledForCleanup()) {
                         if (effect->enabled()) {
                             effect->disable();
                         } else {
@@ -150,7 +150,7 @@ inline Row* FXRack::effectRow(const std::string& effectName, const int index) {
                 Track* selectedTrack = app->getSelectedTrackPtr();
                 if (selectedTrack && index >= 0 && index < selectedTrack->getEffectCount()) {
                     Effect* effect = selectedTrack->getEffect(index);
-                    if (effect) {
+                    if (effect && !effect->isScheduledForCleanup()) {
                         effect->openWindow();
                     }
                 }
@@ -183,8 +183,12 @@ inline void FXRack::rebuildUI() {
     
     Track* selectedTrack = app->getSelectedTrackPtr();
     if (selectedTrack) {
-        for (auto& e : selectedTrack->getEffects())
-            fxRackRow->addElements({spacer(Modifier().setfixedWidth(8)), effectRow(e->getName(), e->getIndex())});
+        for (auto& e : selectedTrack->getEffects()) {
+            // Add null pointer check and cleanup check before accessing Effect methods
+            if (e && !e->isScheduledForCleanup()) {
+                fxRackRow->addElements({spacer(Modifier().setfixedWidth(8)), effectRow(e->getName(), e->getIndex())});
+            }
+        }
     }
 }
 

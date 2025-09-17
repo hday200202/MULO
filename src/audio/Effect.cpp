@@ -5,11 +5,16 @@
 #include <chrono>
 #include <filesystem>
 #include <algorithm>
+#include <mutex>
 
 #ifdef _WIN32
 #undef max
 #undef min
 #endif
+
+std::vector<std::unique_ptr<juce::AudioPluginInstance>> Effect::scheduledPlugins;
+std::mutex Effect::cleanupMutex;
+std::unordered_map<std::string, int> Effect::pluginInstanceCount;
 
 VSTEditorWindow::VSTEditorWindow(const juce::String& name, juce::AudioProcessor* processor, std::function<void()> onClose)
     : juce::DocumentWindow(name, juce::Colours::lightgrey, juce::DocumentWindow::allButtons)
@@ -27,10 +32,6 @@ VSTEditorWindow::VSTEditorWindow(const juce::String& name, juce::AudioProcessor*
         bool isDPFPlugin = processor->getName().toLowerCase().contains("dpf") ||
                            processor->getName().toLowerCase().contains("distrho");
         
-        if (isDPFPlugin) {
-            DEBUG_PRINT("Creating DPF plugin editor window...");
-        }
-        
         processor->setProcessingPrecision(juce::AudioProcessor::singlePrecision);
         
         auto* editor = processor->createEditor();
@@ -41,7 +42,6 @@ VSTEditorWindow::VSTEditorWindow(const juce::String& name, juce::AudioProcessor*
             int editorHeight = editor->getHeight();
             
             if (isDPFPlugin && (editorWidth < 100 || editorHeight < 100)) {
-                DEBUG_PRINT("DPF plugin reported small size, using defaults");
                 editorWidth = 400;
                 editorHeight = 300;
             }
@@ -56,7 +56,6 @@ VSTEditorWindow::VSTEditorWindow(const juce::String& name, juce::AudioProcessor*
             setVisible(true);
             toFront(true);
             
-            DEBUG_PRINT("VST editor window setup complete (" << editorWidth << "x" << editorHeight << ")");
             repaint();
         } else {
             std::cerr << "Failed to create VST editor" << std::endl;
@@ -67,21 +66,11 @@ VSTEditorWindow::VSTEditorWindow(const juce::String& name, juce::AudioProcessor*
 }
 
 VSTEditorWindow::~VSTEditorWindow() {
-    DEBUG_PRINT("Destroying VSTEditorWindow");
-    
-    try {
-        setContentOwned(nullptr, false);
-        setVisible(false);
-        DEBUG_PRINT("VSTEditorWindow destroyed successfully");
-    } catch (const std::exception& e) {
-        std::cerr << "Exception during VSTEditorWindow destruction: " << e.what() << std::endl;
-    } catch (...) {
-        std::cerr << "Unknown exception during VSTEditorWindow destruction" << std::endl;
-    }
+    setContentOwned(nullptr, false);
+    setVisible(false);
 }
 
-void VSTEditorWindow::closeButtonPressed()
-{
+void VSTEditorWindow::closeButtonPressed() {
     setVisible(false);
     if (closeCallback) {
         closeCallback();
@@ -89,56 +78,110 @@ void VSTEditorWindow::closeButtonPressed()
 }
 
 Effect::~Effect() {
-    DEBUG_PRINT("Destroying Effect: " << name);
-    
     try {
         if (editorWindow) {
-            DEBUG_PRINT("Closing editor window for: " << name);
             editorWindow->setVisible(false);
             editorWindow.reset();
         }
         
         if (plugin) {
-            DEBUG_PRINT("Releasing plugin: " << name);
-            
             try {
                 plugin->suspendProcessing(true);
                 
                 if (plugin->hasEditor()) {
                     auto* editor = plugin->getActiveEditor();
                     if (editor) {
-                        DEBUG_PRINT("Plugin has active editor, will be closed during plugin destruction");
-                    }
+                    plugin->editorBeingDeleted(editor);
+                }
                 }
                 
-                try {
-                    plugin->releaseResources();
-                    DEBUG_PRINT("Plugin resources released successfully: " << name);
-                } catch (const std::exception& e) {
-                    std::cerr << "Exception during plugin->releaseResources(): " << e.what() << std::endl;
-                } catch (...) {
-                    std::cerr << "Unknown exception during plugin->releaseResources()" << std::endl;
-                }
-                
+                plugin->releaseResources();
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
                 
-            } catch (const std::exception& e) {
-                std::cerr << "Exception during plugin preparation for destruction: " << e.what() << std::endl;
             } catch (...) {
                 std::cerr << "Unknown exception during plugin preparation for destruction" << std::endl;
             }
             
-            plugin.release();
-            DEBUG_PRINT("Plugin ownership released (leaked) to prevent crash: " << name);
-            DEBUG_PRINT("Plugin released successfully: " << name);
+            std::string pluginName = plugin->getName().toStdString();
+            bool isLastInstance = false;
+            {
+                std::lock_guard<std::mutex> lock(cleanupMutex);
+                auto it = pluginInstanceCount.find(pluginName);
+                if (it != pluginInstanceCount.end() && it->second > 0) {
+                    it->second--;
+                    isLastInstance = (it->second == 0);
+                }
+            }
+            
+            bool isProblematicPlugin = (pluginName.find("Zebra2") != std::string::npos) || 
+                                     (pluginName.find("zebra") != std::string::npos);
+            
+            if (!scheduledForCleanup) {
+                if (isLastInstance || isProblematicPlugin) {
+                    try {
+                        plugin->suspendProcessing(true);
+                        plugin->setPlayHead(nullptr);
+                        
+                        if (!isProblematicPlugin && plugin->hasEditor()) {
+                            auto* editor = plugin->getActiveEditor();
+                            if (editor) {
+                                plugin->editorBeingDeleted(editor);
+                            }
+                        }
+                        plugin->releaseResources();
+                    } catch (...) {
+                        plugin.reset();
+                    }
+                    plugin.release();
+                } else {
+                    scheduledForCleanup = true;
+                    
+                    try {
+                        if (plugin) {
+                            plugin->suspendProcessing(true);
+                            plugin->setPlayHead(nullptr);
+                            
+                            if (isSynthesizer()) {
+                                juce::AudioBuffer<float> silentBuffer(2, 256);
+                                silentBuffer.clear();
+                                juce::MidiBuffer allNotesOff;
+                                
+                                for (int channel = 1; channel <= 16; ++channel) {
+                                    allNotesOff.addEvent(juce::MidiMessage::allNotesOff(channel), 0);
+                                    allNotesOff.addEvent(juce::MidiMessage::controllerEvent(channel, 120, 0), 0);
+                                }
+                                
+                                plugin->processBlock(silentBuffer, allNotesOff);
+                            }
+                            
+                            if (plugin->hasEditor()) {
+                                try {
+                                    auto* editor = plugin->getActiveEditor();
+                                    if (editor) {
+                                        plugin->editorBeingDeleted(editor);
+                                    }
+                                } catch (...) {
+                                }
+                            }
+                            
+                            
+                            plugin->releaseResources();
+                            plugin->reset();
+                        }
+                        
+                        plugin.reset();
+                        
+                    } catch (...) {
+                        plugin.reset();
+                    }
+                }
+            }
         }
     } catch (const std::exception& e) {
         std::cerr << "Exception during Effect destruction (" << name << "): " << e.what() << std::endl;
     } catch (...) {
         std::cerr << "Unknown exception during Effect destruction: " << name << std::endl;
     }
-    
-    DEBUG_PRINT("Effect destroyed: " << name);
 }
 
 bool Effect::loadVST(const std::string& vstPath) {
@@ -154,14 +197,8 @@ bool Effect::loadVST(const std::string& vstPath, double sampleRate) {
         return false;
     }
     
-    static juce::AudioPluginFormatManager formatManager;
-    static bool formatsRegistered = false;
-    
-    if (!formatsRegistered) {
-        formatManager.addDefaultFormats();
-        formatsRegistered = true;
-        DEBUG_PRINT("Registered JUCE plugin formats");
-    }
+    juce::AudioPluginFormatManager formatManager;
+    formatManager.addDefaultFormats();
     
     juce::File vstFile(vstPath);
     if (!vstFile.exists()) {
@@ -172,24 +209,8 @@ bool Effect::loadVST(const std::string& vstPath, double sampleRate) {
     juce::OwnedArray<juce::PluginDescription> descriptions;
     
     for (auto* format : formatManager.getFormats()) {
-        DEBUG_PRINT("Trying format: " << format->getName().toStdString());
         format->findAllTypesForFile(descriptions, vstFile.getFullPathName());
         if (!descriptions.isEmpty()) {
-            DEBUG_PRINT("Found " << descriptions.size() << " plugin(s) using format: " << format->getName().toStdString());
-            
-            for (int i = 0; i < descriptions.size(); ++i) {
-                auto* desc = descriptions[i];
-                DEBUG_PRINT("  Plugin " << i << ": " << desc->name.toStdString() 
-                          << " (Manufacturer: " << desc->manufacturerName.toStdString()
-                          << ", Format: " << desc->pluginFormatName.toStdString()
-                          << ", Category: " << desc->category.toStdString() << ")");
-                          
-                if (desc->manufacturerName.toLowerCase().contains("distrho") || 
-                    desc->manufacturerName.toLowerCase().contains("dpf") ||
-                    desc->category.toLowerCase().contains("dpf")) {
-                    DEBUG_PRINT("  -> Detected DPF plugin");
-                }
-            }
             break;
         }
     }
@@ -200,22 +221,11 @@ bool Effect::loadVST(const std::string& vstPath, double sampleRate) {
     }
     
     auto* description = descriptions[0];
-    DEBUG_PRINT("Loading plugin: " << description->name.toStdString() 
-              << " (Format: " << description->pluginFormatName.toStdString() << ")");
-    
     bool isDPFPlugin = description->manufacturerName.toLowerCase().contains("distrho") || 
                        description->manufacturerName.toLowerCase().contains("dpf") ||
                        description->category.toLowerCase().contains("dpf");
     
-    if (isDPFPlugin) {
-        DEBUG_PRINT("Applying DPF-specific loading procedures...");
-    }
-    
     juce::String errorMessage;
-    
-    if (isDPFPlugin) {
-        DEBUG_PRINT("Creating DPF plugin instance with sample rate: " << sampleRate << " Hz");
-    }
     
     plugin = formatManager.createPluginInstance(*description, sampleRate, 512, errorMessage);
     
@@ -234,75 +244,56 @@ bool Effect::loadVST(const std::string& vstPath, double sampleRate) {
     name = plugin->getName().toStdString();
     
     if (isDPFPlugin) {
-        DEBUG_PRINT("Initializing DPF plugin: " << name);
-        
         plugin->suspendProcessing(false);
         plugin->setProcessingPrecision(juce::AudioProcessor::singlePrecision);
-        
-        DEBUG_PRINT("DPF plugin initialization complete");
     } else {
         plugin->suspendProcessing(false);
     }
     
-    DEBUG_PRINT("VST '" << name << "' loaded with " << plugin->getParameters().size() << " parameters");
-    DEBUG_PRINT("Successfully loaded VST: " << name);
-    
+    std::string pluginName = plugin->getName().toStdString();
+    {
+        std::lock_guard<std::mutex> lock(cleanupMutex);
+        pluginInstanceCount[pluginName]++;
+    }
+
     hasEditorCached = plugin->hasEditor();
-    DEBUG_PRINT("VST '" << name << "' editor capability cached: " << (hasEditorCached ? "Yes" : "No"));
-    
+
     return true;
 }
 
 void Effect::prepareToPlay(double sampleRate, int bufferSize) {
     if (!plugin) return;
     
-    DEBUG_PRINT("Preparing VST '" << name << "' for playback...");
-    
     bool isDPFPlugin = plugin->getName().toLowerCase().contains("dpf") ||
                        name.find("DPF") != std::string::npos ||
                        name.find("DISTRHO") != std::string::npos;
     
     juce::AudioProcessor::BusesLayout layout;
-    
     layout.inputBuses.add(juce::AudioChannelSet::stereo());
     layout.outputBuses.add(juce::AudioChannelSet::stereo());
     
     if (!plugin->setBusesLayout(layout)) {
-        DEBUG_PRINT("Warning: Could not set stereo layout for VST '" << name << "'");
-        
         layout.inputBuses.clear();
         layout.outputBuses.clear();
         layout.inputBuses.add(juce::AudioChannelSet::mono());
         layout.outputBuses.add(juce::AudioChannelSet::mono());
         
         if (!plugin->setBusesLayout(layout)) {
-            DEBUG_PRINT("Warning: Could not set mono layout for VST '" << name << "'");
-            
-            // DPF plugins might have specific channel requirements
             if (isDPFPlugin) {
-                DEBUG_PRINT("DPF plugin - trying default bus layout...");
-                // Let DPF plugin use its preferred layout
             }
         }
     }
     
     if (isDPFPlugin) {
-        DEBUG_PRINT("Applying DPF-specific preparation for '" << name << "'");
-        
         plugin->suspendProcessing(false);
         plugin->setProcessingPrecision(juce::AudioProcessor::singlePrecision);
     }
     
     plugin->prepareToPlay(sampleRate, bufferSize);
-    
-    DEBUG_PRINT("Prepared VST '" << name << "' for playback: " 
-              << sampleRate << " Hz, " << bufferSize << " samples, "
-              << plugin->getTotalNumInputChannels() << " in, "
-              << plugin->getTotalNumOutputChannels() << " out");
 }
 
 void Effect::processAudio(juce::AudioBuffer<float>& buffer) {
-    if (!plugin || !isEnabled) {
+    if (!plugin || !isEnabled || scheduledForCleanup) {
         return;
     }
     
@@ -313,7 +304,6 @@ void Effect::processAudio(juce::AudioBuffer<float>& buffer) {
     
     try {
         if (buffer.getNumChannels() == 0 || buffer.getNumSamples() == 0) {
-            DEBUG_PRINT("Warning: Empty buffer passed to VST '" << name << "'");
             return;
         }
         
@@ -325,39 +315,30 @@ void Effect::processAudio(juce::AudioBuffer<float>& buffer) {
                            name.find("DPF") != std::string::npos ||
                            name.find("DISTRHO") != std::string::npos;
         
-        // Create a properly sized buffer if needed
         juce::AudioBuffer<float> processBuffer;
         if (pluginOutputChannels != bufferChannels || pluginInputChannels != bufferChannels) {
-            // Create buffer matching plugin requirements
             int maxChannels = (std::max)({pluginInputChannels, pluginOutputChannels, bufferChannels});
             processBuffer.setSize(maxChannels, buffer.getNumSamples());
             processBuffer.clear();
             
-            // Copy input data
             for (int ch = 0; ch < (std::min)(bufferChannels, pluginInputChannels); ++ch) {
                 processBuffer.copyFrom(ch, 0, buffer, ch, 0, buffer.getNumSamples());
             }
             
-            // Process through plugin
             juce::MidiBuffer midiBuffer;
             
-            // DPF plugins might need MIDI even if they don't use it
             if (isDPFPlugin) {
-                // Some DPF plugins expect at least an empty MIDI buffer
                 midiBuffer.clear();
             }
             
             plugin->processBlock(processBuffer, midiBuffer);
             
-            // Copy output back
             for (int ch = 0; ch < (std::min)(bufferChannels, pluginOutputChannels); ++ch) {
                 buffer.copyFrom(ch, 0, processBuffer, ch, 0, buffer.getNumSamples());
             }
         } else {
-            // Direct processing - channels match
             juce::MidiBuffer midiBuffer;
             
-            // DPF plugins might need MIDI even if they don't use it
             if (isDPFPlugin) {
                 midiBuffer.clear();
             }
@@ -367,92 +348,59 @@ void Effect::processAudio(juce::AudioBuffer<float>& buffer) {
         
     } catch (const std::exception& e) {
         std::cerr << "ERROR: VST '" << name << "' crashed during audio processing: " << e.what() << std::endl;
-        isEnabled = false; // Disable the crashing effect
+        isEnabled = false; 
     } catch (...) {
         std::cerr << "ERROR: VST '" << name << "' crashed during audio processing (unknown exception)" << std::endl;
-        isEnabled = false; // Disable the crashing effect
+        isEnabled = false; 
     }
 }
 
 void Effect::processAudio(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiBuffer) {
-    if (!plugin || !isEnabled) {
-        DEBUG_PRINT("Effect '" << name << "' skipped - plugin: " << (plugin ? "OK" : "NULL") << ", enabled: " << (isEnabled ? "YES" : "NO"));
+    if (!plugin || !isEnabled || scheduledForCleanup) {
         return;
     }
-    
-    // Check if synthesizer is temporarily silenced
+
     if (isSynthesizer() && isSilenced()) {
-        buffer.clear(); // Clear output buffer to ensure silence
+        buffer.clear(); 
         return;
     }
     
     try {
-        // Safety checks before processing
         if (buffer.getNumChannels() == 0 || buffer.getNumSamples() == 0) {
-            DEBUG_PRINT("Warning: Empty buffer passed to VST '" << name << "'");
             return;
         }
-        
-        // Check if plugin expects different channel configuration
+
         int pluginInputChannels = plugin->getTotalNumInputChannels();
         int pluginOutputChannels = plugin->getTotalNumOutputChannels();
         int bufferChannels = buffer.getNumChannels();
-        
-        // Create a properly sized buffer if needed
+
         juce::AudioBuffer<float> processBuffer;
         if (pluginOutputChannels != bufferChannels || pluginInputChannels != bufferChannels) {
-            // Create buffer matching plugin requirements
+            
             int maxChannels = (std::max)({pluginInputChannels, pluginOutputChannels, bufferChannels});
             processBuffer.setSize(maxChannels, buffer.getNumSamples());
             processBuffer.clear();
-            
-            // Copy input data
+ 
             for (int ch = 0; ch < (std::min)(bufferChannels, pluginInputChannels); ++ch) {
                 processBuffer.copyFrom(ch, 0, buffer, ch, 0, buffer.getNumSamples());
             }
-            
-            // Process through plugin with MIDI data
+
             plugin->processBlock(processBuffer, midiBuffer);
-            
-            // Copy output back
+
             for (int ch = 0; ch < (std::min)(bufferChannels, pluginOutputChannels); ++ch) {
                 buffer.copyFrom(ch, 0, processBuffer, ch, 0, buffer.getNumSamples());
             }
         } else {
-            // Direct processing - channels match, use provided MIDI buffer
+            
             plugin->processBlock(buffer, midiBuffer);
-        }
-        
-        // Debug output for synthesizers processing MIDI
-        if (isSynthesizer() && !midiBuffer.isEmpty()) {
-            DEBUG_PRINT("Synthesizer '" << name << "' processed " << midiBuffer.getNumEvents() << " MIDI events");
-            
-            // Log the actual MIDI events
-            for (auto metadata : midiBuffer) {
-                auto message = metadata.getMessage();
-                if (message.isNoteOn()) {
-                    DEBUG_PRINT("  MIDI Note ON: " << message.getNoteNumber() << " vel:" << message.getVelocity() << " @" << metadata.samplePosition);
-                } else if (message.isNoteOff()) {
-                    DEBUG_PRINT("  MIDI Note OFF: " << message.getNoteNumber() << " @" << metadata.samplePosition);
-                }
-            }
-            
-            // Check if synthesizer actually produced audio
-            float maxSample = 0.0f;
-            for (int ch = 0; ch < buffer.getNumChannels(); ++ch) {
-                for (int i = 0; i < buffer.getNumSamples(); ++i) {
-                    maxSample = std::max(maxSample, std::abs(buffer.getSample(ch, i)));
-                }
-            }
-            DEBUG_PRINT("Synthesizer '" << name << "' peak output: " << maxSample);
         }
         
     } catch (const std::exception& e) {
         std::cerr << "ERROR: VST '" << name << "' crashed during audio processing: " << e.what() << std::endl;
-        isEnabled = false; // Disable the crashing effect
+        isEnabled = false; 
     } catch (...) {
         std::cerr << "ERROR: VST '" << name << "' crashed during audio processing (unknown exception)" << std::endl;
-        isEnabled = false; // Disable the crashing effect
+        isEnabled = false; 
     }
 }
 
@@ -463,36 +411,26 @@ void Effect::openWindow() {
         return;
     }
     
-    // Ensure we're on the message thread for GUI operations
     if (!juce::MessageManager::getInstance()->isThisTheMessageThread()) {
         std::cout << "Not on message thread, dispatching to main thread" << std::endl;
         juce::MessageManager::callAsync([this]() {
-            openWindow(); // Call recursively on main thread
+            openWindow();
         });
         return;
     }
     
-    // Always destroy and recreate the window to avoid state issues
     if (editorWindow) {
-        DEBUG_PRINT("Destroying existing editor window for: " << name);
-        editorWindow.reset(); // Properly destroy the old window
-        
-        // Give JUCE time to clean up the previous window
+        editorWindow.reset();
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
-    
-    // Verify plugin is still valid and has an editor
+
     if (!plugin->hasEditor()) {
         std::cout << "Plugin no longer has editor capability: " << name << std::endl;
         return;
     }
-    
-    // Create new editor window with close callback to destroy (not just hide)
+
     try {
-        DEBUG_PRINT("Creating new editor window for: " << name);
         editorWindow = std::make_unique<VSTEditorWindow>(juce::String(getName()), plugin.get(), [this]() {
-            // Properly destroy the window when closed
-            DEBUG_PRINT("Window closed callback for: " << name);
             if (editorWindow) {
                 editorWindow.reset();
             }
@@ -537,51 +475,36 @@ void Effect::resetBuffers() {
     if (!plugin) return;
     
     try {
-        DEBUG_PRINT("Resetting audio buffers for VST: " << name);
-        
-        // For synthesizers, send immediate silence commands before resetting
         if (isSynthesizer()) {
-            DEBUG_PRINT("Sending immediate silence commands to synthesizer: " << name);
-            
-            // Temporarily silence the synthesizer to prevent any audio during reset
             setSilenced(true);
             
-            // Create temporary buffers for aggressive reset
-            juce::AudioBuffer<float> tempBuffer(2, 256); // Larger buffer for more aggressive reset
+            juce::AudioBuffer<float> tempBuffer(2, 256);
             tempBuffer.clear();
             juce::MidiBuffer resetMidiBuffer;
             
-            // Send "All Sound Off" (MIDI CC 120) - more aggressive than "All Notes Off"
-            // This immediately silences all sound, including release phases
             for (int channel = 1; channel <= 16; ++channel) {
-                resetMidiBuffer.addEvent(juce::MidiMessage::controllerEvent(channel, 120, 0), 0); // All Sound Off
-                resetMidiBuffer.addEvent(juce::MidiMessage::allNotesOff(channel), 0); // All Notes Off
-                resetMidiBuffer.addEvent(juce::MidiMessage::controllerEvent(channel, 121, 0), 0); // Reset All Controllers
-                resetMidiBuffer.addEvent(juce::MidiMessage::controllerEvent(channel, 123, 0), 0); // All Notes Off (alternative)
+                resetMidiBuffer.addEvent(juce::MidiMessage::controllerEvent(channel, 120, 0), 0); 
+                resetMidiBuffer.addEvent(juce::MidiMessage::allNotesOff(channel), 0); 
+                resetMidiBuffer.addEvent(juce::MidiMessage::controllerEvent(channel, 121, 0), 0); 
+                resetMidiBuffer.addEvent(juce::MidiMessage::controllerEvent(channel, 123, 0), 0); 
             }
-            
-            // Process the silence commands multiple times to ensure they take effect
+
             for (int i = 0; i < 3; ++i) {
-                tempBuffer.clear(); // Clear buffer between processing cycles
+                tempBuffer.clear(); 
                 plugin->processBlock(tempBuffer, resetMidiBuffer);
-                resetMidiBuffer.clear(); // Clear MIDI after first cycle to avoid repeated commands
+                resetMidiBuffer.clear(); 
             }
-            
-            // Now reset the plugin's internal state
+
             plugin->reset();
-            
-            // Process several cycles of silent audio to flush any remaining audio through the plugin
+
             juce::MidiBuffer emptyMidi;
             for (int cycle = 0; cycle < 5; ++cycle) {
-                tempBuffer.clear(); // Silent input
+                tempBuffer.clear(); 
                 plugin->processBlock(tempBuffer, emptyMidi);
             }
         } else {
-            // For regular effects, just reset normally
             plugin->reset();
         }
-        
-        DEBUG_PRINT("Buffer reset complete for VST: " << name);
         
     } catch (const std::exception& e) {
         std::cerr << "ERROR: Failed to reset buffers for VST '" << name << "': " << e.what() << std::endl;
@@ -591,76 +514,54 @@ void Effect::resetBuffers() {
 }
 
 void Effect::setBpm(double bpm) {
-    if (!plugin) {
-        DEBUG_PRINT("Cannot set BPM: No plugin loaded");
+    if (!plugin || !isSynthesizer()) {
         return;
     }
     
-    // Only send BPM to synthesizers (they're the ones that need tempo sync for LFOs, arp, etc.)
-    if (!isSynthesizer()) {
-        return;
-    }
-    
-    try {
-        DEBUG_PRINT("Setting BPM to " << bpm << " for synthesizer: " << name);
-        
-        // VST plugins get tempo information through the AudioPlayHead, which is set 
-        // by the host (Engine) during processBlock calls. The BPM value itself
-        // is passed through the AudioPlayHead's PositionInfo.
-        // 
-        // We don't need to send MIDI clock messages for modern VSTs - they query
-        // the host's playhead for tempo information automatically.
-        
-        DEBUG_PRINT("BPM " << bpm << " will be provided to synthesizer '" << name << "' via AudioPlayHead");
-        
-    } catch (const std::exception& e) {
-        DEBUG_PRINT("Exception setting BPM for VST '" << name << "': " << e.what());
-    }
+    try {} catch (const std::exception& e) {}
 }
 
 void Effect::setPlayHead(juce::AudioPlayHead* playHead) {
     if (!plugin) {
-        DEBUG_PRINT("Cannot set PlayHead: No plugin loaded");
         return;
     }
     
     try {
         plugin->setPlayHead(playHead);
-        DEBUG_PRINT("AudioPlayHead set for VST: " << name);
     } catch (const std::exception& e) {
-        DEBUG_PRINT("Exception setting PlayHead for VST '" << name << "': " << e.what());
+        
     }
 }
 
 bool Effect::isSynthesizer() const {
     if (!plugin) return false;
-    
-    // A synthesizer plugin typically:
-    // 1. Accepts MIDI input
-    // 2. Has no audio input or minimal audio input
-    // 3. Produces audio output
-    
+
+    if (synthesizerCached) {
+        return isSynthesizerCached;
+    }
+
     bool acceptsMidi = plugin->acceptsMidi();
-    
-    // Check input/output bus configuration
+
     int audioInputChannels = plugin->getTotalNumInputChannels();
     int audioOutputChannels = plugin->getTotalNumOutputChannels();
-    
-    // Synthesizers typically have no or minimal audio input and audio output
+
     bool hasAudioOutput = audioOutputChannels > 0;
-    bool hasMinimalAudioInput = audioInputChannels <= 0; // No audio input for pure synths
-    
-    // Additional heuristics: check the plugin category if available
-    juce::String category = plugin->getPluginDescription().category.toLowerCase();
-    bool isInstrumentCategory = category.contains("instrument") || 
-                               category.contains("synth") || 
-                               category.contains("generator");
-    
-    // A plugin is considered a synthesizer if:
-    // - It accepts MIDI input AND
-    // - Has audio output AND
-    // - (Has no audio input OR is categorized as instrument)
+    bool hasMinimalAudioInput = audioInputChannels <= 0;
+
+    bool isInstrumentCategory = false;
+    try {
+        juce::String category = plugin->getPluginDescription().category.toLowerCase();
+        isInstrumentCategory = category.contains("instrument") || 
+                              category.contains("synth") || 
+                              category.contains("generator");
+    } catch (...) {
+        isInstrumentCategory = false;
+    }
+
     bool isSynth = acceptsMidi && hasAudioOutput && (hasMinimalAudioInput || isInstrumentCategory);
+
+    isSynthesizerCached = isSynth;
+    synthesizerCached = true;
     
     return isSynth;
 }
@@ -668,27 +569,18 @@ bool Effect::isSynthesizer() const {
 bool Effect::isVSTSynthesizer(const std::string& vstPath) {
     auto& vstManager = VSTPluginManager::getInstance();
     if (!vstManager.isValidVSTFile(vstPath)) {
-        DEBUG_PRINT("Invalid VST file for synth detection: " << vstPath);
         return false;
     }
-    
-    static juce::AudioPluginFormatManager formatManager;
-    static bool formatsRegistered = false;
-    
-    if (!formatsRegistered) {
-        formatManager.addDefaultFormats();
-        formatsRegistered = true;
-    }
+
+    juce::AudioPluginFormatManager formatManager;
+    formatManager.addDefaultFormats();
     
     juce::File vstFile(vstPath);
     if (!vstFile.exists()) {
-        DEBUG_PRINT("VST file does not exist for synth detection: " << vstPath);
         return false;
     }
     
     juce::OwnedArray<juce::PluginDescription> descriptions;
-    
-    // Find plugin descriptions
     for (auto* format : formatManager.getFormats()) {
         format->findAllTypesForFile(descriptions, vstFile.getFullPathName());
         if (!descriptions.isEmpty()) {
@@ -697,22 +589,18 @@ bool Effect::isVSTSynthesizer(const std::string& vstPath) {
     }
     
     if (descriptions.isEmpty()) {
-        DEBUG_PRINT("No plugin found for synth detection: " << vstPath);
         return false;
     }
     
     auto* description = descriptions[0];
     
-    // Create a temporary instance to check capabilities
     juce::String errorMessage;
     auto plugin = formatManager.createPluginInstance(*description, 44100.0, 512, errorMessage);
     
     if (!plugin) {
-        DEBUG_PRINT("Failed to create plugin instance for synth detection: " << errorMessage.toStdString());
         return false;
     }
     
-    // Check synthesizer characteristics
     bool acceptsMidi = plugin->acceptsMidi();
     int audioInputChannels = plugin->getTotalNumInputChannels();
     int audioOutputChannels = plugin->getTotalNumOutputChannels();
@@ -726,7 +614,103 @@ bool Effect::isVSTSynthesizer(const std::string& vstPath) {
     
     bool isSynth = acceptsMidi && hasAudioOutput && (hasMinimalAudioInput || isInstrumentCategory);
     
-    DEBUG_PRINT("VST synth detection for '" << description->name.toStdString() << "': " << (isSynth ? "SYNTHESIZER" : "EFFECT"));
-    
     return isSynth;
+}
+
+void Effect::scheduleForCleanup() {
+    if (plugin && !scheduledForCleanup) {
+        scheduledForCleanup = true;
+        
+        try {
+            plugin->suspendProcessing(true);
+            plugin->setPlayHead(nullptr);
+            
+            if (isSynthesizer()) {
+                juce::AudioBuffer<float> silentBuffer(2, 256);
+                silentBuffer.clear();
+                juce::MidiBuffer allNotesOff;
+                
+                for (int channel = 1; channel <= 16; ++channel) {
+                    allNotesOff.addEvent(juce::MidiMessage::allNotesOff(channel), 0);
+                    allNotesOff.addEvent(juce::MidiMessage::controllerEvent(channel, 120, 0), 0);
+                }
+                
+                plugin->processBlock(silentBuffer, allNotesOff);
+            }
+            
+            if (plugin->hasEditor()) {
+                auto* editor = plugin->getActiveEditor();
+                if (editor) {
+                    plugin->editorBeingDeleted(editor);
+                }
+            }
+            
+            plugin->releaseResources();
+            plugin->reset();
+        } catch (...) {}
+                
+        plugin.reset();
+    }
+}
+
+void Effect::cleanupScheduledPlugins() {
+    static std::atomic<bool> cleanupInProgress{false};
+    
+    if (cleanupInProgress.exchange(true)) {
+        return;
+    }
+    
+    std::lock_guard<std::mutex> lock(cleanupMutex);
+    
+    if (scheduledPlugins.empty()) {
+        cleanupInProgress = false;
+        return;
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+    size_t originalSize = scheduledPlugins.size();
+    size_t cleaned = 0;
+    size_t failed = 0;
+    
+    auto it = scheduledPlugins.begin();
+    while (it != scheduledPlugins.end()) {
+        try {
+            if (!*it) {
+                it = scheduledPlugins.erase(it);
+                continue;
+            }
+            
+            auto* plugin = it->get();
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            plugin->suspendProcessing(true);
+            plugin->setPlayHead(nullptr);
+            
+            if (plugin->hasEditor()) {
+                try {
+                    if (auto* editor = plugin->getActiveEditor()) {
+                        plugin->editorBeingDeleted(editor);
+                    }
+                } catch (const std::exception& e) {
+                } catch (...) {
+                }
+            }
+            
+            plugin->releaseResources();
+            plugin->reset();
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            
+            it = scheduledPlugins.erase(it);
+            cleaned++;
+            
+        } catch (const std::exception& e) {
+            ++it;
+            failed++;
+        } catch (...) {
+            ++it;
+            failed++;
+        }
+    }
+    
+    cleanupInProgress = false;
 }

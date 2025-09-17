@@ -2,7 +2,7 @@
 
 // Debug configuration for MDAW
 // Uncomment the line below to enable debug output
-// #define MDAW_DEBUG
+#define MDAW_DEBUG
 
 #ifdef MDAW_DEBUG
     #include <iostream>

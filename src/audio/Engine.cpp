@@ -55,7 +55,8 @@ Engine::Engine() {
     metronomeUpbeatFile = soundsDir.getChildFile(metronomeUpbeatSample);
     
     // Initialize play head with default tempo (will be updated when composition is loaded)
-    playHead->updatePosition(0.0, 120.0, false, sampleRate);
+    auto [timeSigNum, timeSigDen] = getTimeSignature();
+    playHead->updatePosition(0.0, 120.0, false, sampleRate, timeSigNum, timeSigDen);
 }
 
 bool Engine::configureAudioDevice(double desiredSampleRate, int bufferSize) {
@@ -579,7 +580,8 @@ void Engine::sendBpmToSynthesizers() {
     
     // Update play head with current tempo even when not playing
     double sampleRate = getSampleRate();
-    playHead->updatePosition(positionSeconds, currentBpm, playing, sampleRate);
+    auto [timeSigNum, timeSigDen] = getTimeSignature();
+    playHead->updatePosition(positionSeconds, currentBpm, playing, sampleRate, timeSigNum, timeSigDen);
     
     // Iterate through all tracks to find synthesizers
     for (const auto& track : currentComposition->tracks) {
@@ -672,9 +674,26 @@ void Engine::removeTrack(int idx) {
 
 void Engine::removeTrackByName(const std::string& name) {
     if (currentComposition) {
-        for (int i = 0; i < currentComposition->tracks.size(); i++)
-            if (currentComposition->tracks[i]->getName() == name)
+        DEBUG_PRINT("Removing track: " << name);
+        for (int i = 0; i < currentComposition->tracks.size(); i++) {
+            if (currentComposition->tracks[i]->getName() == name) {
+                auto& track = currentComposition->tracks[i];
+                
+                DEBUG_PRINT("Found track to remove at index: " << i);
+                
+                // Don't try to cleanup effects - they will be cleaned up automatically
+                // when the track is destroyed. The issue is calling scheduleForCleanup
+                // on the last instance.
+                DEBUG_PRINT("Skipping explicit effect cleanup to avoid last-instance crash");
+                
+                DEBUG_PRINT("About to erase track from vector...");
+                // Now safe to remove the track
                 currentComposition->tracks.erase(currentComposition->tracks.begin() + i);
+                DEBUG_PRINT("Track erased successfully");
+                break;
+            }
+        }
+        DEBUG_PRINT("Track removal process completed");
     }
 }
 
@@ -822,7 +841,8 @@ void Engine::audioDeviceIOCallbackWithContext(
             // Update AudioPlayHead with current tempo for real-time MIDI processing
             if (playHead && currentComposition) {
                 double currentBpm = currentComposition->bpm;
-                playHead->updatePosition(positionSeconds, currentBpm, false, sampleRate);
+                auto [timeSigNum, timeSigDen] = getTimeSignature();
+                playHead->updatePosition(positionSeconds, currentBpm, false, sampleRate, timeSigNum, timeSigDen);
             }
             
             auto selectedTrack = getSelectedTrackPtr();
@@ -860,7 +880,8 @@ void Engine::audioDeviceIOCallbackWithContext(
         // Update play head even when not playing so synthesizers have correct tempo
         double currentBpm = getBpm();
         double sampleRate = getSampleRate();
-        playHead->updatePosition(positionSeconds, currentBpm, playing, sampleRate);
+        auto [timeSigNum, timeSigDen] = getTimeSignature();
+        playHead->updatePosition(positionSeconds, currentBpm, playing, sampleRate, timeSigNum, timeSigDen);
         
         juce::AudioBuffer<float> synthBuffer(numOutputChannels, numSamples);
         juce::MidiBuffer emptyMidiBuffer; // Empty MIDI buffer for continuous processing
@@ -905,7 +926,8 @@ void Engine::audioDeviceIOCallbackWithContext(
         // Update play head with current position and tempo
         double currentBpm = getBpm();
         double sampleRate = getSampleRate();
-        playHead->updatePosition(positionSeconds, currentBpm, playing, sampleRate);
+        auto [timeSigNum, timeSigDen] = getTimeSignature();
+        playHead->updatePosition(positionSeconds, currentBpm, playing, sampleRate, timeSigNum, timeSigDen);
         
         juce::AudioBuffer<float> trackBuffer(numOutputChannels, numSamples);
         bool anyTrackSoloed = false;

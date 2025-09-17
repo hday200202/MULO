@@ -15,7 +15,7 @@ class EnginePlayHead : public juce::AudioPlayHead {
 public:
     EnginePlayHead() = default;
     
-    void updatePosition(double positionSeconds, double bpm, bool isPlaying, double sampleRate) {
+    void updatePosition(double positionSeconds, double bpm, bool isPlaying, double sampleRate, int timeSigNum = 4, int timeSigDen = 4) {
         const juce::ScopedLock lock(positionLock);
         
         currentPosition = juce::AudioPlayHead::PositionInfo();
@@ -30,15 +30,15 @@ public:
             currentPosition.setIsPlaying(false);
         }
         
-        currentPosition.setTimeSignature(juce::AudioPlayHead::TimeSignature{4, 4});
+        currentPosition.setTimeSignature(juce::AudioPlayHead::TimeSignature{timeSigNum, timeSigDen});
         
         double secondsPerBeat = 60.0 / bpm;
         double currentBeat = positionSeconds / secondsPerBeat;
-        double currentBar = currentBeat / 4.0;
+        double currentBar = currentBeat / static_cast<double>(timeSigNum);
         
         currentPosition.setBarCount(juce::int64(currentBar));
         currentPosition.setPpqPosition(currentBeat);
-        currentPosition.setPpqPositionOfLastBarStart(std::floor(currentBar) * 4.0);
+        currentPosition.setPpqPositionOfLastBarStart(std::floor(currentBar) * static_cast<double>(timeSigNum));
     }
     
     juce::Optional<juce::AudioPlayHead::PositionInfo> getPosition() const override {

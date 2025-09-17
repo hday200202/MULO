@@ -96,7 +96,7 @@ inline std::vector<std::shared_ptr<sf::Drawable>> generatePianoRollMeasures(
     const float startX = -scrollOffset;
     const float endX = rowSize.x - scrollOffset;
     const float beatWidth = measureWidth;
-    const float subBeatWidth = beatWidth / 4.0f;
+    const float subBeatWidth = beatWidth / static_cast<float>(sigDenominator);
     
     const int startBeat = static_cast<int>(std::floor(startX / beatWidth));
     const int endBeat = static_cast<int>(std::ceil(endX / beatWidth)) + 1;
@@ -245,8 +245,9 @@ const std::vector<std::shared_ptr<sf::Drawable>>& PianoRoll::getCachedMeasureLin
                         (rowSize != lastRowSize);
 
     if (shouldRebuild) {
+        auto [timeSigNum, timeSigDen] = app->getTimeSignature();
         cachedMeasureLines = generatePianoRollMeasures(
-            measureWidth, scrollOffset, rowSize, 4, 4, 
+            measureWidth, scrollOffset, rowSize, timeSigNum, timeSigDen, 
             app->resources.activeTheme->line_color
         );
         lastMeasureWidth = measureWidth;

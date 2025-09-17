@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "VSTEditorWindow.hpp"
 
@@ -18,7 +19,7 @@ public:
     void openWindow();
     void closeWindow() {
         if (editorWindow) {
-            editorWindow.reset(); // Properly destroy the window
+            editorWindow.reset();
         }
     }
     bool hasEditor() const { return hasEditorCached; }
@@ -33,11 +34,10 @@ public:
     float getParameter(int index) const;
     int getNumParameters() const;
     
-    void resetBuffers();  // Clear internal audio buffers (reverb, delay, etc.)
-    void setBpm(double bpm);  // Send BPM to synthesizer for tempo sync
-    void setPlayHead(juce::AudioPlayHead* playHead);  // Set AudioPlayHead for tempo sync
+    void resetBuffers();
+    void setBpm(double bpm);
+    void setPlayHead(juce::AudioPlayHead* playHead);
     
-    // Silencing methods for synthesizer control during engine transitions
     void setSilenced(bool silenced) { silencedFlag = silenced; }
     bool isSilenced() const { return silencedFlag; }
 
@@ -53,6 +53,10 @@ public:
     
     bool isSynthesizer() const;
     static bool isVSTSynthesizer(const std::string& vstPath);
+    
+    void scheduleForCleanup();
+    static void cleanupScheduledPlugins();
+    bool isScheduledForCleanup() const { return scheduledForCleanup; }
 
 private:
     std::unique_ptr<juce::AudioPluginInstance> plugin;
@@ -60,8 +64,15 @@ private:
     std::string vstPath;
     bool isEnabled = true;
     bool hasEditorCached = false;
-    bool silencedFlag = false;  // Temporary silencing for synthesizers during transitions
+    bool silencedFlag = false;
+    mutable bool synthesizerCached = false;
+    mutable bool isSynthesizerCached = false;
+    bool scheduledForCleanup = false;
     int index = -1;
+    
+    static std::vector<std::unique_ptr<juce::AudioPluginInstance>> scheduledPlugins;
+    static std::mutex cleanupMutex;
+    static std::unordered_map<std::string, int> pluginInstanceCount;
     
     std::unique_ptr<VSTEditorWindow> editorWindow;
 };
