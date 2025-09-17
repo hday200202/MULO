@@ -1,0 +1,11 @@
+sapi_library(
+    name = "plugin_runner_sapi",
+    lib = ":plugin_runner_lib",
+    lib_name = "PluginRunner",           # <-- use this
+    namespace = "sapi::mdaw",
+    functions = [
+        "pr_load", "pr_unload", "pr_create", "pr_destroy",
+        "pr_process", "pr_set_param", "pr_get_param", "pr_get_info",
+    ],
+    embed = True,
+)

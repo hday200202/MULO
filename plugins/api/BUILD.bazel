@@ -1,0 +1,6 @@
+cc_library(
+    name = "plugin_api",
+    hdrs = ["plugin_api.h"],
+    includes = ["."],
+    visibility = ["//visibility:public"],
+)
