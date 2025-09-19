@@ -1,5 +1,6 @@
 #include "MIDIClip.hpp"
 #include "../DebugConfig.hpp"
+#include <set>
 
 MIDIClip::MIDIClip() 
     : startTime(0.0), offset(0.0), duration(0.0), velocity(1.0f), 
@@ -23,8 +24,8 @@ void MIDIClip::addNote(int noteNumber, float noteVelocity, double noteStartTime,
     if (noteStartTime < 0 || noteStartTime >= duration) return;
     
     int sampleRate = 44100; // Default sample rate for timing calculations
-    int startSample = static_cast<int>(noteStartTime * sampleRate);
-    int endSample = static_cast<int>((noteStartTime + noteDuration) * sampleRate);
+    int startSample = std::round(noteStartTime * sampleRate);
+    int endSample = std::round((noteStartTime + noteDuration) * sampleRate);
     
     // Apply transpose
     int transposedNote = juce::jlimit(0, 127, noteNumber + transpose);
@@ -76,7 +77,7 @@ void MIDIClip::clear() {
 
 void MIDIClip::fillMidiBuffer(juce::MidiBuffer& buffer, double clipStartTime, double clipEndTime,
                              double sampleRate, int startSample) const {
-    if (isEmpty() || clipEndTime <= startTime || clipStartTime >= getEndTime()) {
+    if (isEmpty() || clipEndTime <= startTime || clipStartTime > getEndTime()) {
         return; // No overlap
     }
     
@@ -88,6 +89,32 @@ void MIDIClip::fillMidiBuffer(juce::MidiBuffer& buffer, double clipStartTime, do
     
     int localStartSample = static_cast<int>(localStartTime * sampleRate);
     int localEndSample = static_cast<int>(localEndTime * sampleRate);
+    
+    std::set<int> activeNotes;
+    std::set<int> allNotesPlayedInClip;
+    
+    double actualClipEnd = startTime + duration;
+    bool isAtClipEnd = (clipEndTime >= actualClipEnd);
+    
+    if (isAtClipEnd) {
+        for (const auto& event : midiData) {
+            double eventTimeRelativeToClip = event.samplePosition / sampleRate;
+            
+            if (eventTimeRelativeToClip >= 0.0 && eventTimeRelativeToClip <= duration) {
+                juce::MidiMessage message = event.getMessage();
+                if (message.isNoteOn() && message.getVelocity() > 0) {
+                    int noteNumber = message.getNoteNumber();
+
+                    if (transpose != 0) {
+                        noteNumber = juce::jlimit(0, 127, noteNumber + transpose);
+                    }
+                    allNotesPlayedInClip.insert(noteNumber);
+                    DEBUG_PRINT("MIDIClip: Note " << noteNumber << " was played in clip");
+                }
+            }
+        }
+        DEBUG_PRINT("MIDIClip: Found " << allNotesPlayedInClip.size() << " different notes played in clip (duration=" << duration << ")");
+    }
     
     // Iterate through MIDI events in the time range
     for (const auto& event : midiData) {
@@ -101,25 +128,43 @@ void MIDIClip::fillMidiBuffer(juce::MidiBuffer& buffer, double clipStartTime, do
             juce::MidiMessage message = event.getMessage();
             
             if (message.isNoteOnOrOff()) {
+                int noteNumber = message.getNoteNumber();
+                int channel = message.getChannel();
+                
+                // Apply transpose
                 if (transpose != 0) {
-                    int newNote = juce::jlimit(0, 127, message.getNoteNumber() + transpose);
-                    if (message.isNoteOn()) {
-                        int newVelocity = juce::jlimit(0, 127, 
-                            static_cast<int>(message.getVelocity() * velocity));
-                        message = juce::MidiMessage::noteOn(message.getChannel(), newNote, 
-                                                          static_cast<juce::uint8>(newVelocity));
-                    } else {
-                        message = juce::MidiMessage::noteOff(message.getChannel(), newNote);
-                    }
-                } else if (message.isNoteOn() && velocity != 1.0f) {
+                    noteNumber = juce::jlimit(0, 127, noteNumber + transpose);
+                }
+                
+                if (message.isNoteOn()) {
+                    activeNotes.insert(noteNumber);
+                    
+                    // Apply velocity scaling
                     int newVelocity = juce::jlimit(0, 127, 
                         static_cast<int>(message.getVelocity() * velocity));
-                    message = juce::MidiMessage::noteOn(message.getChannel(), message.getNoteNumber(),
+                    message = juce::MidiMessage::noteOn(channel, noteNumber, 
                                                       static_cast<juce::uint8>(newVelocity));
+                } else {
+                    activeNotes.erase(noteNumber);
+                    message = juce::MidiMessage::noteOff(channel, noteNumber);
                 }
             }
             
             buffer.addEvent(message, outputSample);
+        }
+    }
+    
+    // If we're at the end of the clip, send note-offs for ALL notes that were played in this clip
+    if (isAtClipEnd && !allNotesPlayedInClip.empty()) {
+        int clipEndOutputSample = startSample + (localEndSample - localStartSample);
+        
+        DEBUG_PRINT("MIDIClip: Sending note-offs for " << allNotesPlayedInClip.size() << " notes played in clip at clip end");
+        
+        // Send note-off for ALL notes that were played in this clip
+        for (int noteNumber : allNotesPlayedInClip) {
+            juce::MidiMessage noteOff = juce::MidiMessage::noteOff(1, noteNumber);
+            buffer.addEvent(noteOff, clipEndOutputSample);
+            DEBUG_PRINT("MIDIClip: Note-off for note " << noteNumber << " at sample " << clipEndOutputSample);
         }
     }
 }
@@ -204,5 +249,5 @@ bool MIDIClip::overlapsTime(double time) const {
 }
 
 bool MIDIClip::overlapsRange(double rangeStart, double rangeEnd) const {
-    return !(rangeEnd <= startTime || rangeStart >= getEndTime());
+    return !(rangeEnd <= startTime || rangeStart > getEndTime());
 }

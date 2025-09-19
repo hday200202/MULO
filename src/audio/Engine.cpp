@@ -12,15 +12,11 @@ using json = nlohmann::json;
 
 Engine::Engine() {
     formatManager.registerBasicFormats();
-    
     playHead = std::make_unique<EnginePlayHead>();
-    
     deviceManager.initialise(0, 2, nullptr, false);
     
     auto currentSetup = deviceManager.getAudioDeviceSetup();
-    
     currentSetup.bufferSize = 256;
-    
     juce::String error = deviceManager.setAudioDeviceSetup(currentSetup, true);
     
     if (error.isNotEmpty()) {
@@ -418,7 +414,42 @@ void Engine::play() {
         DEBUG_PRINT("Clearing synthesizer buffers on playback start...");
         
         // Set countdown to keep synthesizers silenced for a few audio cycles
-        synthSilenceCountdown = SYNTH_SILENCE_CYCLES;
+        // BUT: Don't silence if there are MIDI events at the very start (relative to playhead)
+        bool hasMidiAtStart = false;
+        double currentPlayheadTime = positionSeconds;
+        for (const auto& track : currentComposition->tracks) {
+            if (track && track->getType() == Track::TrackType::MIDI) {
+                auto midiTrack = dynamic_cast<MIDITrack*>(track.get());
+                if (midiTrack) {
+                    // Check if any MIDI clips have events near the current playhead
+                    for (const auto& clip : midiTrack->getMIDIClips()) {
+                        // Check if clip overlaps with the playhead + 0.1 second window
+                        if (clip.startTime <= currentPlayheadTime + 0.1 && clip.getEndTime() >= currentPlayheadTime) {
+                            // Check if this clip has MIDI events at its beginning relative to playhead
+                            for (const auto& event : clip.midiData) {
+                                double eventTimeInClip = event.samplePosition / 44100.0;
+                                double absoluteEventTime = clip.startTime + eventTimeInClip;
+                                // Check if event happens within 0.1 seconds of current playhead
+                                if (absoluteEventTime >= currentPlayheadTime && absoluteEventTime <= currentPlayheadTime + 0.1) {
+                                    hasMidiAtStart = true;
+                                    break;
+                                }
+                            }
+                            if (hasMidiAtStart) break;
+                        }
+                    }
+                }
+            }
+            if (hasMidiAtStart) break;
+        }
+        
+        // Use reduced silence countdown if MIDI starts immediately, otherwise use full countdown
+        synthSilenceCountdown = hasMidiAtStart ? 1 : SYNTH_SILENCE_CYCLES;
+        if (synthSilenceCountdown > 1) {
+            DEBUG_PRINT("Silencing synthesizers for " << SYNTH_SILENCE_CYCLES << " cycles (no MIDI at start)");
+        } else {
+            DEBUG_PRINT("Reduced synthesizer silence to 1 cycle (MIDI detected at start)");
+        }
         
         // Send current BPM to all synthesizers before clearing buffers
         // This ensures they have the correct tempo for any LFOs or tempo-synced effects
@@ -566,7 +597,6 @@ void Engine::setBpm(double newBpm) {
             generateMetronomeTrack();
         }
         
-        // Send the new BPM to all synthesizers for tempo sync
         sendBpmToSynthesizers();
     }
 }
@@ -583,7 +613,6 @@ void Engine::sendBpmToSynthesizers() {
     auto [timeSigNum, timeSigDen] = getTimeSignature();
     playHead->updatePosition(positionSeconds, currentBpm, playing, sampleRate, timeSigNum, timeSigDen);
     
-    // Iterate through all tracks to find synthesizers
     for (const auto& track : currentComposition->tracks) {
         if (track && track->getType() == Track::TrackType::MIDI) {
             auto midiTrack = dynamic_cast<MIDITrack*>(track.get());
@@ -678,22 +707,10 @@ void Engine::removeTrackByName(const std::string& name) {
         for (int i = 0; i < currentComposition->tracks.size(); i++) {
             if (currentComposition->tracks[i]->getName() == name) {
                 auto& track = currentComposition->tracks[i];
-                
-                DEBUG_PRINT("Found track to remove at index: " << i);
-                
-                // Don't try to cleanup effects - they will be cleaned up automatically
-                // when the track is destroyed. The issue is calling scheduleForCleanup
-                // on the last instance.
-                DEBUG_PRINT("Skipping explicit effect cleanup to avoid last-instance crash");
-                
-                DEBUG_PRINT("About to erase track from vector...");
-                // Now safe to remove the track
                 currentComposition->tracks.erase(currentComposition->tracks.begin() + i);
-                DEBUG_PRINT("Track erased successfully");
                 break;
             }
         }
-        DEBUG_PRINT("Track removal process completed");
     }
 }
 

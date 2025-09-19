@@ -18,7 +18,9 @@ void MIDITrack::process(double playheadSeconds, juce::AudioBuffer<float>& output
     
     // Process all MIDI clips that overlap with this time range
     for (const auto& clip : midiClips) {
-        if (clip.overlapsRange(playheadSeconds, endTime)) {
+        bool overlaps = clip.overlapsRange(playheadSeconds, endTime);
+        if (overlaps) {
+            DEBUG_PRINT("PROCESSING MIDI CLIP - playhead=" << playheadSeconds << ", clipStart=" << clip.startTime << ", clipEnd=" << clip.getEndTime());
             clip.fillMidiBuffer(midiBuffer, playheadSeconds, endTime, sampleRate, 0);
         }
     }

@@ -951,3 +951,33 @@ void Application::loadConfig() {
         DEBUG_PRINT("Error loading config: " << e.what());
     }
 }
+
+MIDIClip* Application::getSelectedMIDIClip() const {
+    std::string selectedTrackName = getSelectedTrack();
+    if (selectedTrackName.empty()) return nullptr;
+    
+    Track* selectedTrack = const_cast<Application*>(this)->getTrack(selectedTrackName);
+    if (selectedTrack && selectedTrack->getType() == Track::TrackType::MIDI) {
+        MIDITrack* midiTrack = static_cast<MIDITrack*>(selectedTrack);
+        const auto& midiClips = midiTrack->getMIDIClips();
+        
+        if (!midiClips.empty()) {
+            return const_cast<MIDIClip*>(&midiClips[0]);
+        }
+    }
+    
+    return nullptr;
+}
+
+MIDIClip* Application::getTimelineSelectedMIDIClip() const {
+    if (auto* timelineComponent = const_cast<Application*>(this)->getComponent("timeline")) {
+        MIDIClip* result = timelineComponent->getSelectedMIDIClip();
+        DEBUG_PRINT("[APP] getTimelineSelectedMIDIClip() returning: " << (result ? 
+            ("startTime=" + std::to_string(result->startTime) + ", duration=" + std::to_string(result->duration)) : 
+            "nullptr"));
+        return result;
+    }
+    
+    DEBUG_PRINT("[APP] getTimelineSelectedMIDIClip() - timeline component not found");
+    return nullptr;
+}

@@ -13,8 +13,16 @@
 
 class TimelineComponent : public MULOComponent {
 public:
+    static TimelineComponent* instance;
+    
     AudioClip* selectedClip = nullptr;
-    MIDIClip* selectedMIDIClip = nullptr;
+    
+    struct SelectedMIDIClipInfo {
+        bool hasSelection = false;
+        double startTime = 0.0;
+        double duration = 0.0;
+        std::string trackName = "";
+    } selectedMIDIClipInfo;
 
     TimelineComponent();
     ~TimelineComponent() override;
@@ -25,6 +33,48 @@ public:
     inline Container* getLayout() override { return layout; }
 
     void rebuildUI();
+
+    // Override to provide access to the selected MIDI clip
+    MIDIClip* getSelectedMIDIClip() const override { 
+        DEBUG_PRINT("[TIMELINE] getSelectedMIDIClip() called - START OF METHOD");
+        if (!selectedMIDIClipInfo.hasSelection) {
+            DEBUG_PRINT("[TIMELINE] getSelectedMIDIClip() called, no selection");
+            return nullptr;
+        }
+        
+        DEBUG_PRINT("[TIMELINE] getSelectedMIDIClip() searching for: trackName=" << selectedMIDIClipInfo.trackName 
+                   << ", startTime=" << selectedMIDIClipInfo.startTime 
+                   << ", duration=" << selectedMIDIClipInfo.duration);
+        
+        // Find the track
+        auto* track = app->getTrack(selectedMIDIClipInfo.trackName);
+        if (!track || track->getType() != Track::TrackType::MIDI) {
+            DEBUG_PRINT("[TIMELINE] getSelectedMIDIClip() called, track not found or not MIDI");
+            return nullptr;
+        }
+        
+        DEBUG_PRINT("[TIMELINE] getSelectedMIDIClip() found track: " << track->getName());
+        
+        // Find the clip in the track
+        MIDITrack* midiTrack = static_cast<MIDITrack*>(track);
+        const auto& midiClips = midiTrack->getMIDIClips();
+        
+        DEBUG_PRINT("[TIMELINE] getSelectedMIDIClip() track has " << midiClips.size() << " clips");
+        
+        for (auto& clip : midiClips) {
+            DEBUG_PRINT("[TIMELINE] getSelectedMIDIClip() checking clip: startTime=" << clip.startTime 
+                       << ", duration=" << clip.duration);
+            if (std::abs(clip.startTime - selectedMIDIClipInfo.startTime) < 0.001 &&
+                std::abs(clip.duration - selectedMIDIClipInfo.duration) < 0.001) {
+                DEBUG_PRINT("[TIMELINE] getSelectedMIDIClip() returning clip: startTime=" << clip.startTime 
+                           << ", duration=" << clip.duration);
+                return const_cast<MIDIClip*>(&clip);
+            }
+        }
+        
+        DEBUG_PRINT("[TIMELINE] getSelectedMIDIClip() called, clip not found in track");
+        return nullptr;
+    }
 
     struct FeatureFlags {
         bool enableMouseInput = true;
@@ -181,10 +231,17 @@ TimelineComponent::TimelineComponent() {
     timelineState.lastBlinkTime = std::chrono::steady_clock::now();
     timelineState.deltaTime = 0.0f;
     timelineState.firstFrame = true;
+    
+    // Set the static instance pointer for global access
+    instance = this;
 }
 
 TimelineComponent::~TimelineComponent() {
     selectedClip = nullptr;
+    // Clear the static instance pointer
+    if (instance == this) {
+        instance = nullptr;
+    }
 }
 
 void TimelineComponent::init() {
@@ -664,8 +721,12 @@ void TimelineComponent::handleCustomUIElements() {
                         if (!app->getWindow().hasFocus()) continue;
                         if (!ctrlPressed && !prevCtrlPressed && sf::Mouse::isButtonPressed(sf::Mouse::Button::Left)) {
                             if (!dragState.isDraggingClip && !dragState.clipSelectedForDrag) {
-                                selectedMIDIClip = const_cast<MIDIClip*>(&midiClipsVec[i]);
+                                selectedMIDIClipInfo.hasSelection = true;
+                                selectedMIDIClipInfo.startTime = mc.startTime;
+                                selectedMIDIClipInfo.duration = mc.duration;
+                                selectedMIDIClipInfo.trackName = track->getName();
                                 selectedClip = nullptr;
+                                DEBUG_PRINT("[TIMELINE] Selected MIDI clip: startTime=" << mc.startTime << ", duration=" << mc.duration);
                                 app->setSelectedTrack(track->getName());
                                 
                                 float midiMouseTimeInTrack = (localMousePos.x - timelineState.timelineOffset) / pixelsPerSecond;
@@ -692,7 +753,7 @@ void TimelineComponent::handleCustomUIElements() {
                                 app->setSavedPosition(timelineState.virtualCursorTime);
                                 
                                 dragState.clipSelectedForDrag = true;
-                                dragState.draggedMIDIClip = selectedMIDIClip;
+                                dragState.draggedMIDIClip = const_cast<MIDIClip*>(&mc);  // Use the current clip directly
                                 dragState.draggedAudioClip = nullptr;
                                 dragState.dragStartMousePos = mousePos;
                                 dragState.dragStartClipTime = mc.startTime;
@@ -717,7 +778,9 @@ void TimelineComponent::handleCustomUIElements() {
                     tempClip.sourceFile = juce::File();
                     tempAudioClips.push_back(tempClip);
                     
-                    if (selectedMIDIClip && &mc == selectedMIDIClip) {
+                    if (selectedMIDIClipInfo.hasSelection && 
+                        std::abs(mc.startTime - selectedMIDIClipInfo.startTime) < 0.001 &&
+                        std::abs(mc.duration - selectedMIDIClipInfo.duration) < 0.001) {
                         tempSelectedClip = &tempAudioClips.back();
                     }
                 }
@@ -740,7 +803,7 @@ void TimelineComponent::handleCustomUIElements() {
                         if (!ctrlPressed && !prevCtrlPressed && sf::Mouse::isButtonPressed(sf::Mouse::Button::Left)) {
                             if (!dragState.isDraggingClip && !dragState.clipSelectedForDrag) {
                                 selectedClip = const_cast<AudioClip*>(&clipsVec[i]);
-                                selectedMIDIClip = nullptr;
+                                selectedMIDIClipInfo.hasSelection = false;  // Clear MIDI clip selection
                                 app->setSelectedTrack(track->getName());
                                 
                                 float mouseTimeInTrack = (localMousePos.x - timelineState.timelineOffset) / pixelsPerSecond;
@@ -849,7 +912,8 @@ void TimelineComponent::handleCustomUIElements() {
                     app->setSavedPosition(timelineState.virtualCursorTime);
                     
                     selectedClip = nullptr;
-                    selectedMIDIClip = nullptr;
+                    selectedMIDIClipInfo.hasSelection = false;  // Clear MIDI clip selection
+                    DEBUG_PRINT("[TIMELINE] Cleared clip selection (clicked empty area)");
                 }
             }
 
@@ -1431,7 +1495,11 @@ void TimelineComponent::processClipAtPosition(Track* track, const sf::Vector2f& 
                 
                 const auto& midiClips = midiTrack->getMIDIClips();
                 if (!midiClips.empty()) {
-                    selectedMIDIClip = const_cast<MIDIClip*>(&midiClips.back());
+                    const auto& newClip = midiClips.back();
+                    selectedMIDIClipInfo.hasSelection = true;
+                    selectedMIDIClipInfo.startTime = newClip.startTime;
+                    selectedMIDIClipInfo.duration = newClip.duration;
+                    selectedMIDIClipInfo.trackName = track->getName();
                     selectedClip = nullptr;
                     app->setSelectedTrack(track->getName());
                     
@@ -1462,7 +1530,7 @@ void TimelineComponent::processClipAtPosition(Track* track, const sf::Vector2f& 
                     const auto& audioClips = track->getClips();
                     if (!audioClips.empty()) {
                         selectedClip = const_cast<AudioClip*>(&audioClips.back());
-                        selectedMIDIClip = nullptr;
+                        selectedMIDIClipInfo.hasSelection = false;  // Clear MIDI clip selection
                         app->setSelectedTrack(track->getName());
                         
                         timelineState.virtualCursorTime = timePosition;
@@ -1492,23 +1560,23 @@ void TimelineComponent::handleClipSelection() {
     static bool prevBackspace = false;
     const bool backspace = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Backspace);
     
-    if ((selectedClip || selectedMIDIClip) && backspace && !prevBackspace && app->getWindow().hasFocus()) {
+    if ((selectedClip || selectedMIDIClipInfo.hasSelection) && backspace && !prevBackspace && app->getWindow().hasFocus()) {
         const std::string currentSelectedTrack = app->getSelectedTrack();
         
         for (auto& t : app->getAllTracks()) {
             if (t->getName() != currentSelectedTrack) continue;
             
             // Handle MIDI clip deletion
-            if (selectedMIDIClip && t->getType() == Track::TrackType::MIDI) {
+            if (selectedMIDIClipInfo.hasSelection && t->getType() == Track::TrackType::MIDI) {
                 MIDITrack* midiTrack = static_cast<MIDITrack*>(t.get());
                 const auto& midiClips = midiTrack->getMIDIClips();
                 
                 for (size_t i = 0; i < midiClips.size(); ++i) {
                     const auto& clip = midiClips[i];
-                    if (clip.startTime == selectedMIDIClip->startTime &&
-                        clip.duration == selectedMIDIClip->duration) {
+                    if (std::abs(clip.startTime - selectedMIDIClipInfo.startTime) < 0.001 &&
+                        std::abs(clip.duration - selectedMIDIClipInfo.duration) < 0.001) {
                         midiTrack->removeMIDIClip(i);
-                        selectedMIDIClip = nullptr;
+                        selectedMIDIClipInfo.hasSelection = false;  // Clear selection
                         break;
                     }
                 }
@@ -2141,6 +2209,9 @@ void TimelineComponent::clearProcessedPositions() {
     cacheState.lastScrollOffset = -1.f;
     cacheState.lastRowSize = sf::Vector2f(-1.f, -1.f);
 }
+
+// Static member definition
+TimelineComponent* TimelineComponent::instance = nullptr;
 
 // Plugin interface for TimelineComponent
 GET_INTERFACE

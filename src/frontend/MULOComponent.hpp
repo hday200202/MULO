@@ -6,6 +6,7 @@
 // #include <juce_gui_basics/juce_gui_basics.h>
 
 class Application;
+class MIDIClip;  // Forward declaration
 
 using namespace uilo;
 
@@ -27,6 +28,7 @@ extern "C" {
         void* (*getLayout)(void* instance);
         void* (*getParentContainer)(void* instance);
         void (*setParentContainer)(void* instance, Container* parent);
+        MIDIClip* (*getSelectedMIDIClip)(void* instance);  // Add MIDI clip selection method
     } PluginVTable;
     
     typedef PluginVTable* (*CreatePluginFunc)();
@@ -59,6 +61,11 @@ public:
     virtual inline std::string getRelativeTo() const { return relativeTo; }
     virtual inline void setRelativeTo(const std::string& relative) { relativeTo = relative; }
     virtual bool isInitialized() const { return initialized; }
+    
+    virtual MIDIClip* getSelectedMIDIClip() const { 
+        DEBUG_PRINT("[BASE] MULOComponent::getSelectedMIDIClip() called - returning nullptr");
+        return nullptr; 
+    }
 
 protected:
     Application* app = nullptr;
@@ -180,6 +187,16 @@ public:
             parentContainer = parent;
         }
     }
+    
+    // Override getSelectedMIDIClip to forward to plugin implementation
+    MIDIClip* getSelectedMIDIClip() const override {
+        if (plugin && plugin->getSelectedMIDIClip) {
+            DEBUG_PRINT("[WRAPPER] Forwarding getSelectedMIDIClip to plugin");
+            return plugin->getSelectedMIDIClip(plugin->instance);
+        }
+        DEBUG_PRINT("[WRAPPER] No getSelectedMIDIClip in plugin, returning base");
+        return MULOComponent::getSelectedMIDIClip();
+    }
 
     friend class Application;
 
@@ -270,6 +287,11 @@ protected:
             if (instance) \
                 static_cast<ClassName*>(instance)->setParentContainer(parent); \
         } \
+        MIDIClip* plugin_getSelectedMIDIClip(void* instance) { \
+            if (instance) \
+                return static_cast<ClassName*>(instance)->getSelectedMIDIClip(); \
+            return nullptr; \
+        } \
         PluginVTable* getPluginInterface() { \
             static PluginVTable vtable = { \
                 nullptr, /* instance will be set below */ \
@@ -284,7 +306,10 @@ protected:
                 plugin_isVisible, \
                 plugin_setVisible, \
                 plugin_toggle, \
-                plugin_getLayout \
+                plugin_getLayout, \
+                plugin_getParentContainer, \
+                plugin_setParentContainer, \
+                plugin_getSelectedMIDIClip \
             }; \
             vtable.instance = new ClassName(); \
             return &vtable; \

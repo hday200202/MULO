@@ -28,6 +28,7 @@ class Application;
 class Engine;
 struct UIResources;
 struct UIState;
+class MIDIClip;
 
 class Application : public juce::JUCEApplication {
 public:
@@ -190,6 +191,9 @@ public:
     inline std::string getCurrentCompositionName() const { return engine.getCurrentCompositionName(); }
     inline void saveState() { engine.saveState(); }
     inline void saveToFile(const std::string& path) const { engine.save(path); }
+
+    MIDIClip* getSelectedMIDIClip() const;
+    MIDIClip* getTimelineSelectedMIDIClip() const;
 
 private:
     sf::Clock deltaClock;
