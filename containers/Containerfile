@@ -1,0 +1,14 @@
+FROM archlinux:base AS build
+RUN pacman -Syu --noconfirm base-devel cmake ninja clang lld git zlib zstd libffi libcap ncurses
+WORKDIR /src
+COPY . .
+RUN cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -G Ninja \
+ && cmake --build build --target all
+
+# Runtime
+FROM gcr.io/distroless/cc-debian12:nonroot
+WORKDIR /app
+# ⬇️ If your final binary has a different name than MULO, change it here
+COPY --from=build /src/build/MULO ./MULO
+USER 65532:65532
+ENTRYPOINT ["/app/MULO"]
