@@ -93,13 +93,22 @@ void Application::initialise(const juce::String& commandLine) {
     ui->setScale(1.f);
 
     ui->forceUpdate();
+    
+    // Start the update timer (60 FPS)
+    startTimer(16);
 }
 
 Application::~Application() {}
 
 void Application::shutdown() {
+    stopTimer();
     unloadAllPlugins();
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
+}
+
+void Application::timerCallback() {
+    update();
+    render();
 }
 
 void Application::update() {
@@ -109,7 +118,11 @@ void Application::update() {
     using kb = sf::Keyboard::Key;
     
     running = ui->isRunning();
-    if (!running) return;
+    if (!running) {
+        // Signal JUCE application to quit
+        JUCEApplication::quit();
+        return;
+    }
     
     // handle all input, determines if shouldForceUpdate
     handleEvents();
