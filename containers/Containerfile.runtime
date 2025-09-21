@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y \
     libfreetype6 libjpeg-turbo8 \
     libvorbis0a libogg0 libflac12t64 \
     gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-libav \
+    xvfb x11-utils \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /usr/lib/aarch64-linux-gnu \
     && echo "void webkit_stub() {}" > /tmp/webkit_stub.c \
@@ -53,11 +54,21 @@ COPY bin/Linux/Release/MULO         /app/MULO
 COPY bin/Linux/Release/extensions   /app/extensions
 COPY bin/Linux/Release/assets       /app/assets
 
+# Copy and fix config files
+COPY bin/Linux/Release/config.json  /tmp/config.json
+COPY bin/Linux/Release/layout.json  /app/layout.json
+COPY containers/start_mulo.sh       /app/start_mulo.sh
+
+# Fix config paths for container environment
+RUN sed 's|/home/prashant/Desktop/MDAW/bin/Linux|/app|g; s|/home/prashant/Desktop/MDAW/assets/sounds|/app/assets/sounds|g' /tmp/config.json > /app/config.json \
+    && chmod +x /app/start_mulo.sh
+
 # Ensure SFML in /usr/local/lib is found; also your plugins
 ENV LD_LIBRARY_PATH=/usr/local/lib:/app/extensions
 
 # drop privileges
-RUN useradd -u 65532 -r -s /usr/sbin/nologin appuser
-USER 65532:65532
+RUN useradd -u 65532 -r -s /usr/sbin/nologin appuser \
+    && chown -R 65532:65532 /app \
+    && mkdir -p /tmp && chmod 777 /tmp
 
-ENTRYPOINT ["/app/MULO"]
+ENTRYPOINT ["/app/start_mulo.sh"]
