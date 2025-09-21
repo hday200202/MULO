@@ -11,4 +11,6 @@ struct AudioClip {
 
     AudioClip();
     AudioClip(const juce::File& sourceFile, double startTime, double offset, double duration, float volume = 1.f);
+    AudioClip(const AudioClip& other);
+    AudioClip& operator=(const AudioClip& other);
 };

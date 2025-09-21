@@ -6,22 +6,93 @@
 MIDITrack::MIDITrack() : Track() {}
 
 void MIDITrack::process(double playheadSeconds, juce::AudioBuffer<float>& outputBuffer, int numSamples, double sampleRate) {
-    // Clear the audio buffer first
     outputBuffer.clear();
     
-    // Create MIDI buffer to collect all MIDI events for this time range
     juce::MidiBuffer midiBuffer;
     
-    // Calculate time range for this buffer
     double bufferDuration = numSamples / sampleRate;
     double endTime = playheadSeconds + bufferDuration;
     
-    // Process all MIDI clips that overlap with this time range
+    std::vector<std::tuple<int, juce::MidiMessage, size_t>> allEvents;
+
+    std::set<double> clipsStartingInBuffer;
     for (const auto& clip : midiClips) {
-        bool overlaps = clip.overlapsRange(playheadSeconds, endTime);
-        if (overlaps) {
-            DEBUG_PRINT("PROCESSING MIDI CLIP - playhead=" << playheadSeconds << ", clipStart=" << clip.startTime << ", clipEnd=" << clip.getEndTime());
-            clip.fillMidiBuffer(midiBuffer, playheadSeconds, endTime, sampleRate, 0);
+        double clipStartTime = clip.startTime;
+        if (clipStartTime > playheadSeconds && clipStartTime <= endTime) {
+            clipsStartingInBuffer.insert(clipStartTime);
+        }
+    }
+    
+    for (size_t clipIndex = 0; clipIndex < midiClips.size(); ++clipIndex) {
+        auto& clip = midiClips[clipIndex];
+        
+        if (clip.overlapsRange(playheadSeconds, endTime)) {
+            juce::MidiBuffer clipBuffer;
+            
+            // Check if this clip ends exactly when another clip starts
+            bool hasGaplessTransition = false;
+            double clipEndTime = clip.startTime + clip.duration;
+            if (clipsStartingInBuffer.count(clipEndTime) > 0) {
+                hasGaplessTransition = true;
+            }
+            
+            clip.fillMidiBuffer(clipBuffer, playheadSeconds, endTime, sampleRate, 0, hasGaplessTransition);
+            
+            // Extract events from the clip buffer
+            for (const auto& event : clipBuffer) {
+                allEvents.emplace_back(event.samplePosition, event.getMessage(), clipIndex);
+            }
+        }
+    }
+    
+    // Sort events by sample position
+    std::sort(allEvents.begin(), allEvents.end(), 
+              [](const auto& a, const auto& b) {
+                  int sampleA = std::get<0>(a);
+                  int sampleB = std::get<0>(b);
+                  if (sampleA != sampleB) return sampleA < sampleB;
+                  
+                  // At the same sample time, handle note transitions carefully
+                  const auto& msgA = std::get<1>(a);
+                  const auto& msgB = std::get<1>(b);
+                  bool aIsNoteOn = msgA.isNoteOn() && msgA.getVelocity() > 0;
+                  bool bIsNoteOn = msgB.isNoteOn() && msgB.getVelocity() > 0;
+                  bool aIsNoteOff = msgA.isNoteOff();
+                  bool bIsNoteOff = msgB.isNoteOff();
+                  
+                  // For same note at same sample: note-off before note-on (seamless transition)
+                  if (aIsNoteOff && bIsNoteOn && msgA.getNoteNumber() == msgB.getNoteNumber()) {
+                      return true; // note-off first for same note
+                  }
+                  if (bIsNoteOff && aIsNoteOn && msgB.getNoteNumber() == msgA.getNoteNumber()) {
+                      return false; // note-off first for same note
+                  }
+                  
+                  // Otherwise, standard priority: note-offs before note-ons
+                  if (aIsNoteOff != bIsNoteOff) return aIsNoteOff;
+                  return std::get<2>(a) < std::get<2>(b); // then by clip index
+              });
+    
+    // Add sorted events to the main buffer, handling conflicts
+    std::set<int> activeNotes; 
+    for (const auto& event : allEvents) {
+        int samplePos = std::get<0>(event);
+        juce::MidiMessage message = std::get<1>(event);
+        
+        if (message.isNoteOn() && message.getVelocity() > 0) {
+            int note = message.getNoteNumber();
+            // If note is already active, send note-off first
+            if (activeNotes.count(note)) {
+                midiBuffer.addEvent(juce::MidiMessage::noteOff(message.getChannel(), note), samplePos);
+            }
+            activeNotes.insert(note);
+            midiBuffer.addEvent(message, samplePos);
+        } else if (message.isNoteOff()) {
+            int note = message.getNoteNumber();
+            activeNotes.erase(note);
+            midiBuffer.addEvent(message, samplePos);
+        } else {
+            midiBuffer.addEvent(message, samplePos);
         }
     }
     

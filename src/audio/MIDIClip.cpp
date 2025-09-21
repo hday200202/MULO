@@ -3,8 +3,7 @@
 #include <set>
 
 MIDIClip::MIDIClip() 
-    : startTime(0.0), offset(0.0), duration(0.0), velocity(1.0f), 
-      channel(1), transpose(0) {}
+    : startTime(0.0), offset(0.0), duration(0.0), velocity(1.0f), channel(1), transpose(0) {}
 
 MIDIClip::MIDIClip(double startTime, double duration, int channel, float velocity)
     : startTime(startTime), offset(0.0), duration(duration), velocity(velocity),
@@ -75,10 +74,10 @@ void MIDIClip::clear() {
     DEBUG_PRINT("Cleared MIDI clip data");
 }
 
-void MIDIClip::fillMidiBuffer(juce::MidiBuffer& buffer, double clipStartTime, double clipEndTime,
-                             double sampleRate, int startSample) const {
-    if (isEmpty() || clipEndTime <= startTime || clipStartTime > getEndTime()) {
-        return; // No overlap
+void MIDIClip::fillMidiBuffer(juce::MidiBuffer& buffer, double clipStartTime, double clipEndTime, 
+                          double sampleRate, int startSample, bool hasGaplessTransition) const {   
+    if (isEmpty()) {
+        return;
     }
     
     // Calculate the range within this clip
@@ -156,15 +155,23 @@ void MIDIClip::fillMidiBuffer(juce::MidiBuffer& buffer, double clipStartTime, do
     
     // If we're at the end of the clip, send note-offs for ALL notes that were played in this clip
     if (isAtClipEnd && !allNotesPlayedInClip.empty()) {
-        int clipEndOutputSample = startSample + (localEndSample - localStartSample);
-        
-        DEBUG_PRINT("MIDIClip: Sending note-offs for " << allNotesPlayedInClip.size() << " notes played in clip at clip end");
-        
-        // Send note-off for ALL notes that were played in this clip
-        for (int noteNumber : allNotesPlayedInClip) {
-            juce::MidiMessage noteOff = juce::MidiMessage::noteOff(1, noteNumber);
-            buffer.addEvent(noteOff, clipEndOutputSample);
-            DEBUG_PRINT("MIDIClip: Note-off for note " << noteNumber << " at sample " << clipEndOutputSample);
+        if (hasGaplessTransition) {
+            for (int noteNumber : allNotesPlayedInClip) {
+                juce::MidiMessage noteOff = juce::MidiMessage::noteOff(1, noteNumber);
+                buffer.addEvent(noteOff, 0);
+            }
+        } else {
+            // For normal clip endings, send note-offs at the exact clip boundary
+            double exactClipEndTime = startTime + duration;
+            double exactBufferStartTime = clipStartTime;
+            double clipEndRelativeToBuffer = exactClipEndTime - exactBufferStartTime;
+            int exactClipEndSample = static_cast<int>(clipEndRelativeToBuffer * sampleRate);
+            
+            // Send note-off for ALL notes that were played in this clip
+            for (int noteNumber : allNotesPlayedInClip) {
+                juce::MidiMessage noteOff = juce::MidiMessage::noteOff(1, noteNumber);
+                buffer.addEvent(noteOff, exactClipEndSample);
+            }
         }
     }
 }
@@ -250,4 +257,36 @@ bool MIDIClip::overlapsTime(double time) const {
 
 bool MIDIClip::overlapsRange(double rangeStart, double rangeEnd) const {
     return !(rangeEnd <= startTime || rangeStart > getEndTime());
+}
+
+MIDIClip MIDIClip::createCopyAtTime(double newStartTime) const {
+    MIDIClip copy;
+    
+    copy.sourceFile = sourceFile;
+    copy.startTime = newStartTime;
+    copy.offset = offset;
+    copy.duration = duration;
+    copy.velocity = velocity;
+    copy.channel = channel;
+    copy.transpose = transpose;
+    
+    copy.midiData = midiData;
+    
+    return copy;
+}
+
+MIDIClip MIDIClip::createCopyAtTimeWithGap(double newStartTime, double gapSeconds) const {
+    MIDIClip copy;
+    
+    copy.sourceFile = sourceFile;
+    copy.startTime = newStartTime + gapSeconds;
+    copy.offset = offset;
+    copy.duration = duration;
+    copy.velocity = velocity;
+    copy.channel = channel;
+    copy.transpose = transpose;
+    
+    copy.midiData = midiData;
+        
+    return copy;
 }

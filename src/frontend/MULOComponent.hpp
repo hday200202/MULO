@@ -2,16 +2,13 @@
 #pragma once
 
 #include "UILO/UILO.hpp"
-#include "../DebugConfig.hpp"
 #include "PluginSandbox.hpp"
-// #include <juce_gui_basics/juce_gui_basics.h>
 
 class Application;
-class MIDIClip;  // Forward declaration
+class MIDIClip;
 
 using namespace uilo;
 
-// Plugin interface for dynamic loading
 extern "C" {
     typedef struct {
         void* instance;
@@ -47,14 +44,12 @@ public:
     virtual Container* getLayout() { return layout; }
     virtual bool handleEvents() = 0;
 
-    // Visibility control
     virtual void show() { if (layout) layout->m_modifier.setVisible(true); }
     virtual void hide() { if (layout) layout->m_modifier.setVisible(false); }
     virtual bool isVisible() const { return layout ? layout->m_modifier.isVisible() : false; }
     virtual void setVisible(bool visible) { if (visible) show(); else hide(); }
     virtual void toggle() { if (isVisible()) hide(); else show(); }
 
-    // Set references to Application, Engine, UIState, and UIResources
     inline void setAppRef(Application* appRef) { app = appRef; }
     virtual inline void setParentContainer(Container* parent) { parentContainer = parent; }
     virtual Container* getParentContainer() const { return parentContainer; }
@@ -64,7 +59,7 @@ public:
     virtual bool isInitialized() const { return initialized; }
     
     virtual MIDIClip* getSelectedMIDIClip() const { 
-        DEBUG_PRINT("[BASE] MULOComponent::getSelectedMIDIClip() called - returning nullptr");
+
         return nullptr; 
     }
 
@@ -72,7 +67,6 @@ protected:
     Application* app = nullptr;
     Container* layout = nullptr;
     Container* parentContainer = nullptr;
-
     std::string name = "";
     bool initialized = false;
     bool forceUpdate = false;
@@ -86,7 +80,6 @@ public:
             name = plugin->getName(plugin->instance);
         }
         
-        // Use filename for sandbox operations if provided, otherwise fall back to internal name
         std::string sandboxName = pluginFilename.empty() ? name : pluginFilename;
         
         if (this->sandboxed) {
@@ -95,10 +88,6 @@ public:
             } else {
                 sandboxEnabled = false;
             }
-        } else {
-            // Disable sandbox for trusted plugins
-            PluginSandbox::disableSandbox();
-            sandboxEnabled = false;
         }
     }
     
@@ -109,16 +98,9 @@ public:
     }
     
     void init() override {
-        // Use filename for sandbox operations if provided, otherwise fall back to internal name
         std::string sandboxName = pluginFilename.empty() ? name : pluginFilename;
-        
-        // Set proper sandbox state for this plugin during init
-        if (this->sandboxed) {
-            PluginSandbox::enableSandbox(sandboxName);
-        } else {
-            PluginSandbox::disableSandbox();
-        }
-        
+        PluginSandbox::setCurrentThreadPlugin(sandboxName);
+
         if (plugin && plugin->init) {
             plugin->init(plugin->instance, app);
             initialized = true;
@@ -126,6 +108,9 @@ public:
     }
     
     void update() override {
+        std::string sandboxName = pluginFilename.empty() ? name : pluginFilename;
+        PluginSandbox::setCurrentThreadPlugin(sandboxName);
+        
         if (plugin && plugin->update) {
             plugin->update(plugin->instance);
         }
@@ -227,7 +212,8 @@ public:
     void setSandboxed(bool sandboxed) { this->sandboxed = sandboxed; }
     
     void cleanupSandbox() {
-        PluginSandbox::disableSandbox();
+        std::string sandboxName = pluginFilename.empty() ? name : pluginFilename;
+        PluginSandbox::removeSandboxedPlugin(sandboxName);
     }
 
     friend class Application;
@@ -236,7 +222,7 @@ protected:
     PluginVTable* plugin = nullptr;
     bool sandboxed = false;
     bool sandboxEnabled = false;
-    std::string pluginFilename; // Filename for sandbox identification
+    std::string pluginFilename;
 };
 
 #ifdef _WIN32
@@ -253,7 +239,7 @@ protected:
 
 #endif
 
-// Helper macros for creating plugins
+
 #define DECLARE_PLUGIN(ClassName) \
     extern "C" { \
         void plugin_init(void* instance, Application* app) { \

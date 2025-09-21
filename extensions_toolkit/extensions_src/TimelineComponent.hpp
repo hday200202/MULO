@@ -114,6 +114,12 @@ private:
         sf::Vector2f lastRowSize = {-1.f, -1.f};
     } cacheState;
 
+    struct ClipboardState {
+        std::vector<AudioClip> copiedAudioClips;
+        std::vector<MIDIClip> copiedMIDIClips;
+        bool hasClipboard = false;
+    } clipboardState;
+
     struct UIElements {
         Row* masterTrackElement = nullptr;
         Button* muteMasterButton = nullptr;
@@ -171,6 +177,12 @@ private:
     
     const std::vector<std::shared_ptr<sf::Drawable>>& getCachedMeasureLines(float measureWidth, float scrollOffset, const sf::Vector2f& rowSize);
     const std::vector<std::shared_ptr<sf::Drawable>>& getCachedClipGeometry(const std::string& trackName, double bpm, float beatWidth, float scrollOffset, const sf::Vector2f& rowSize, const std::vector<AudioClip>& clips, float verticalOffset, UIResources* resources, UIState* uiState, const AudioClip* selectedClip, const std::string& currentTrackName, const std::string& selectedTrackName);
+    
+    // Clipboard functions
+    void copySelectedClips();
+    void pasteClips();
+    void duplicateSelectedClips();
+    void clearClipboard();
     
     float enginePanToSlider(float enginePan) const { return (enginePan + 1.0f) * 0.5f; }
     float sliderPanToEngine(float sliderPan) const { return (sliderPan * 2.0f) - 1.0f; }
@@ -1249,11 +1261,35 @@ inline std::vector<std::shared_ptr<sf::Drawable>> generateClipRects(
         const float clipWidthPixels = ac.duration * pixelsPerSecond;
         const float clipXPosition = (ac.startTime * pixelsPerSecond) + scrollOffset;
 
-        const bool isSelected = selectedClip &&
-                                currentTrackName == selectedTrackName &&
-                                ac.startTime == selectedClip->startTime &&
-                                ac.duration == selectedClip->duration &&
-                                ac.sourceFile == selectedClip->sourceFile;
+        // Safe comparison for selection highlighting
+        bool isSelected = false;
+        if (selectedClip && currentTrackName == selectedTrackName) {
+            // Compare numerical values first (safer)
+            bool timesMatch = (ac.startTime == selectedClip->startTime);
+            bool durationsMatch = (ac.duration == selectedClip->duration);
+            
+            // Only compare files if times and durations match (reduces risk)
+            bool filesMatch = false;
+            if (timesMatch && durationsMatch) {
+                try {
+                    // Attempt safe comparison by comparing strings, with fallback
+                    std::string clipPath, selectedPath;
+                    try {
+                        clipPath = ac.sourceFile.getFullPathName().toStdString();
+                        selectedPath = selectedClip->sourceFile.getFullPathName().toStdString();
+                        filesMatch = (clipPath == selectedPath);
+                    } catch (...) {
+                        // If string conversion fails, just use pointer equality as fallback
+                        filesMatch = (&ac == selectedClip);
+                    }
+                } catch (...) {
+                    // If any comparison fails, assume different clips
+                    filesMatch = false;
+                }
+            }
+            
+            isSelected = timesMatch && durationsMatch && filesMatch;
+        }
 
         std::vector<std::shared_ptr<sf::Drawable>>* targetContainer = isSelected ? &selectedClipDrawables : &clipRects;
 
@@ -1603,10 +1639,15 @@ void TimelineComponent::handleAllUserInput() {
 
 void TimelineComponent::handleKeyboardInput() {
     static bool prevCtrl = false, prevPlus = false, prevMinus = false, prevBackspace = false;
+    static bool prevC = false, prevV = false, prevD = false;
+    
     const bool ctrl = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) || sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RControl);
     const bool plus = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Equal);
     const bool minus = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Hyphen);
     const bool backspace = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Backspace);
+    const bool c = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::C);
+    const bool v = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::V);
+    const bool d = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::D);
 
     // Block keyboard input when window doesn't have focus
     if (!app->getWindow().hasFocus()) {
@@ -1614,7 +1655,20 @@ void TimelineComponent::handleKeyboardInput() {
         prevPlus = plus;
         prevMinus = minus;
         prevBackspace = backspace;
+        prevC = c;
+        prevV = v;
+        prevD = d;
         return;
+    }
+
+    if (ctrl && c && !prevC) {
+        copySelectedClips();
+    }
+    if (ctrl && v && !prevV) {
+        pasteClips();
+    }
+    if (ctrl && d && !prevD) {
+        duplicateSelectedClips();
     }
 
     // Handle clip deletion
@@ -1662,6 +1716,9 @@ void TimelineComponent::handleKeyboardInput() {
     prevPlus = plus;
     prevMinus = minus;
     prevBackspace = backspace;
+    prevC = c;
+    prevV = v;
+    prevD = d;
 }
 
 void TimelineComponent::handleMouseInput() {
@@ -2195,6 +2252,103 @@ void TimelineComponent::clearProcessedPositions() {
     cacheState.lastMeasureWidth = -1.f;
     cacheState.lastScrollOffset = -1.f;
     cacheState.lastRowSize = sf::Vector2f(-1.f, -1.f);
+}
+
+void TimelineComponent::copySelectedClips() {
+    clearClipboard();
+    
+    // Copy selected AudioClip
+    if (selectedClip) {
+        clipboardState.copiedAudioClips.push_back(*selectedClip);
+        clipboardState.hasClipboard = true;
+        DEBUG_PRINT("Copied AudioClip at time " + std::to_string(selectedClip->startTime));
+    }
+    
+    // Copy selected MIDIClip
+    MIDIClip* selectedMIDIClip = getSelectedMIDIClip();
+    if (selectedMIDIClip) {
+        clipboardState.copiedMIDIClips.push_back(*selectedMIDIClip);
+        clipboardState.hasClipboard = true;
+        DEBUG_PRINT("Copied MIDIClip at time " + std::to_string(selectedMIDIClip->startTime));
+    }
+    
+    if (!clipboardState.hasClipboard) {
+        DEBUG_PRINT("No clips selected to copy");
+    }
+}
+
+void TimelineComponent::pasteClips() {
+    if (!clipboardState.hasClipboard) {
+        DEBUG_PRINT("No clips in clipboard to paste");
+        return;
+    }
+    
+    double cursorPosition = app->getPosition();
+    std::string currentTrack = app->getSelectedTrack();
+    
+    if (currentTrack.empty()) {
+        DEBUG_PRINT("No track selected for pasting");
+        return;
+    }
+    
+    // Paste AudioClips
+    for (const AudioClip& originalClip : clipboardState.copiedAudioClips) {
+        AudioClip newClip = originalClip;
+        newClip.startTime = cursorPosition;
+        app->addClipToTrack(currentTrack, newClip);
+        DEBUG_PRINT("Pasted AudioClip at cursor position " + std::to_string(cursorPosition));
+    }
+    
+    // Paste MIDIClips
+    Track* track = app->getTrack(currentTrack);
+    if (track && track->getType() == Track::TrackType::MIDI) {
+        MIDITrack* midiTrack = static_cast<MIDITrack*>(track);
+        for (const MIDIClip& originalClip : clipboardState.copiedMIDIClips) {
+            MIDIClip newClip = originalClip.createCopyAtTime(cursorPosition);
+            midiTrack->addMIDIClip(newClip);
+            DEBUG_PRINT("Pasted MIDIClip at cursor position " + std::to_string(cursorPosition));
+        }
+    }
+}
+
+void TimelineComponent::duplicateSelectedClips() {
+    if (!selectedClip && !selectedMIDIClipInfo.hasSelection) {
+        DEBUG_PRINT("No clips selected to duplicate");
+        return;
+    }
+    
+    std::string currentTrack = app->getSelectedTrack();
+    if (currentTrack.empty()) {
+        DEBUG_PRINT("No track selected for duplication");
+        return;
+    }
+    
+    // Duplicate AudioClip
+    if (selectedClip) {
+        AudioClip newClip = *selectedClip;
+        newClip.startTime = selectedClip->startTime + selectedClip->duration;
+        app->addClipToTrack(currentTrack, newClip);
+        DEBUG_PRINT("Duplicated AudioClip, placed at time " + std::to_string(newClip.startTime));
+    }
+    
+    // Duplicate MIDIClip
+    MIDIClip* selectedMIDIClip = getSelectedMIDIClip();
+    if (selectedMIDIClip) {
+        Track* track = app->getTrack(currentTrack);
+        if (track && track->getType() == Track::TrackType::MIDI) {
+            MIDITrack* midiTrack = static_cast<MIDITrack*>(track);
+            double newStartTime = selectedMIDIClip->startTime + selectedMIDIClip->duration;
+            MIDIClip newClip = selectedMIDIClip->createCopyAtTime(newStartTime);
+            midiTrack->addMIDIClip(newClip);
+            DEBUG_PRINT("Duplicated MIDIClip without gap, placed at time " + std::to_string(newClip.startTime));
+        }
+    }
+}
+
+void TimelineComponent::clearClipboard() {
+    clipboardState.copiedAudioClips.clear();
+    clipboardState.copiedMIDIClips.clear();
+    clipboardState.hasClipboard = false;
 }
 
 // Static member definition

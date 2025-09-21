@@ -26,7 +26,7 @@ struct MIDIClip {
     void clear();
     
     void fillMidiBuffer(juce::MidiBuffer& buffer, double clipStartTime, double clipEndTime, 
-                       double sampleRate, int startSample) const;
+                       double sampleRate, int startSample, bool hasGaplessTransition = false) const;
     
     bool loadFromFile(const juce::File& file);
     bool saveToFile(const juce::File& file) const;
@@ -35,4 +35,7 @@ struct MIDIClip {
     double getEndTime() const { return startTime + duration; }
     bool overlapsTime(double time) const;
     bool overlapsRange(double rangeStart, double rangeEnd) const;
+    
+    MIDIClip createCopyAtTime(double newStartTime) const;
+    MIDIClip createCopyAtTimeWithGap(double newStartTime, double gapSeconds = 0.001) const;
 };

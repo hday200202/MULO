@@ -40,9 +40,9 @@ public:
     std::unique_ptr<UILO> ui = nullptr;
     UIState uiState;
     UIResources resources;
-    nlohmann::json config; // Central config that extensions can write to
+    nlohmann::json config;
 
-    // JUCE Application interface
+
     const juce::String getApplicationName() override { return "MDAW"; }
     const juce::String getApplicationVersion() override { return "1.0.0"; }
     bool moreThanOneInstanceAllowed() override { return true; }
@@ -76,7 +76,7 @@ public:
     inline void requestUIRebuild() { pendingUIRebuild = true; }
     inline void requestFullscreenToggle() { pendingFullscreenToggle = true; }
 
-    // Engine interface
+
     inline Track* getMasterTrack() { return engine.getMasterTrack(); }
     inline Track* getTrack(const std::string& name) { return engine.getTrackByName(name); }
     inline std::vector<std::unique_ptr<Track>>& getAllTracks() { return engine.getAllTracks(); }
@@ -141,11 +141,9 @@ public:
 
     inline double getSampleRate() const { return engine.getSampleRate(); }
     inline void setSampleRate(const double newSampleRate) { 
-        DEBUG_PRINT("Application: Setting sample rate to " << newSampleRate << "Hz");
         uiState.sampleRate = newSampleRate;
         writeConfig("sampleRate", newSampleRate);
         engine.configureAudioDevice(newSampleRate);
-        DEBUG_PRINT("Application: Sample rate configuration completed");
     }
 
     template<typename T>
@@ -160,7 +158,6 @@ public:
             try {
                 return config[key].get<T>();
             } catch (const std::exception& e) {
-                DEBUG_PRINT("Error reading config key '" << key << "': " << e.what());
                 return defaultValue;
             }
         }
@@ -245,17 +242,16 @@ private:
         PluginVTable* plugin;
         std::string path;
         std::string name;
-        bool isSandboxed = true;  // Default to sandboxed
-        bool isTrusted = false;   // Mark as trusted to bypass sandbox
+        bool isSandboxed = true;
+        bool isTrusted = false;
     };
     
-    // Plugin sandboxing configuration
     struct PluginSandboxConfig {
-        bool enableSandboxing = true;               // Global sandbox enable/disable
-        bool allowFilesystemByDefault = false;      // Default filesystem access
-        bool allowNetworkByDefault = false;         // Default network access
-        std::vector<std::string> trustedPlugins;    // List of trusted plugin names
-        std::vector<std::string> allowedPaths;      // Paths plugins can access
+        bool enableSandboxing = true;
+        bool allowFilesystemByDefault = false;
+        bool allowNetworkByDefault = false;
+        std::vector<std::string> trustedPlugins;
+        std::vector<std::string> allowedPaths;
     } pluginSandboxConfig;
     
     std::string exeDirectory = "";
@@ -279,13 +275,9 @@ private:
     void unloadPlugin(const std::string& name);
     void unloadAllPlugins();
     
-    // Plugin sandboxing methods
-    PluginSandboxConfig loadSandboxConfig() const;
-    void saveSandboxConfig(const PluginSandboxConfig& sandboxConfig) const;
     void addTrustedPlugin(const std::string& pluginName);
     void removeTrustedPlugin(const std::string& pluginName);
     void setPluginTrusted(const std::string& pluginName, bool trusted);
     
-    // Hardcoded plugin verification - secure and tamper-proof
     bool isPluginTrusted(const std::string& pluginName) const;
 };

@@ -1,5 +1,3 @@
 #include "PluginSandbox.hpp"
 
-// Static member definitions
-bool PluginSandbox::sandboxActive = false;
-std::string PluginSandbox::currentPlugin = "";
+thread_local std::string PluginSandbox::currentThreadPlugin = "";

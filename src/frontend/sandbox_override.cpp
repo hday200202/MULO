@@ -8,7 +8,36 @@
 #include <sys/socket.h>
 #include <sys/wait.h>
 #include <errno.h>
+#include <execinfo.h>
 #include "PluginSandbox.hpp"
+
+std::string getCallingPlugin() {
+    void* callstack[8];
+    int frames = backtrace(callstack, 8);
+    char** strs = backtrace_symbols(callstack, frames);
+    
+    if (strs) {
+        for (int i = 1; i < frames; i++) {
+            std::string frame(strs[i]);
+            size_t soPos = frame.find(".so");
+            if (soPos != std::string::npos) {
+                if (frame.find("/extensions/") != std::string::npos) {
+                    size_t start = frame.rfind('/', soPos);
+                    if (start != std::string::npos) {
+                        start++;
+                        size_t end = frame.find(".so", start) + 3;
+                        std::string pluginFile = frame.substr(start, end - start);
+                        free(strs);
+                        return pluginFile;
+                    }
+                }
+            }
+        }
+        free(strs);
+    }
+    
+    return PluginSandbox::getCurrentPlugin();
+}
 
 bool isLegitimateSystemPath(const char* pathname) {
     if (!pathname) return false;
@@ -89,10 +118,9 @@ bool containsMaliciousOperations(const char* command) {
 }
 
 extern "C" int system(const char* command) {
-    // Only apply sandbox restrictions when sandboxing is active
-    if (PluginSandbox::isSandboxActive() && containsMaliciousOperations(command)) {
-        std::cout << "[SANDBOX] BLOCKED system() call with malicious operation for plugin '" 
-                  << PluginSandbox::getCurrentPlugin() << "': " << command << std::endl;
+    std::string callingPlugin = getCallingPlugin();
+    bool pluginIsSandboxed = !callingPlugin.empty() && PluginSandbox::isPluginSandboxed(callingPlugin);
+    if (pluginIsSandboxed && containsMaliciousOperations(command)) {
         return -1;
     }
     
@@ -116,10 +144,9 @@ extern "C" int open(const char* pathname, int flags, ...) {
         }
     }
     
-    // Only apply sandbox restrictions when sandboxing is active
-    if (PluginSandbox::isSandboxActive() && (flags & (O_WRONLY | O_RDWR | O_CREAT | O_TRUNC | O_APPEND))) {
-        std::cout << "[SANDBOX] BLOCKED open() with write flags for plugin '" 
-                  << PluginSandbox::getCurrentPlugin() << "': " << pathname << std::endl;
+    std::string callingPlugin = getCallingPlugin();
+    bool pluginIsSandboxed = !callingPlugin.empty() && PluginSandbox::isPluginSandboxed(callingPlugin);
+    if (pluginIsSandboxed && (flags & (O_WRONLY | O_RDWR | O_CREAT | O_TRUNC | O_APPEND))) {
         errno = EACCES;
         return -1;
     }
@@ -163,10 +190,13 @@ extern "C" FILE* fopen(const char* pathname, const char* mode) {
         }
     }
     
-    // Only apply sandbox restrictions when sandboxing is active
-    if (PluginSandbox::isSandboxActive() && mode && (strchr(mode, 'w') || strchr(mode, 'a') || strchr(mode, '+'))) {
+    std::string callingPlugin = getCallingPlugin();
+    bool pluginIsSandboxed = !callingPlugin.empty() && PluginSandbox::isPluginSandboxed(callingPlugin);
+    
+    // Only apply sandbox restrictions when the calling plugin is sandboxed
+    if (pluginIsSandboxed && mode && (strchr(mode, 'w') || strchr(mode, 'a') || strchr(mode, '+'))) {
         std::cout << "[SANDBOX] BLOCKED fopen() with write mode '" << mode 
-                  << "' for plugin '" << PluginSandbox::getCurrentPlugin() << "': " << pathname << std::endl;
+                  << "' for plugin '" << callingPlugin << "': " << pathname << std::endl;
         errno = EACCES;
         return nullptr;
     }
@@ -181,10 +211,7 @@ extern "C" FILE* fopen(const char* pathname, const char* mode) {
 }
 
 extern "C" int unlink(const char* pathname) {
-    // Only apply sandbox restrictions when sandboxing is active
     if (PluginSandbox::isSandboxActive()) {
-        std::cout << "[SANDBOX] BLOCKED unlink() for plugin '" 
-                  << PluginSandbox::getCurrentPlugin() << "': " << pathname << std::endl;
         errno = EACCES;
         return -1;
     }

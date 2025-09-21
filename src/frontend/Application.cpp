@@ -141,7 +141,7 @@ void Application::handleEvents() {
 
     if (hasPendingEffect) {
         if (Effect::isVSTSynthesizer(pendingEffectPath)) {
-            DEBUG_PRINT("Detected synthesizer VST, creating MIDI track: " << pendingEffectPath);
+
             juce::File vstFile(pendingEffectPath);
             std::string synthName = vstFile.getFileNameWithoutExtension().toStdString();
             std::string trackName = synthName;
@@ -154,12 +154,7 @@ void Application::handleEvents() {
                     synthEffect->enable();
                     synthEffect->openWindow();
                     engine.setSelectedTrack(actualTrackName);
-                    DEBUG_PRINT("Created MIDI track '" << actualTrackName << "' with synthesizer: " << synthName);
-                } else {
-                    DEBUG_PRINT("Failed to add synthesizer to MIDI track: " << pendingEffectPath);
                 }
-            } else {
-                DEBUG_PRINT("Failed to create MIDI track for synthesizer");
             }
         } else {
             Track* selectedTrack = getSelectedTrackPtr();
@@ -170,13 +165,13 @@ void Application::handleEvents() {
                     
                     if (effect->isSynthesizer()) {
                         engine.sendBpmToSynthesizers();
-                        DEBUG_PRINT("Sent BPM to newly loaded synthesizer effect: " << effect->getName());
+
                     }
                 } else {
-                    DEBUG_PRINT("Failed to load effect: " << pendingEffectPath);
+
                 }
             } else {
-                DEBUG_PRINT("No selected track for effect loading");
+
             }
         }
         hasPendingEffect = false;
@@ -198,13 +193,13 @@ void Application::handleEvents() {
                 engine.setSelectedTrack(trackName);
                 
                 engine.sendBpmToSynthesizers();
-                DEBUG_PRINT("Sent BPM to newly loaded synthesizer: " << synthName);
-                DEBUG_PRINT("Created MIDI track '" << trackName << "' with synthesizer: " << synthName);
+
+
             } else {
-                DEBUG_PRINT("Failed to add synthesizer to MIDI track: " << pendingSynthPath);
+
             }
         } else {
-            DEBUG_PRINT("Failed to create MIDI track for synthesizer");
+
         }
         hasPendingSynth = false;
         pendingSynthPath.clear();
@@ -217,16 +212,16 @@ void Application::handleEvents() {
             if (pendingEffectWindowIndex < effects.size()) {
                 effects[pendingEffectWindowIndex]->openWindow();
             } else {
-                DEBUG_PRINT("Invalid effect index: " << pendingEffectWindowIndex);
+
             }
         } else {
-            DEBUG_PRINT("No selected track for effect window opening");
+
         }
         hasPendingEffectWindow = false;
         pendingEffectWindowIndex = SIZE_MAX;
     }
 
-    // Process deferred effects from save file loading (one per frame to spread load)
+
     if (hasDeferredEffects && !deferredEffects.empty()) {
         auto deferredEffect = deferredEffects.front();
         deferredEffects.erase(deferredEffects.begin());
@@ -254,7 +249,7 @@ void Application::handleEvents() {
                 
                 if (effect->isSynthesizer()) {
                     engine.sendBpmToSynthesizers();
-                    DEBUG_PRINT("Sent BPM to deferred synthesizer: " << effect->getName());
+
                 }
                 
                 if (effect->hasEditor()) {
@@ -263,15 +258,15 @@ void Application::handleEvents() {
                     effect->closeWindow();
                 }
                 
-                DEBUG_PRINT("Loaded deferred effect: " << effect->getName() << " for track: " << deferredEffect.trackName);
+
             }
         } else {
-            DEBUG_PRINT("Track not found for deferred effect: " << deferredEffect.trackName);
+
         }
         
         if (deferredEffects.empty()) {
             hasDeferredEffects = false;
-            DEBUG_PRINT("All deferred effects loaded");
+
         }
     }
 
@@ -293,7 +288,7 @@ void Application::handleEvents() {
         engine.clearPendingEffects();
         
         if (hasDeferredEffects) {
-            DEBUG_PRINT("Processing " << deferredEffects.size() << " pending effects from save file" << std::endl);
+
         }
     }
 
@@ -303,7 +298,7 @@ void Application::handleEvents() {
         if (track)
             track->clearEffects();
             
-        DEBUG_PRINT("Removing track: " << pendingTrackRemoveName);
+
         engine.removeTrackByName(pendingTrackRemoveName);
         pendingTrackRemoveName = "";
     }
@@ -327,7 +322,7 @@ void Application::handleDragAndDrop() {
         for (auto& [name, component] : muloComponents) {
             if (component->getLayout() && component->isVisible()) {
                 if (component->getLayout()->m_bounds.getGlobalBounds().contains(ui->getMousePosition())) {
-                    // don't highlight components not in the same parent container
+
                     if (dragParentContainer && component->getParentContainer() != dragParentContainer) {
                         dragOverlay.setSize({0.f, 0.f}); // Hide overlay if not in same container
                         continue;
@@ -678,27 +673,12 @@ void Application::scanAndLoadPlugins() {
 
 bool Application::loadPlugin(const std::string& pluginPath) {
     try {
-        // Load sandbox configuration to determine trust status
-        PluginSandboxConfig sandboxConfig = loadSandboxConfig();
-        
         // Extract plugin filename for trust checking
         fs::path pluginFile(pluginPath);
         std::string pluginName = pluginFile.filename().string();
         
-        // Set TimelineComponent as trusted for testing
-        if (pluginName == "TimelineComponent.so") {
-            setPluginTrusted(pluginName, true);
-        }
-        
         // Check if plugin is trusted (bypass sandbox) using hardcoded verification
         bool isTrusted = isPluginTrusted(pluginName);
-        
-        // Determine if sandboxing should be applied
-        bool shouldSandbox = sandboxConfig.enableSandboxing && !isTrusted;
-        
-        DEBUG_PRINT("Loading plugin: " << pluginName << 
-                   " (trusted: " << (isTrusted ? "yes" : "no") << 
-                   ", sandboxed: " << (shouldSandbox ? "yes" : "no") << ")");
 
 #ifdef _WIN32
         HMODULE handle = LoadLibraryA(pluginPath.c_str());
@@ -776,7 +756,7 @@ bool Application::loadPlugin(const std::string& pluginPath) {
         }
 
         // Create wrapper component with sandbox status and plugin filename
-        auto wrapper = std::make_unique<PluginComponentWrapper>(vtable, shouldSandbox, pluginName);
+        auto wrapper = std::make_unique<PluginComponentWrapper>(vtable, !isTrusted, pluginName);
         
         // Store the loaded plugin info
         LoadedPlugin loadedPlugin;
@@ -784,7 +764,7 @@ bool Application::loadPlugin(const std::string& pluginPath) {
         loadedPlugin.handle = handle;
         loadedPlugin.plugin = vtable;
         loadedPlugin.name = name;
-        loadedPlugin.isSandboxed = shouldSandbox;
+        loadedPlugin.isSandboxed = !isTrusted;
         loadedPlugin.isTrusted = isTrusted;
         loadedPlugins[name] = std::move(loadedPlugin);
 
@@ -792,9 +772,9 @@ bool Application::loadPlugin(const std::string& pluginPath) {
         muloComponents[name] = std::move(wrapper);
         
         std::cout << "Plugin '" << name << "' loaded successfully";
-        if (shouldSandbox) {
+        if (!isTrusted) {
             std::cout << " (sandboxed)";
-        } else if (isTrusted) {
+        } else {
             std::cout << " (trusted, no sandbox)";
         }
         std::cout << std::endl;
@@ -958,7 +938,7 @@ void Application::saveConfig() {
             return;
         }
         
-        file << config.dump(2); // Pretty print with 2-space indentation
+        file << config.dump(2);
         file.close();
         
         DEBUG_PRINT("Configuration saved to: " << configPath);
@@ -1012,120 +992,8 @@ MIDIClip* Application::getTimelineSelectedMIDIClip() const {
     return nullptr;
 }
 
-// Plugin sandbox configuration methods
-Application::PluginSandboxConfig Application::loadSandboxConfig() const {
-    PluginSandboxConfig sandboxConfig;
-    
-    try {
-        std::string configPath = exeDirectory + "/sandbox_config.json";
-        std::ifstream file(configPath);
-        
-        if (!file.is_open()) {
-            DEBUG_PRINT("Sandbox config file not found, using defaults: " << configPath);
-            // Return default configuration: sandbox enabled with no trusted plugins
-            sandboxConfig.enableSandboxing = true;
-            sandboxConfig.trustedPlugins = {};
-            return sandboxConfig;
-        }
-
-        nlohmann::json jsonConfig;
-        file >> jsonConfig;
-        file.close();
-        
-        // Load configuration values
-        sandboxConfig.enableSandboxing = jsonConfig.value("enableSandboxing", true);
-        
-        if (jsonConfig.contains("trustedPlugins") && jsonConfig["trustedPlugins"].is_array()) {
-            for (const auto& plugin : jsonConfig["trustedPlugins"]) {
-                if (plugin.is_string()) {
-                    sandboxConfig.trustedPlugins.push_back(plugin);
-                }
-            }
-        }
-        
-        DEBUG_PRINT("Sandbox configuration loaded: sandboxing=" << 
-                   (sandboxConfig.enableSandboxing ? "enabled" : "disabled") << 
-                   ", trusted plugins=" << sandboxConfig.trustedPlugins.size());
-        
-    } catch (const nlohmann::json::parse_error& e) {
-        DEBUG_PRINT("JSON parse error loading sandbox config: " << e.what());
-        // Use defaults on error
-        sandboxConfig.enableSandboxing = true;
-        sandboxConfig.trustedPlugins = {};
-    } catch (const std::exception& e) {
-        DEBUG_PRINT("Error loading sandbox config: " << e.what());
-        sandboxConfig.enableSandboxing = true;
-        sandboxConfig.trustedPlugins = {};
-    }
-    
-    return sandboxConfig;
-}
-
-void Application::saveSandboxConfig(const PluginSandboxConfig& sandboxConfig) const {
-    try {
-        nlohmann::json jsonConfig;
-        jsonConfig["enableSandboxing"] = sandboxConfig.enableSandboxing;
-        jsonConfig["trustedPlugins"] = sandboxConfig.trustedPlugins;
-        
-        std::string configPath = exeDirectory + "/sandbox_config.json";
-        std::ofstream file(configPath);
-        
-        if (!file.is_open()) {
-            DEBUG_PRINT("Failed to open sandbox config file for writing: " << configPath);
-            return;
-        }
-        
-        file << jsonConfig.dump(2); // Pretty print with 2-space indentation
-        file.close();
-        
-        DEBUG_PRINT("Sandbox configuration saved: sandboxing=" << 
-                   (sandboxConfig.enableSandboxing ? "enabled" : "disabled") << 
-                   ", trusted plugins=" << sandboxConfig.trustedPlugins.size());
-                   
-    } catch (const std::exception& e) {
-        DEBUG_PRINT("Error saving sandbox config: " << e.what());
-    }
-}
-
-void Application::addTrustedPlugin(const std::string& pluginName) {
-    PluginSandboxConfig sandboxConfig = loadSandboxConfig();
-    
-    // Check if plugin is already trusted
-    auto it = std::find(sandboxConfig.trustedPlugins.begin(), 
-                       sandboxConfig.trustedPlugins.end(), 
-                       pluginName);
-    
-    if (it == sandboxConfig.trustedPlugins.end()) {
-        sandboxConfig.trustedPlugins.push_back(pluginName);
-        saveSandboxConfig(sandboxConfig);
-        DEBUG_PRINT("Added plugin to trusted list: " << pluginName);
-    } else {
-        DEBUG_PRINT("Plugin already in trusted list: " << pluginName);
-    }
-}
-
-void Application::removeTrustedPlugin(const std::string& pluginName) {
-    PluginSandboxConfig sandboxConfig = loadSandboxConfig();
-    
-    auto it = std::find(sandboxConfig.trustedPlugins.begin(), 
-                       sandboxConfig.trustedPlugins.end(), 
-                       pluginName);
-    
-    if (it != sandboxConfig.trustedPlugins.end()) {
-        sandboxConfig.trustedPlugins.erase(it);
-        saveSandboxConfig(sandboxConfig);
-        DEBUG_PRINT("Removed plugin from trusted list: " << pluginName);
-    } else {
-        DEBUG_PRINT("Plugin not found in trusted list: " << pluginName);
-    }
-}
-
 void Application::setPluginTrusted(const std::string& pluginName, bool trusted) {
-    if (trusted) {
-        addTrustedPlugin(pluginName);
-    } else {
-        removeTrustedPlugin(pluginName);
-    }
+    // Check database
 }
 
 bool Application::isPluginTrusted(const std::string& pluginName) const {
@@ -1133,6 +1001,8 @@ bool Application::isPluginTrusted(const std::string& pluginName) const {
         "TimelineComponent.so",
         "PianoRollComponent.so",
         "MixerComponent.so",
+        "FXRackComponent.so",
+        "MarketplaceComponent.so"
     };
     
     return std::find(trustedPlugins.begin(), trustedPlugins.end(), pluginName) != trustedPlugins.end();
