@@ -98,8 +98,14 @@ case "$1" in
         build_native
         build_container
         ;;
+    "build-debug")
+        build_debug
+        ;;
     "run")
         run_native
+        ;;
+    "run-debug")
+        run_debug
         ;;
     "container")
         run_container
@@ -117,15 +123,19 @@ case "$1" in
         echo "Usage: $0 <command>"
         echo ""
         echo "Commands:"
-        echo "  build     - Build MULO natively and create container"
-        echo "  run       - Run MULO natively"
-        echo "  container - Run MULO in sandbox container"
-        echo "  debug     - Open interactive container shell"
-        echo "  clean     - Clean build artifacts"
-        echo "  help      - Show this help"
+        echo "  build       - Build MULO natively (release) and create container"
+        echo "  build-debug - Build MULO in debug mode"
+        echo "  run         - Run MULO natively (release)"
+        echo "  run-debug   - Run MULO in debug mode"
+        echo "  container   - Run MULO in sandbox container"
+        echo "  debug       - Open interactive container shell"
+        echo "  clean       - Clean build artifacts"
+        echo "  help        - Show this help"
         echo ""
         echo "Examples:"
-        echo "  $0 build      # Build everything"
+        echo "  $0 build       # Build release and container"
+        echo "  $0 build-debug # Build debug version"
+        echo "  $0 run-debug   # Run debug version"
         echo "  $0 run        # Run for development"
         echo "  $0 container  # Test in sandbox"
         ;;
