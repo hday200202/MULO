@@ -1,0 +1,63 @@
+# ---------- RUNTIME BASE ----------
+FROM ubuntu:24.04 AS runtime-base
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y \
+    libsoup-2.4-1 libcurl4t64 \
+    libsfml-dev gcc \
+    libgtk-3-0 libgtk-3-dev \
+    libasound2t64 libpulse0 libopenal1 \
+    libx11-6 libxrandr2 libxi6 libxcursor1 libxinerama1 \
+    libgl1 libglu1-mesa \
+    libfreetype6 libjpeg-turbo8 \
+    libvorbis0a libogg0 libflac12t64 \
+    gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-libav \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /usr/lib/aarch64-linux-gnu \
+    && echo "void webkit_stub() {}" > /tmp/webkit_stub.c \
+    && gcc -shared -fPIC -o /usr/lib/aarch64-linux-gnu/libwebkit2gtk-4.0.so.37 /tmp/webkit_stub.c \
+    && echo "void js_stub() {}" > /tmp/js_stub.c \
+    && gcc -shared -fPIC -o /usr/lib/aarch64-linux-gnu/libjavascriptcoregtk-4.0.so.18 /tmp/js_stub.c \
+    && echo 'void soup_session_abort() {}' > /tmp/soup3_stub.c \
+    && gcc -shared -fPIC -o /usr/lib/aarch64-linux-gnu/libsoup-3.0.so.0 /tmp/soup3_stub.c \
+    && ldconfig \
+    && rm /tmp/*.c
+# ---------- BUILD SFML 3 ----------
+FROM ubuntu:24.04 AS sfml
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y \
+    git cmake ninja-build build-essential \
+    # X & media dev headers already present:
+    libfreetype6-dev libjpeg-turbo8-dev libopenal-dev libudev-dev \
+    libx11-dev libxrandr-dev libxi-dev libxcursor-dev libxinerama-dev libxrender-dev \
+    # ⬇️ OpenGL dev bits (fixes your error)
+    libopengl-dev libgl1-mesa-dev libglu1-mesa-dev \
+    # ⬇️ Audio codec dev libs (fixes Vorbis/OGG error)
+    libvorbis-dev libogg-dev libflac-dev \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt
+RUN git clone --depth=1 -b 3.0.x https://github.com/SFML/SFML.git sfml
+WORKDIR /opt/sfml
+RUN cmake -B build -S . -G Ninja -DCMAKE_BUILD_TYPE=Release -DSFML_BUILD_EXAMPLES=OFF -DBUILD_SHARED_LIBS=ON \
+ && cmake --build build -j \
+ && cmake --install build --prefix /opt/sfml-install
+
+# ---------- FINAL RUNTIME IMAGE ----------
+FROM runtime-base
+# bring in SFML 3 libs and headers
+COPY --from=sfml /opt/sfml-install/ /usr/local/
+
+WORKDIR /app
+# your app + plugins + assets
+COPY bin/Linux/Release/MULO         /app/MULO
+COPY bin/Linux/Release/extensions   /app/extensions
+COPY bin/Linux/Release/assets       /app/assets
+
+# Ensure SFML in /usr/local/lib is found; also your plugins
+ENV LD_LIBRARY_PATH=/usr/local/lib:/app/extensions
+
+# drop privileges
+RUN useradd -u 65532 -r -s /usr/sbin/nologin appuser
+USER 65532:65532
+
+ENTRYPOINT ["/app/MULO"]
