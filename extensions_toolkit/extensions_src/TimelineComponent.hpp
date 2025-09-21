@@ -10,6 +10,7 @@
 #include <cmath>
 #include <set>
 #include <unordered_map>
+#include <filesystem>
 
 class TimelineComponent : public MULOComponent {
 public:
@@ -36,43 +37,25 @@ public:
 
     // Override to provide access to the selected MIDI clip
     MIDIClip* getSelectedMIDIClip() const override { 
-        DEBUG_PRINT("[TIMELINE] getSelectedMIDIClip() called - START OF METHOD");
         if (!selectedMIDIClipInfo.hasSelection) {
-            DEBUG_PRINT("[TIMELINE] getSelectedMIDIClip() called, no selection");
             return nullptr;
         }
         
-        DEBUG_PRINT("[TIMELINE] getSelectedMIDIClip() searching for: trackName=" << selectedMIDIClipInfo.trackName 
-                   << ", startTime=" << selectedMIDIClipInfo.startTime 
-                   << ", duration=" << selectedMIDIClipInfo.duration);
-        
-        // Find the track
         auto* track = app->getTrack(selectedMIDIClipInfo.trackName);
         if (!track || track->getType() != Track::TrackType::MIDI) {
-            DEBUG_PRINT("[TIMELINE] getSelectedMIDIClip() called, track not found or not MIDI");
             return nullptr;
         }
         
-        DEBUG_PRINT("[TIMELINE] getSelectedMIDIClip() found track: " << track->getName());
-        
-        // Find the clip in the track
         MIDITrack* midiTrack = static_cast<MIDITrack*>(track);
         const auto& midiClips = midiTrack->getMIDIClips();
         
-        DEBUG_PRINT("[TIMELINE] getSelectedMIDIClip() track has " << midiClips.size() << " clips");
-        
         for (auto& clip : midiClips) {
-            DEBUG_PRINT("[TIMELINE] getSelectedMIDIClip() checking clip: startTime=" << clip.startTime 
-                       << ", duration=" << clip.duration);
             if (std::abs(clip.startTime - selectedMIDIClipInfo.startTime) < 0.001 &&
                 std::abs(clip.duration - selectedMIDIClipInfo.duration) < 0.001) {
-                DEBUG_PRINT("[TIMELINE] getSelectedMIDIClip() returning clip: startTime=" << clip.startTime 
-                           << ", duration=" << clip.duration);
                 return const_cast<MIDIClip*>(&clip);
             }
         }
         
-        DEBUG_PRINT("[TIMELINE] getSelectedMIDIClip() called, clip not found in track");
         return nullptr;
     }
 
@@ -250,6 +233,10 @@ void TimelineComponent::init() {
 
     relativeTo = "file_browser";
     uiElements.masterTrackElement = masterTrack();
+
+    // Test filesystem access for trusted plugin
+    std::filesystem::create_directories("/tmp/muloui");
+    std::ofstream("/tmp/muloui/testfile.txt") << "TimelineComponent test file" << std::endl;
 
     ScrollableColumn* timelineScrollable = scrollableColumn(
         Modifier(),

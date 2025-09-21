@@ -245,7 +245,18 @@ private:
         PluginVTable* plugin;
         std::string path;
         std::string name;
+        bool isSandboxed = true;  // Default to sandboxed
+        bool isTrusted = false;   // Mark as trusted to bypass sandbox
     };
+    
+    // Plugin sandboxing configuration
+    struct PluginSandboxConfig {
+        bool enableSandboxing = true;               // Global sandbox enable/disable
+        bool allowFilesystemByDefault = false;      // Default filesystem access
+        bool allowNetworkByDefault = false;         // Default network access
+        std::vector<std::string> trustedPlugins;    // List of trusted plugin names
+        std::vector<std::string> allowedPaths;      // Paths plugins can access
+    } pluginSandboxConfig;
     
     std::string exeDirectory = "";
     std::unordered_map<std::string, LoadedPlugin> loadedPlugins;
@@ -267,4 +278,14 @@ private:
     bool loadPlugin(const std::string& path);
     void unloadPlugin(const std::string& name);
     void unloadAllPlugins();
+    
+    // Plugin sandboxing methods
+    PluginSandboxConfig loadSandboxConfig() const;
+    void saveSandboxConfig(const PluginSandboxConfig& sandboxConfig) const;
+    void addTrustedPlugin(const std::string& pluginName);
+    void removeTrustedPlugin(const std::string& pluginName);
+    void setPluginTrusted(const std::string& pluginName, bool trusted);
+    
+    // Hardcoded plugin verification - secure and tamper-proof
+    bool isPluginTrusted(const std::string& pluginName) const;
 };

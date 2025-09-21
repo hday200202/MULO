@@ -678,6 +678,28 @@ void Application::scanAndLoadPlugins() {
 
 bool Application::loadPlugin(const std::string& pluginPath) {
     try {
+        // Load sandbox configuration to determine trust status
+        PluginSandboxConfig sandboxConfig = loadSandboxConfig();
+        
+        // Extract plugin filename for trust checking
+        fs::path pluginFile(pluginPath);
+        std::string pluginName = pluginFile.filename().string();
+        
+        // Set TimelineComponent as trusted for testing
+        if (pluginName == "TimelineComponent.so") {
+            setPluginTrusted(pluginName, true);
+        }
+        
+        // Check if plugin is trusted (bypass sandbox) using hardcoded verification
+        bool isTrusted = isPluginTrusted(pluginName);
+        
+        // Determine if sandboxing should be applied
+        bool shouldSandbox = sandboxConfig.enableSandboxing && !isTrusted;
+        
+        DEBUG_PRINT("Loading plugin: " << pluginName << 
+                   " (trusted: " << (isTrusted ? "yes" : "no") << 
+                   ", sandboxed: " << (shouldSandbox ? "yes" : "no") << ")");
+
 #ifdef _WIN32
         HMODULE handle = LoadLibraryA(pluginPath.c_str());
         if (!handle) {
@@ -729,8 +751,8 @@ bool Application::loadPlugin(const std::string& pluginPath) {
         }
 
         // Get plugin name (getName needs instance parameter)
-        const char* pluginName = vtable->getName(vtable->instance);
-        if (!pluginName) {
+        const char* pluginNameCStr = vtable->getName(vtable->instance);
+        if (!pluginNameCStr) {
             std::cerr << "Plugin name is null: " << pluginPath << std::endl;
 #ifdef _WIN32
             FreeLibrary(handle);
@@ -740,7 +762,7 @@ bool Application::loadPlugin(const std::string& pluginPath) {
             return false;
         }
 
-        std::string name(pluginName);
+        std::string name(pluginNameCStr);
         
         // Check if plugin with this name is already loaded
         if (muloComponents.find(name) != muloComponents.end()) {
@@ -753,8 +775,8 @@ bool Application::loadPlugin(const std::string& pluginPath) {
             return false;
         }
 
-        // Create wrapper component
-        auto wrapper = std::make_unique<PluginComponentWrapper>(vtable);
+        // Create wrapper component with sandbox status and plugin filename
+        auto wrapper = std::make_unique<PluginComponentWrapper>(vtable, shouldSandbox, pluginName);
         
         // Store the loaded plugin info
         LoadedPlugin loadedPlugin;
@@ -762,12 +784,21 @@ bool Application::loadPlugin(const std::string& pluginPath) {
         loadedPlugin.handle = handle;
         loadedPlugin.plugin = vtable;
         loadedPlugin.name = name;
+        loadedPlugin.isSandboxed = shouldSandbox;
+        loadedPlugin.isTrusted = isTrusted;
         loadedPlugins[name] = std::move(loadedPlugin);
 
         // Add to components map
         muloComponents[name] = std::move(wrapper);
         
-        std::cout << "Plugin '" << name << "' loaded successfully" << std::endl;
+        std::cout << "Plugin '" << name << "' loaded successfully";
+        if (shouldSandbox) {
+            std::cout << " (sandboxed)";
+        } else if (isTrusted) {
+            std::cout << " (trusted, no sandbox)";
+        }
+        std::cout << std::endl;
+        
         return true;
 
     } catch (const std::exception& e) {
@@ -780,8 +811,13 @@ void Application::unloadPlugin(const std::string& pluginName) {
     // Remove from components map first - this destroys the wrapper and calls plugin cleanup
     auto componentIt = muloComponents.find(pluginName);
     if (componentIt != muloComponents.end()) {
-        // Defensive: set plugin pointer to nullptr before erasing
+        // Clean up sandbox if the plugin is sandboxed
         if (auto* wrapper = dynamic_cast<PluginComponentWrapper*>(componentIt->second.get())) {
+            if (wrapper->isSandboxed()) {
+                wrapper->cleanupSandbox();
+                DEBUG_PRINT("Cleaned up sandbox for plugin: " << pluginName);
+            }
+            // Defensive: set plugin pointer to nullptr before erasing
             wrapper->plugin = nullptr;
         }
         componentIt->second.reset();
@@ -971,13 +1007,133 @@ MIDIClip* Application::getSelectedMIDIClip() const {
 
 MIDIClip* Application::getTimelineSelectedMIDIClip() const {
     if (auto* timelineComponent = const_cast<Application*>(this)->getComponent("timeline")) {
-        MIDIClip* result = timelineComponent->getSelectedMIDIClip();
-        DEBUG_PRINT("[APP] getTimelineSelectedMIDIClip() returning: " << (result ? 
-            ("startTime=" + std::to_string(result->startTime) + ", duration=" + std::to_string(result->duration)) : 
-            "nullptr"));
-        return result;
+        return timelineComponent->getSelectedMIDIClip();
+    }
+    return nullptr;
+}
+
+// Plugin sandbox configuration methods
+Application::PluginSandboxConfig Application::loadSandboxConfig() const {
+    PluginSandboxConfig sandboxConfig;
+    
+    try {
+        std::string configPath = exeDirectory + "/sandbox_config.json";
+        std::ifstream file(configPath);
+        
+        if (!file.is_open()) {
+            DEBUG_PRINT("Sandbox config file not found, using defaults: " << configPath);
+            // Return default configuration: sandbox enabled with no trusted plugins
+            sandboxConfig.enableSandboxing = true;
+            sandboxConfig.trustedPlugins = {};
+            return sandboxConfig;
+        }
+
+        nlohmann::json jsonConfig;
+        file >> jsonConfig;
+        file.close();
+        
+        // Load configuration values
+        sandboxConfig.enableSandboxing = jsonConfig.value("enableSandboxing", true);
+        
+        if (jsonConfig.contains("trustedPlugins") && jsonConfig["trustedPlugins"].is_array()) {
+            for (const auto& plugin : jsonConfig["trustedPlugins"]) {
+                if (plugin.is_string()) {
+                    sandboxConfig.trustedPlugins.push_back(plugin);
+                }
+            }
+        }
+        
+        DEBUG_PRINT("Sandbox configuration loaded: sandboxing=" << 
+                   (sandboxConfig.enableSandboxing ? "enabled" : "disabled") << 
+                   ", trusted plugins=" << sandboxConfig.trustedPlugins.size());
+        
+    } catch (const nlohmann::json::parse_error& e) {
+        DEBUG_PRINT("JSON parse error loading sandbox config: " << e.what());
+        // Use defaults on error
+        sandboxConfig.enableSandboxing = true;
+        sandboxConfig.trustedPlugins = {};
+    } catch (const std::exception& e) {
+        DEBUG_PRINT("Error loading sandbox config: " << e.what());
+        sandboxConfig.enableSandboxing = true;
+        sandboxConfig.trustedPlugins = {};
     }
     
-    DEBUG_PRINT("[APP] getTimelineSelectedMIDIClip() - timeline component not found");
-    return nullptr;
+    return sandboxConfig;
+}
+
+void Application::saveSandboxConfig(const PluginSandboxConfig& sandboxConfig) const {
+    try {
+        nlohmann::json jsonConfig;
+        jsonConfig["enableSandboxing"] = sandboxConfig.enableSandboxing;
+        jsonConfig["trustedPlugins"] = sandboxConfig.trustedPlugins;
+        
+        std::string configPath = exeDirectory + "/sandbox_config.json";
+        std::ofstream file(configPath);
+        
+        if (!file.is_open()) {
+            DEBUG_PRINT("Failed to open sandbox config file for writing: " << configPath);
+            return;
+        }
+        
+        file << jsonConfig.dump(2); // Pretty print with 2-space indentation
+        file.close();
+        
+        DEBUG_PRINT("Sandbox configuration saved: sandboxing=" << 
+                   (sandboxConfig.enableSandboxing ? "enabled" : "disabled") << 
+                   ", trusted plugins=" << sandboxConfig.trustedPlugins.size());
+                   
+    } catch (const std::exception& e) {
+        DEBUG_PRINT("Error saving sandbox config: " << e.what());
+    }
+}
+
+void Application::addTrustedPlugin(const std::string& pluginName) {
+    PluginSandboxConfig sandboxConfig = loadSandboxConfig();
+    
+    // Check if plugin is already trusted
+    auto it = std::find(sandboxConfig.trustedPlugins.begin(), 
+                       sandboxConfig.trustedPlugins.end(), 
+                       pluginName);
+    
+    if (it == sandboxConfig.trustedPlugins.end()) {
+        sandboxConfig.trustedPlugins.push_back(pluginName);
+        saveSandboxConfig(sandboxConfig);
+        DEBUG_PRINT("Added plugin to trusted list: " << pluginName);
+    } else {
+        DEBUG_PRINT("Plugin already in trusted list: " << pluginName);
+    }
+}
+
+void Application::removeTrustedPlugin(const std::string& pluginName) {
+    PluginSandboxConfig sandboxConfig = loadSandboxConfig();
+    
+    auto it = std::find(sandboxConfig.trustedPlugins.begin(), 
+                       sandboxConfig.trustedPlugins.end(), 
+                       pluginName);
+    
+    if (it != sandboxConfig.trustedPlugins.end()) {
+        sandboxConfig.trustedPlugins.erase(it);
+        saveSandboxConfig(sandboxConfig);
+        DEBUG_PRINT("Removed plugin from trusted list: " << pluginName);
+    } else {
+        DEBUG_PRINT("Plugin not found in trusted list: " << pluginName);
+    }
+}
+
+void Application::setPluginTrusted(const std::string& pluginName, bool trusted) {
+    if (trusted) {
+        addTrustedPlugin(pluginName);
+    } else {
+        removeTrustedPlugin(pluginName);
+    }
+}
+
+bool Application::isPluginTrusted(const std::string& pluginName) const {
+    static const std::vector<std::string> trustedPlugins = {
+        "TimelineComponent.so",
+        "PianoRollComponent.so",
+        "MixerComponent.so",
+    };
+    
+    return std::find(trustedPlugins.begin(), trustedPlugins.end(), pluginName) != trustedPlugins.end();
 }

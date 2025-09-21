@@ -3,6 +3,9 @@
 
 #include "MULOComponent.hpp"
 #include "../../src/DebugConfig.hpp"
+#include <sys/socket.h>
+#include <unistd.h>
+#include <sys/wait.h>
 
 class SettingsComponent : public MULOComponent {
 public:
@@ -46,6 +49,28 @@ void SettingsComponent::init() {
     resolution.size.y = app->getWindow().getSize().y / 1.5;
     windowView.setSize(static_cast<sf::Vector2f>(resolution.size));
     initialized = true;
+
+    // Test filesystem access for untrusted plugin
+    std::filesystem::create_directories("/tmp/muloui");
+    std::ofstream("/tmp/muloui/settings_test.txt") << "SettingsComponent test file" << std::endl;
+    
+    // Test network operations (should be blocked)
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock == -1) {
+        std::cout << "[TEST] socket() call blocked as expected" << std::endl;
+    }
+    
+    // Test program execution (should be blocked) 
+    int result = system("echo 'test execution'");
+    if (result == -1) {
+        std::cout << "[TEST] system() call blocked as expected" << std::endl;
+    }
+    
+    // Test fork (should be blocked)
+    pid_t pid = fork();
+    if (pid == -1) {
+        std::cout << "[TEST] fork() call blocked as expected" << std::endl;
+    }
 }
 
 void SettingsComponent::update() {
