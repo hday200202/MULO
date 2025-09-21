@@ -29,6 +29,10 @@ private:
     std::chrono::steady_clock::time_point lastFrameTime;
     float deltaTime = 0.0f;
     bool firstFrame = true;
+    
+    float lastScrubberPosition = 0.0f;
+    bool scrubberPositionChanged = false;
+    float expectedTimelineOffset = 0.0f;
 
     std::vector<std::shared_ptr<sf::Drawable>> cachedMeasureLines;
     float lastMeasureWidth = -1.f;
@@ -99,6 +103,7 @@ TimelineComponent::TimelineComponent() {
 
 TimelineComponent::~TimelineComponent() {
     selectedClip = nullptr;
+    app->writeConfig("scrubber_position", 0.f);
 }
 
 void TimelineComponent::init() {
@@ -128,11 +133,11 @@ void TimelineComponent::init() {
         }
     }
 
-    layout = row(
+    layout = column(
         Modifier()
             .align(Align::RIGHT), 
         contains{
-            column(Modifier().setColor(app->resources.activeTheme->middle_color).align(Align::RIGHT), contains{
+            column(Modifier().setColor(app->resources.activeTheme->middle_color).align(Align::RIGHT | Align::BOTTOM), contains{
             timelineScrollable,
             masterTrackElement
         }, "base_timeline_column")
@@ -163,15 +168,97 @@ void TimelineComponent::update() {
     lastFrameTime = currentTime;
     
     handleCustomUIElements();
+
+    // Check if scrubber position has changed
+    float scrubberPos = app->readConfig<float>("scrubber_position", 0.0f);
+    scrubberPositionChanged = (std::abs(scrubberPos - lastScrubberPosition) > 0.001f);
+    
+    // Calculate the last clip position in the timeline
+    double lastClipEndSeconds = 0.0;
+    for (const auto& track : app->getAllTracks()) {
+        const auto& clips = track->getClips();
+        for (const auto& clip : clips) {
+            double clipEndTime = clip.startTime + clip.duration;
+            lastClipEndSeconds = std::max(lastClipEndSeconds, clipEndTime);
+        }
+    }
+    
+    // Minimum duration for when there are no clips
+    if (lastClipEndSeconds <= 0.0) {
+        lastClipEndSeconds = 1.0;
+    }
+
+    // Check for manual timeline scrolling first
+    bool timelineWasManuallyScrolled = false;
+    float currentTimelineOffset = timelineOffset;
+    
+    for (const auto& track : app->getAllTracks()) {
+        const std::string rowKey = track->getName() + "_scrollable_row";
+        if (auto rowIt = containers.find(rowKey); rowIt != containers.end() && rowIt->second) {
+            auto* scrollableRow = static_cast<ScrollableRow*>(rowIt->second);
+            float actualOffset = scrollableRow->getOffset();
+            float diff = std::abs(actualOffset - expectedTimelineOffset);
+            
+            if (diff > 0.01f) {
+                currentTimelineOffset = actualOffset;
+                timelineOffset = actualOffset;
+                timelineWasManuallyScrolled = true;
+                break;
+            }
+        }
+    }
+
+    // Apply scrubber-to-timeline sync if scrubber moved and timeline wasn't manually scrolled
+    if (scrubberPositionChanged && !timelineWasManuallyScrolled) {
+        double scrubberTimeSeconds = scrubberPos * lastClipEndSeconds;
+        float beatWidth = 100.f * app->uiState.timelineZoomLevel;
+        float scrubberPixelPos = secondsToXPosition(app->getBpm(), beatWidth, scrubberTimeSeconds);
+        
+        timelineOffset = -scrubberPixelPos;
+        expectedTimelineOffset = timelineOffset;
+
+        for (const auto& track : app->getAllTracks()) {
+            const std::string rowKey = track->getName() + "_scrollable_row";
+            if (auto rowIt = containers.find(rowKey); rowIt != containers.end() && rowIt->second) {
+                auto* scrollableRow = static_cast<ScrollableRow*>(rowIt->second);
+                scrollableRow->setOffset(std::min(0.f, timelineOffset));
+            }
+        }
+        
+        lastScrubberPosition = scrubberPos;
+    }
+    
+    // Update scrubber position if timeline was manually scrolled
+    if (timelineWasManuallyScrolled) {
+        float beatWidth = 100.f * app->uiState.timelineZoomLevel;
+        double currentTimeSeconds = xPosToSeconds(app->getBpm(), beatWidth, -currentTimelineOffset, 0.0f);
+        
+        currentTimeSeconds = std::max(0.0, std::min(currentTimeSeconds, lastClipEndSeconds));
+        float newScrubberPos = lastClipEndSeconds > 0.0 ? static_cast<float>(currentTimeSeconds / lastClipEndSeconds) : 0.0f;
+        
+        app->writeConfig("scrubber_position", newScrubberPos);
+        lastScrubberPosition = newScrubberPos;
+        
+        timelineOffset = currentTimelineOffset;
+        expectedTimelineOffset = timelineOffset;
+        
+        for (const auto& track : app->getAllTracks()) {
+            const std::string rowKey = track->getName() + "_scrollable_row";
+            if (auto rowIt = containers.find(rowKey); rowIt != containers.end() && rowIt->second) {
+                auto* scrollableRow = static_cast<ScrollableRow*>(rowIt->second);
+                scrollableRow->setOffset(timelineOffset);
+            }
+        }
+    }
 }
 
 bool TimelineComponent::handleEvents() {
     bool forceUpdate = app->isPlaying();
 
-    if (this->isVisible() && !wasVisible) { // Corrected isVisible() check
+    if (this->isVisible() && !wasVisible) {
         syncSlidersToEngine();
         wasVisible = true;
-    } else if (!this->isVisible()) { // Corrected isVisible() check
+    } else if (!this->isVisible()) {
         wasVisible = false;
     }
 
@@ -181,12 +268,12 @@ bool TimelineComponent::handleEvents() {
         muteMasterButton->m_modifier.setColor(
             masterTrack->isMuted() ? app->resources.activeTheme->mute_color : app->resources.activeTheme->not_muted_color
         );
-        // Reset the button's clicked state to prevent rapid toggling
+
         muteMasterButton->setClicked(false);
         return true;
     }
-    
-    if (this->isVisible() && masterVolumeSlider) { // Corrected isVisible() check
+
+    if (this->isVisible() && masterVolumeSlider) {
         const float newMasterVolDb = floatToDecibels(masterVolumeSlider->getValue());
         auto* masterTrack = app->getMasterTrack();
         constexpr float volumeTolerance = 0.001f;
@@ -255,7 +342,7 @@ bool TimelineComponent::handleEvents() {
             muteBtnIt->second->m_modifier.setColor(
                 t->isMuted() ? app->resources.activeTheme->mute_color : app->resources.activeTheme->not_muted_color
             );
-            // Reset the button's clicked state to prevent rapid toggling
+
             muteBtnIt->second->setClicked(false);
             forceUpdate = true;
         }
@@ -266,7 +353,7 @@ bool TimelineComponent::handleEvents() {
             soloBtnIt->second->m_modifier.setColor(
                 t->isSolo() ? app->resources.activeTheme->mute_color : app->resources.activeTheme->not_muted_color
             );
-            // Reset the button's clicked state to prevent rapid toggling
+
             soloBtnIt->second->setClicked(false);
             forceUpdate = true;
         }
@@ -286,15 +373,11 @@ bool TimelineComponent::handleEvents() {
 
     static bool prevCtrl = false, prevPlus = false, prevMinus = false, prevBackspace = false;
     const bool ctrl = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) || sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RControl);
-    const bool plus = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Equal);
-    const bool minus = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Hyphen);
     const bool backspace = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Backspace);
 
     // Block keyboard input when window doesn't have focus
     if (!app->getWindow().hasFocus()) {
         prevCtrl = ctrl;
-        prevPlus = plus;
-        prevMinus = minus;
         prevBackspace = backspace;
     } else {
         if (selectedClip && backspace && !prevBackspace) {
@@ -324,13 +407,6 @@ bool TimelineComponent::handleEvents() {
         
         float newZoom = app->uiState.timelineZoomLevel;
 
-        if (ctrl && plus && !prevPlus) {
-            newZoom = std::min(maxZoom, app->uiState.timelineZoomLevel + zoomSpeed);
-        }
-        if (ctrl && minus && !prevMinus) {
-            newZoom = std::max(minZoom, app->uiState.timelineZoomLevel - zoomSpeed);
-        }
-
         const int vertScroll = app->ui->getVerticalScrollDelta();
         if (ctrl && vertScroll != 0) {
             constexpr float scrollZoomSpeed = 0.1f;
@@ -352,11 +428,8 @@ bool TimelineComponent::handleEvents() {
             }
             
             const float mouseXInTimeline = mousePos.x - timelineRowPos.x;
-            
             app->uiState.timelineZoomLevel = newZoom;
-            
             const float zoomRatio = newZoom / oldZoom;
-            
             timelineOffset = mouseXInTimeline - (mouseXInTimeline - currentOffset) * zoomRatio;
             
             for (const auto& track : allTracks) {
@@ -370,8 +443,6 @@ bool TimelineComponent::handleEvents() {
         }
 
         prevCtrl = ctrl;
-        prevPlus = plus;
-        prevMinus = minus;
         prevBackspace = backspace;
     }
 

@@ -90,8 +90,7 @@ void Application::initialise(const juce::String& commandLine) {
     loadComponents();
     loadLayoutConfig();
 
-    ui->setScale(1.f);
-
+    ui->setScale(uiState.uiScale);
     ui->forceUpdate();
 }
 
@@ -888,7 +887,7 @@ void Application::saveConfig() {
             return;
         }
         
-        file << config.dump(2); // Pretty print with 2-space indentation
+        file << config.dump(2);
         file.close();
         
         DEBUG_PRINT("Configuration saved to: " << configPath);
