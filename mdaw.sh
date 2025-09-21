@@ -71,8 +71,18 @@ run_debug() {
     echo "Running MULO in debug mode..."
     if [[ -f "bin/Linux/Debug/MULO" ]]; then
         cd bin/Linux/Debug
-        # Set MIDI environment to prevent JUCE assertion failures
+        # Set environment to prevent JUCE and memory issues
         export JUCE_DISABLE_AUDIO_DEVICE_SCANNING=1
+        export MALLOC_CHECK_=2  # Enable malloc debugging
+        export MALLOC_PERTURB_=42  # Fill freed memory with predictable pattern
+        # Run with memory limit to prevent system lockup
+        ulimit -v 2097152  # 2GB virtual memory limit
+        echo "🔧 Debug environment configured:"
+        echo "   MALLOC_CHECK_=2 (malloc debugging enabled)"
+        echo "   MALLOC_PERTURB_=42 (memory pattern fill)"
+        echo "   Virtual memory limit: 2GB"
+        echo "   JUCE audio device scanning disabled"
+        echo ""
         ./MULO
     else
         echo "❌ Debug MULO not built. Run: $0 build-debug"
@@ -107,6 +117,35 @@ case "$1" in
     "run-debug")
         run_debug
         ;;
+    "run-gdb")
+        echo "Running MULO in GDB (debug mode)..."
+        if [[ -f "bin/Linux/Debug/MULO" ]]; then
+            cd bin/Linux/Debug
+            export JUCE_DISABLE_AUDIO_DEVICE_SCANNING=1
+            echo "Starting GDB with MULO..."
+            echo "Useful GDB commands:"
+            echo "  (gdb) run           # Start the program"
+            echo "  (gdb) bt            # Show backtrace on crash"
+            echo "  (gdb) info registers # Show register state"
+            echo "  (gdb) quit          # Exit GDB"
+            gdb ./MULO
+        else
+            echo "❌ Debug MULO not built. Run: $0 build-debug"
+            exit 1
+        fi
+        ;;
+    "run-valgrind")
+        echo "Running MULO with Valgrind (memory debugging)..."
+        if [[ -f "bin/Linux/Debug/MULO" ]]; then
+            cd bin/Linux/Debug
+            export JUCE_DISABLE_AUDIO_DEVICE_SCANNING=1
+            echo "Starting Valgrind analysis..."
+            valgrind --tool=memcheck --leak-check=full --show-leak-kinds=all --track-origins=yes ./MULO
+        else
+            echo "❌ Debug MULO not built. Run: $0 build-debug"
+            exit 1
+        fi
+        ;;
     "container")
         run_container
         ;;
@@ -127,6 +166,8 @@ case "$1" in
         echo "  build-debug - Build MULO in debug mode"
         echo "  run         - Run MULO natively (release)"
         echo "  run-debug   - Run MULO in debug mode"
+        echo "  run-gdb     - Run MULO in GDB debugger"
+        echo "  run-valgrind- Run MULO with Valgrind memory analysis"
         echo "  container   - Run MULO in sandbox container"
         echo "  debug       - Open interactive container shell"
         echo "  clean       - Clean build artifacts"
@@ -136,6 +177,8 @@ case "$1" in
         echo "  $0 build       # Build release and container"
         echo "  $0 build-debug # Build debug version"
         echo "  $0 run-debug   # Run debug version"
+        echo "  $0 run-gdb     # Debug with GDB"
+        echo "  $0 run-valgrind # Memory analysis"
         echo "  $0 run        # Run for development"
         echo "  $0 container  # Test in sandbox"
         ;;
