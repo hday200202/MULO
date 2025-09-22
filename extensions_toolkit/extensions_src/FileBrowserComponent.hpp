@@ -6,6 +6,7 @@
 #include "../../src/DebugConfig.hpp"
 #include <nlohmann/json.hpp>
 #include <fstream>
+#include <unordered_map>
 
 class FileBrowserComponent : public MULOComponent {
 public:
@@ -29,6 +30,26 @@ private:
     bool fileTreeNeedsRebuild = false;
     bool vstTreeNeedsRebuild = false;
     
+    bool doubleClick = false;
+    sf::Clock doubleClickTimer;
+    std::string lastClickedPath;
+    std::string selectedItem;
+    bool validSelection = false; // Flag to track if selection came from a valid file click
+    
+    // Store references to row elements for direct color manipulation
+    std::unordered_map<std::string, Row*> rowElementsByPath;
+    
+    bool draggingItem = false;
+    std::string draggingItemPath;
+    sf::Vector2f dragStartPosition;
+    sf::Vector2f currentMousePosition;
+    sf::Image* dragIcon = nullptr;
+    
+    // Visual drag feedback using custom geometry
+    sf::Texture dragIconTexture;
+    std::unique_ptr<sf::Sprite> dragIconSprite;
+    bool isDragIconVisible = false;
+
     // Main UI builder function
     void buildFileTreeUI();
 
@@ -39,6 +60,18 @@ private:
     // Functions to handle tree node interactions
     void toggleTreeNodeByPath(const std::string& path);
     void toggleVSTTreeNodeByPath(const std::string& path);
+
+    // Double-click handler for adding items to timeline
+    bool handleDoubleClick(const std::string& path, std::function<void()> action);
+    
+    // Direct color manipulation for selection highlighting
+    void updateSelectionColors();
+    
+    // Drag and drop functionality
+    void startDrag(const std::string& path, const sf::Vector2f& mousePos);
+    void updateDrag(const sf::Vector2f& mousePos);
+    bool handleDrop(const sf::Vector2f& mousePos, std::function<void()> action);
+    void cancelDrag();
 
     // In-memory functions to handle favorites
     void addFavorite(const std::string& path);
@@ -89,6 +122,7 @@ void FileBrowserComponent::init() {
     }
     
     buildFileTreeUI();
+    
     if (parentContainer) {
         parentContainer->addElement(layout);
         initialized = true;
@@ -96,7 +130,45 @@ void FileBrowserComponent::init() {
 }
 
 void FileBrowserComponent::update() {
-    // Not needed
+    // Handle drag and drop logic
+    if (app->ui->isMouseDragging()) {
+        if (!draggingItem && !selectedItem.empty() && validSelection) {
+            // Start dragging the selected item only if it's a valid selection
+            sf::Vector2f mousePos = app->ui->getMousePosition();
+            startDrag(selectedItem, mousePos);
+        } else if (draggingItem && !selectedItem.empty()) {
+            // Update drag position only if we have a valid selected item
+            sf::Vector2f mousePos = app->ui->getMousePosition();
+            updateDrag(mousePos);
+        }
+    } else {
+        // Mouse not dragging - clear any drag state
+        if (draggingItem) {
+            // Check for drop if we were dragging
+            sf::Vector2f mousePos = app->ui->getMousePosition();
+            
+            // Determine action based on file type
+            std::string ext = std::filesystem::path(draggingItemPath).extension().string();
+            std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+            
+            if (ext == ".vst" || ext == ".vst3") {
+                // VST plugin
+                handleDrop(mousePos, [this](){
+                    app->addEffect(draggingItemPath);
+                });
+            } else {
+                // Audio file
+                handleDrop(mousePos, [this](){
+                    juce::File sampleFile(draggingItemPath);
+                    std::string trackName = sampleFile.getFileNameWithoutExtension().toStdString();
+                    app->addTrack(trackName, draggingItemPath);
+                });
+            }
+            
+            // Always cancel drag after handling drop
+            cancelDrag();
+        }
+    }
 }
 
 bool FileBrowserComponent::handleEvents() {
@@ -164,9 +236,7 @@ void FileBrowserComponent::removeFavorite(const std::string& path) {
 void FileBrowserComponent::saveFavorites() {
     try {
         app->writeConfig("favoriteItems", favoriteItems);
-    } catch (const std::exception& e) {
-        // Silently handle save errors
-    }
+    } catch (const std::exception& e) {}
 }
 
 void FileBrowserComponent::loadFavorites() {
@@ -180,7 +250,6 @@ void FileBrowserComponent::loadFavorites() {
             }
         }
     } catch (const std::exception& e) {
-        // Silently handle load errors, start with empty favorites
         favoriteItems.clear();
     }
 }
@@ -192,6 +261,9 @@ void FileBrowserComponent::buildFileTreeUI() {
     if (!scrollColumn) return;
 
     scrollColumn->clear();
+    
+    // Clear stored row references when rebuilding UI
+    rowElementsByPath.clear();
 
     // Favorites Section
     scrollColumn->addElements({
@@ -273,13 +345,17 @@ void FileBrowserComponent::buildFileTreeUI() {
                         .align(Align::CENTER_Y)
                         .setColor(app->resources.activeTheme->primary_text_color)
                         .onLClick([this, favPath](){
-                            app->addEffect(favPath);
+                            handleDoubleClick(favPath, [this, favPath](){
+                                app->addEffect(favPath);
+                            });
                         }),
                     app->resources.pluginFileIcon,
                     true
                 );
                 textModifier.onLClick([this, favPath](){
-                    app->addEffect(favPath);
+                    handleDoubleClick(favPath, [this, favPath](){
+                        app->addEffect(favPath);
+                    });
                 });
             } else {
                 displayName = favName;
@@ -290,17 +366,21 @@ void FileBrowserComponent::buildFileTreeUI() {
                         .align(Align::CENTER_Y)
                         .setColor(app->resources.activeTheme->primary_text_color)
                         .onLClick([this, favPath](){
-                            juce::File sampleFile(favPath);
-                            std::string trackName = sampleFile.getFileNameWithoutExtension().toStdString();
-                            app->addTrack(trackName, favPath);
+                            handleDoubleClick(favPath, [this, favPath](){
+                                juce::File sampleFile(favPath);
+                                std::string trackName = sampleFile.getFileNameWithoutExtension().toStdString();
+                                app->addTrack(trackName, favPath);
+                            });
                         }),
                     app->resources.audioFileIcon,
                     true
                 );
                 textModifier.onLClick([this, favPath](){
-                    juce::File sampleFile(favPath);
-                    std::string trackName = sampleFile.getFileNameWithoutExtension().toStdString();
-                    app->addTrack(trackName, favPath);
+                    handleDoubleClick(favPath, [this, favPath](){
+                        juce::File sampleFile(favPath);
+                        std::string trackName = sampleFile.getFileNameWithoutExtension().toStdString();
+                        app->addTrack(trackName, favPath);
+                    });
                 });
             }
             
@@ -310,13 +390,19 @@ void FileBrowserComponent::buildFileTreeUI() {
             
             auto textElement = text(textModifier, displayName, app->resources.dejavuSansFont);
             
+            // Create row element and store reference for direct color manipulation
+            auto rowElement = row(Modifier().setfixedHeight(28), contains{
+                spacer(Modifier().setfixedWidth(40.f)),
+                iconElement,
+                spacer(Modifier().setfixedWidth(8.f)),
+                textElement,
+            });
+            
+            // Store row reference for later color updates
+            rowElementsByPath[favPath] = rowElement;
+            
             scrollColumn->addElements({
-                row(Modifier().setfixedHeight(28), contains{
-                    spacer(Modifier().setfixedWidth(40.f)),
-                    iconElement,
-                    spacer(Modifier().setfixedWidth(8.f)),
-                    textElement,
-                }),
+                rowElement,
                 spacer(Modifier().setfixedHeight(12))
             });
         }
@@ -523,17 +609,21 @@ void FileBrowserComponent::buildFileTreeUIRecursive(const FileTree& tree, int in
                 .align(Align::CENTER_Y)
                 .setColor(app->resources.activeTheme->primary_text_color)
                 .onLClick([this, filePath](){
-                    juce::File sampleFile(filePath);
-                    std::string trackName = sampleFile.getFileNameWithoutExtension().toStdString();
-                    app->addTrack(trackName, filePath);
+                    handleDoubleClick(filePath, [this, filePath](){
+                        juce::File sampleFile(filePath);
+                        std::string trackName = sampleFile.getFileNameWithoutExtension().toStdString();
+                        app->addTrack(trackName, filePath);
+                    });
                 }),
             app->resources.audioFileIcon,
             true
         );
         textModifier.onLClick([this, filePath](){
-            juce::File sampleFile(filePath);
-            std::string trackName = sampleFile.getFileNameWithoutExtension().toStdString();
-            app->addTrack(trackName, filePath);
+            handleDoubleClick(filePath, [this, filePath](){
+                juce::File sampleFile(filePath);
+                std::string trackName = sampleFile.getFileNameWithoutExtension().toStdString();
+                app->addTrack(trackName, filePath);
+            });
         });
         
         if (isFavorite) {
@@ -556,13 +646,17 @@ void FileBrowserComponent::buildFileTreeUIRecursive(const FileTree& tree, int in
 
     auto textElement = text(textModifier, displayName, app->resources.dejavuSansFont);
 
+    auto rowElement = row(Modifier().setfixedHeight(28), contains{
+        spacer(Modifier().setfixedWidth(indent)),
+        iconElement,
+        spacer(Modifier().setfixedWidth(8.f)),
+        textElement,
+    });
+    
+    rowElementsByPath[filePath] = rowElement;
+
     scrollColumn->addElements({
-        row(Modifier().setfixedHeight(28), contains{
-            spacer(Modifier().setfixedWidth(indent)),
-            iconElement,
-            spacer(Modifier().setfixedWidth(8.f)),
-            textElement,
-        }),
+        rowElement,
         spacer(Modifier().setfixedHeight(12))
     });
 
@@ -619,13 +713,17 @@ void FileBrowserComponent::buildVSTTreeUIRecursive(const FileTree& tree, int ind
                 .align(Align::CENTER_Y)
                 .setColor(app->resources.activeTheme->primary_text_color)
                 .onLClick([this, filePath](){
-                    app->addEffect(filePath);
+                    handleDoubleClick(filePath, [this, filePath](){
+                        app->addEffect(filePath);
+                    });
                 }),
             app->resources.pluginFileIcon,
             true
         );
         textModifier.onLClick([this, filePath](){
-            app->addEffect(filePath);
+            handleDoubleClick(filePath, [this, filePath](){
+                app->addEffect(filePath);
+            });
         });
 
         if (isFavorite) {
@@ -648,13 +746,17 @@ void FileBrowserComponent::buildVSTTreeUIRecursive(const FileTree& tree, int ind
 
     auto textElement = text(textModifier, displayName, app->resources.dejavuSansFont);
 
+    auto rowElement = row(Modifier().setfixedHeight(28), contains{
+        spacer(Modifier().setfixedWidth(indent)),
+        iconElement,
+        spacer(Modifier().setfixedWidth(8.f)),
+        textElement,
+    });
+    
+    rowElementsByPath[filePath] = rowElement;
+
     scrollColumn->addElements({
-        row(Modifier().setfixedHeight(28), contains{
-            spacer(Modifier().setfixedWidth(indent)),
-            iconElement,
-            spacer(Modifier().setfixedWidth(8.f)),
-            textElement,
-        }),
+        rowElement,
         spacer(Modifier().setfixedHeight(12))
     });
 
@@ -696,6 +798,163 @@ void FileBrowserComponent::toggleVSTTreeNodeByPath(const std::string& path) {
         return false;
     };
     findAndToggle(vstTree);
+}
+
+bool FileBrowserComponent::handleDoubleClick(const std::string& path, std::function<void()> action) {
+    const sf::Time doubleClickTimeoutMs = sf::milliseconds(250);
+    
+    if (!doubleClick) {
+        // First click
+        doubleClick = true;
+        lastClickedPath = path;
+        selectedItem = path;
+        validSelection = true;
+        doubleClickTimer.restart();
+        
+        updateSelectionColors();
+        
+        return false;
+    } else {
+        // Second click
+        if (lastClickedPath == path && doubleClickTimer.getElapsedTime() < doubleClickTimeoutMs) {
+            doubleClick = false;
+            lastClickedPath.clear();
+            selectedItem.clear();
+            validSelection = false;
+            
+            updateSelectionColors();
+            
+            action();
+            return true;
+        } else {
+            doubleClick = true;
+            lastClickedPath = path;
+            selectedItem = path;
+            validSelection = true;
+            doubleClickTimer.restart();
+            
+            updateSelectionColors();
+            
+            return false;
+        }
+    }
+}
+
+void FileBrowserComponent::updateSelectionColors() {
+    for (auto& [path, rowElement] : rowElementsByPath) {
+        if (rowElement) {
+            if (path == selectedItem) {
+                rowElement->m_modifier.setColor(app->resources.activeTheme->foreground_color);
+            } else {
+                rowElement->m_modifier.setColor(sf::Color::Transparent);
+            }
+        }
+    }
+}
+
+void FileBrowserComponent::startDrag(const std::string& path, const sf::Vector2f& mousePos) {
+    draggingItem = true;
+    draggingItemPath = path;
+    dragStartPosition = mousePos;
+    currentMousePosition = mousePos;
+    
+    // Determine the appropriate icon for the dragging item
+    std::string ext = std::filesystem::path(path).extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+    
+    sf::Image* iconImage;
+    if (ext == ".vst" || ext == ".vst3") {
+        dragIcon = &app->resources.pluginFileIcon;
+        iconImage = &app->resources.pluginFileIcon;
+    } else {
+        dragIcon = &app->resources.audioFileIcon;
+        iconImage = &app->resources.audioFileIcon;
+    }
+    
+    sf::Image recoloredImage = *iconImage;
+    
+    // Recolor the image to primary text color
+    sf::Color targetColor = app->resources.activeTheme->primary_text_color;
+    for (unsigned int x = 0; x < recoloredImage.getSize().x; x++) {
+        for (unsigned int y = 0; y < recoloredImage.getSize().y; y++) {
+            sf::Color pixel = recoloredImage.getPixel({x, y});
+            if (pixel.a > 0) {
+                recoloredImage.setPixel({x, y}, sf::Color(targetColor.r, targetColor.g, targetColor.b, pixel.a));
+            }
+        }
+    }
+    
+    if (dragIconTexture.loadFromImage(recoloredImage)) {
+        dragIconSprite = std::make_unique<sf::Sprite>(dragIconTexture);
+        dragIconSprite->setScale(sf::Vector2f(0.125f/2.f, 0.125f/2.f));
+        
+        float scaledWidth = dragIconTexture.getSize().x * 0.125f/2.f;
+        float scaledHeight = dragIconTexture.getSize().y * 0.125f/2.f;
+
+        dragIconSprite->setPosition(sf::Vector2f(mousePos.x + 360 - 32, mousePos.y));
+        isDragIconVisible = true;
+        
+        std::vector<std::shared_ptr<sf::Drawable>> dragGeometry;
+        dragGeometry.push_back(std::shared_ptr<sf::Drawable>(dragIconSprite.get(), [](sf::Drawable*){}));
+        if (app && app->baseContainer) {
+            app->baseContainer->setCustomGeometry(dragGeometry);
+        }
+    }
+}
+
+void FileBrowserComponent::updateDrag(const sf::Vector2f& mousePos) {
+    if (draggingItem && isDragIconVisible && dragIconSprite) {
+        currentMousePosition = mousePos;
+        
+        float scaledWidth = dragIconTexture.getSize().x * 0.125f/2.f;
+        float scaledHeight = dragIconTexture.getSize().y * 0.125f/2.f;
+        
+        dragIconSprite->setPosition(sf::Vector2f(mousePos.x + 360 - 32, mousePos.y));
+        
+        std::vector<std::shared_ptr<sf::Drawable>> dragGeometry;
+        dragGeometry.push_back(std::shared_ptr<sf::Drawable>(dragIconSprite.get(), [](sf::Drawable*){}));
+        if (app && app->baseContainer) {
+            app->baseContainer->setCustomGeometry(dragGeometry);
+        }
+    }
+}
+
+bool FileBrowserComponent::handleDrop(const sf::Vector2f& mousePos, std::function<void()> action) {
+    if (!draggingItem) {
+        return false;
+    }
+    
+    auto timelineLayout = app->getComponentLayout("timeline");
+    if (timelineLayout) {
+        sf::FloatRect timelineBounds = timelineLayout->m_bounds.getGlobalBounds();
+        if (timelineBounds.contains(mousePos)) {
+            action();
+            cancelDrag();
+            return true;
+        }
+    }
+    
+    cancelDrag();
+    return false;
+}
+
+void FileBrowserComponent::cancelDrag() {
+    draggingItem = false;
+    draggingItemPath.clear();
+    dragIcon = nullptr;
+    isDragIconVisible = false;
+    
+    selectedItem.clear();
+    validSelection = false;
+    
+    updateSelectionColors();
+    
+    std::vector<std::shared_ptr<sf::Drawable>> emptyGeometry;
+    if (app && app->baseContainer) {
+        app->baseContainer->setCustomGeometry(emptyGeometry);
+    }
+    
+    dragIconSprite.reset();
 }
 
 // Plugin interface for FileBrowserComponent
