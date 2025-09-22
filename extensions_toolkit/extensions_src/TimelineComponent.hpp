@@ -72,6 +72,10 @@ public:
     } features;
 
 private:
+    float lastScrubberPosition = 0.0f;
+    bool scrubberPositionChanged = false;
+    float expectedTimelineOffset = 0.0f;
+
     struct TimelineState {
         float timelineOffset = 0.f;
         bool wasVisible = true;
@@ -237,6 +241,7 @@ TimelineComponent::~TimelineComponent() {
     if (instance == this) {
         instance = nullptr;
     }
+    app->writeConfig("scrubber_position", 0.f);
 }
 
 void TimelineComponent::init() {
@@ -269,11 +274,11 @@ void TimelineComponent::init() {
         }
     }
 
-    layout = row(
+    layout = column(
         Modifier()
             .align(Align::RIGHT), 
         contains{
-            column(Modifier().setColor(app->resources.activeTheme->middle_color).align(Align::RIGHT), contains{
+            column(Modifier().setColor(app->resources.activeTheme->middle_color).align(Align::RIGHT | Align::BOTTOM), contains{
             timelineScrollable,
             uiElements.masterTrackElement
         }, "base_timeline_column")
@@ -297,6 +302,88 @@ void TimelineComponent::update() {
     updateTimelineVisuals();
     
     handleCustomUIElements();
+
+    // Check if scrubber position has changed
+    float scrubberPos = app->readConfig<float>("scrubber_position", 0.0f);
+    scrubberPositionChanged = (std::abs(scrubberPos - lastScrubberPosition) > 0.001f);
+    
+    // Calculate the last clip position in the timeline
+    double lastClipEndSeconds = 0.0;
+    for (const auto& track : app->getAllTracks()) {
+        const auto& clips = track->getClips();
+        for (const auto& clip : clips) {
+            double clipEndTime = clip.startTime + clip.duration;
+            lastClipEndSeconds = std::max(lastClipEndSeconds, clipEndTime);
+        }
+    }
+    
+    // Minimum duration for when there are no clips
+    if (lastClipEndSeconds <= 0.0) {
+        lastClipEndSeconds = 1.0;
+    }
+
+    // Check for manual timeline scrolling first
+    bool timelineWasManuallyScrolled = false;
+    float currentTimelineOffset = timelineState.timelineOffset;
+    
+    for (const auto& track : app->getAllTracks()) {
+        const std::string rowKey = track->getName() + "_scrollable_row";
+        if (auto rowIt = containers.find(rowKey); rowIt != containers.end() && rowIt->second) {
+            auto* scrollableRow = static_cast<ScrollableRow*>(rowIt->second);
+            float actualOffset = scrollableRow->getOffset();
+            float diff = std::abs(actualOffset - expectedTimelineOffset);
+            
+            if (diff > 0.01f) {
+                currentTimelineOffset = actualOffset;
+                timelineState.timelineOffset = actualOffset;
+                timelineWasManuallyScrolled = true;
+                break;
+            }
+        }
+    }
+
+    // Apply scrubber-to-timeline sync if scrubber moved and timeline wasn't manually scrolled
+    if (scrubberPositionChanged && !timelineWasManuallyScrolled) {
+        double scrubberTimeSeconds = scrubberPos * lastClipEndSeconds;
+        float beatWidth = 100.f * app->uiState.timelineZoomLevel;
+        float scrubberPixelPos = secondsToXPosition(app->getBpm(), beatWidth, scrubberTimeSeconds);
+        
+        timelineState.timelineOffset = -scrubberPixelPos;
+        expectedTimelineOffset = timelineState.timelineOffset;
+
+        for (const auto& track : app->getAllTracks()) {
+            const std::string rowKey = track->getName() + "_scrollable_row";
+            if (auto rowIt = containers.find(rowKey); rowIt != containers.end() && rowIt->second) {
+                auto* scrollableRow = static_cast<ScrollableRow*>(rowIt->second);
+                scrollableRow->setOffset(std::min(0.f, timelineState.timelineOffset));
+            }
+        }
+        
+        lastScrubberPosition = scrubberPos;
+    }
+    
+    // Update scrubber position if timeline was manually scrolled
+    if (timelineWasManuallyScrolled) {
+        float beatWidth = 100.f * app->uiState.timelineZoomLevel;
+        double currentTimeSeconds = xPosToSeconds(app->getBpm(), beatWidth, -currentTimelineOffset, 0.0f);
+        
+        currentTimeSeconds = std::max(0.0, std::min(currentTimeSeconds, lastClipEndSeconds));
+        float newScrubberPos = lastClipEndSeconds > 0.0 ? static_cast<float>(currentTimeSeconds / lastClipEndSeconds) : 0.0f;
+        
+        app->writeConfig("scrubber_position", newScrubberPos);
+        lastScrubberPosition = newScrubberPos;
+        
+        timelineState.timelineOffset = currentTimelineOffset;
+        expectedTimelineOffset = timelineState.timelineOffset;
+        
+        for (const auto& track : app->getAllTracks()) {
+            const std::string rowKey = track->getName() + "_scrollable_row";
+            if (auto rowIt = containers.find(rowKey); rowIt != containers.end() && rowIt->second) {
+                auto* scrollableRow = static_cast<ScrollableRow*>(rowIt->second);
+                scrollableRow->setOffset(timelineState.timelineOffset);
+            }
+        }
+    }
 }
 
 void TimelineComponent::updateTimelineState() {

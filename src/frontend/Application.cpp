@@ -82,8 +82,7 @@ void Application::initialise(const juce::String& commandLine) {
     // Initialize Firebase for marketplace functionality
     initFirebase();
 
-    ui->setScale(1.f);
-
+    ui->setScale(uiState.uiScale);
     ui->forceUpdate();
 }
 

@@ -25,6 +25,7 @@ struct UIState {
     std::string selectedTheme = "Dark";
 
     float timelineZoomLevel = 1.f;
+    float uiScale = 1.f;
     double sampleRate = 44100.0;
     int autoSaveIntervalSeconds = 300;
     bool settingsShown = false;
