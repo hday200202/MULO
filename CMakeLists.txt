@@ -151,6 +151,54 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_definitions(${GTK3_CFLAGS_OTHER} ${WEBKIT2GTK_CFLAGS_OTHER})
 endif()
 
+# Firebase configuration for marketplace functionality
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set(FIREBASE_INCLUDE "${CMAKE_SOURCE_DIR}/external/linux/firebase/include")
+    set(FIREBASE_LIBS
+        "${CMAKE_SOURCE_DIR}/external/linux/firebase/libfirebase_app.a"
+        "${CMAKE_SOURCE_DIR}/external/linux/firebase/libfirebase_firestore.a"
+        "${CMAKE_SOURCE_DIR}/external/linux/firebase/libfirebase_auth.a"
+    )
+elseif (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    set(FIREBASE_INCLUDE "${CMAKE_SOURCE_DIR}/external/mac/firebase/include")
+    set(FIREBASE_LIBS
+        "${CMAKE_SOURCE_DIR}/external/mac/firebase/libfirebase_app.a"
+        "${CMAKE_SOURCE_DIR}/external/mac/firebase/libfirebase_firestore.a"
+        "${CMAKE_SOURCE_DIR}/external/mac/firebase/libfirebase_auth.a"
+    )
+elseif (CMAKE_SYSTEM_NAME STREQUAL "Windows")
+    set(FIREBASE_INCLUDE "${CMAKE_SOURCE_DIR}/external/windows/firebase/include")
+    set(FIREBASE_LIBS
+        "${CMAKE_SOURCE_DIR}/external/windows/firebase/firebase_app.lib"
+        "${CMAKE_SOURCE_DIR}/external/windows/firebase/firebase_firestore.lib"
+        "${CMAKE_SOURCE_DIR}/external/windows/firebase/firebase_auth.lib"
+    )
+endif()
+
+# Check if Firebase libraries exist and add them
+set(FIREBASE_LIBS_FOUND "")
+foreach(lib ${FIREBASE_LIBS})
+    if (EXISTS "${lib}")
+        list(APPEND FIREBASE_LIBS_FOUND "${lib}")
+    endif()
+endforeach()
+
+if (FIREBASE_LIBS_FOUND AND EXISTS "${FIREBASE_INCLUDE}")
+    message(STATUS "Firebase found - enabling Firebase support")
+    target_include_directories(MULO PRIVATE "${FIREBASE_INCLUDE}")
+    target_link_libraries(MULO PRIVATE ${FIREBASE_LIBS_FOUND})
+    target_compile_definitions(MULO PRIVATE FIREBASE_AVAILABLE=1)
+    
+    # Add Firebase system dependencies on Linux
+    if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        find_package(PkgConfig REQUIRED)
+        pkg_check_modules(SECRET REQUIRED libsecret-1)
+        target_link_libraries(MULO PRIVATE ${SECRET_LIBRARIES})
+    endif()
+else()
+    message(STATUS "Firebase not found - using mock data")
+endif()
+
 # Link libraries
 target_link_libraries(MULO PRIVATE
     # JUCE Core GUI

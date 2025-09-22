@@ -170,11 +170,16 @@ function(add_extension EXTENSION_NAME)
     set(WRAPPER_FILE "${CMAKE_CURRENT_BINARY_DIR}/${EXTENSION_NAME}.cpp")
     file(WRITE ${WRAPPER_FILE} "#include \"${CMAKE_SOURCE_DIR}/extensions_src/${EXTENSION_NAME}.hpp\"\n")
     
+    # Check for corresponding .cpp file
+    set(EXTENSION_CPP "${CMAKE_SOURCE_DIR}/extensions_src/${EXTENSION_NAME}.cpp")
+    set(SOURCE_FILES ${WRAPPER_FILE} ${ENGINE_SOURCES})
+    if(EXISTS ${EXTENSION_CPP})
+        list(APPEND SOURCE_FILES ${EXTENSION_CPP})
+        message(STATUS "Found extension source file: ${EXTENSION_CPP}")
+    endif()
+    
     # Create shared library
-    add_library(${EXTENSION_NAME} SHARED 
-        ${WRAPPER_FILE}
-        ${ENGINE_SOURCES}
-    )
+    add_library(${EXTENSION_NAME} SHARED ${SOURCE_FILES})
     
     target_include_directories(${EXTENSION_NAME} PRIVATE ${COMMON_INCLUDE_DIRS})
     target_compile_definitions(${EXTENSION_NAME} PRIVATE ${COMMON_COMPILE_DEFINITIONS})

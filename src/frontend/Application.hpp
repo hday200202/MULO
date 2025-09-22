@@ -24,6 +24,11 @@
     #define PLUGIN_EXT ".so"
 #endif
 
+#ifdef FIREBASE_AVAILABLE
+#include <firebase/app.h>
+#include <firebase/firestore.h>
+#endif
+
 class Application;
 class Engine;
 struct UIResources;
@@ -192,6 +197,24 @@ public:
     MIDIClip* getSelectedMIDIClip() const;
     MIDIClip* getTimelineSelectedMIDIClip() const;
 
+    // Firebase methods for MarketplaceComponent
+    struct ExtensionData {
+        std::string id = "";
+        std::string author = "Unknown";
+        std::string description = "No description provided.";
+        std::string downloadURL = "";
+        std::string name = "Unnamed Extension";
+        std::string version = "0.1.0";
+        bool verified = false;
+    };
+
+    enum class FirebaseState { Idle, Loading, Success, Error };
+    
+    void initFirebase();
+    void fetchExtensions(std::function<void(FirebaseState, const std::vector<ExtensionData>&)> callback);
+    FirebaseState getFirebaseState() const { return firebaseState; }
+    const std::vector<ExtensionData>& getExtensions() const { return extensions; }
+
 private:
     sf::Clock deltaClock;
     std::unordered_map<std::string, std::unique_ptr<Page>> uiloPages;
@@ -257,6 +280,16 @@ private:
     std::string exeDirectory = "";
     std::unordered_map<std::string, LoadedPlugin> loadedPlugins;
     std::unordered_map<std::string, ComponentLayoutData> componentLayouts;
+
+    // Firebase members
+#ifdef FIREBASE_AVAILABLE
+    std::unique_ptr<firebase::App> firebaseApp;
+    firebase::firestore::Firestore* firestore = nullptr;
+    firebase::Future<firebase::firestore::QuerySnapshot> extFuture;
+#endif
+    FirebaseState firebaseState = FirebaseState::Idle;
+    std::vector<ExtensionData> extensions;
+    std::function<void(FirebaseState, const std::vector<ExtensionData>&)> firebaseCallback;
 
     void initUI();
     void initUIResources();

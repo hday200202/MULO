@@ -5,10 +5,15 @@
 
 #include <tinyfiledialogs/tinyfiledialogs.hpp>
 #include <filesystem>
+#include <chrono>
+#include <unordered_map>
 
 #ifdef __linux__
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
+#ifdef Success
+#undef Success
+#endif
 #endif
 
 #ifdef _WIN32
@@ -73,13 +78,23 @@ void Application::initialise(const juce::String& commandLine) {
 
     loadComponents();
     loadLayoutConfig();
+    
+    // Initialize Firebase for marketplace functionality
+    initFirebase();
 
     ui->setScale(1.f);
 
     ui->forceUpdate();
 }
 
-Application::~Application() {}
+Application::~Application() {
+#ifdef FIREBASE_AVAILABLE
+    if (firestore) {
+        delete firestore;
+        firestore = nullptr;
+    }
+#endif
+}
 
 void Application::shutdown() {
     unloadAllPlugins();
@@ -109,6 +124,34 @@ void Application::update() {
     for (const auto& [name, component] : muloComponents)
         if (component)
             component->update();
+
+    // Process Firebase requests
+#ifdef FIREBASE_AVAILABLE
+    if (firebaseState == FirebaseState::Loading && extFuture.status() == firebase::kFutureStatusComplete) {
+        if (extFuture.error() == firebase::firestore::kErrorNone) {
+            const auto& snapshot = *extFuture.result();
+            for (const auto& doc : snapshot.documents()) {
+                ExtensionData data;
+                data.id = doc.id();
+                if (doc.Get("name").is_string()) data.name = doc.Get("name").string_value();
+                if (doc.Get("author").is_string()) data.author = doc.Get("author").string_value();
+                if (doc.Get("version").is_string()) data.version = doc.Get("version").string_value();
+                if (doc.Get("downloadURL").is_string()) data.downloadURL = doc.Get("downloadURL").string_value();
+                if (doc.Get("description").is_string()) data.description = doc.Get("description").string_value();
+                if (doc.Get("verified").is_boolean()) data.verified = doc.Get("verified").boolean_value();
+                extensions.push_back(data);
+            }
+            firebaseState = FirebaseState::Success;
+        } else {
+            firebaseState = FirebaseState::Error;
+        }
+        
+        if (firebaseCallback) {
+            firebaseCallback(firebaseState, extensions);
+            firebaseCallback = nullptr;
+        }
+    }
+#endif
 
     if (forceUpdatePoll > 0) --forceUpdatePoll;
     
@@ -997,7 +1040,38 @@ void Application::setPluginTrusted(const std::string& pluginName, bool trusted) 
 }
 
 bool Application::isPluginTrusted(const std::string& pluginName) const {
-    static const std::vector<std::string> trustedPlugins = {
+    // Map plugin filenames to Firebase extension IDs
+    static const std::unordered_map<std::string, std::string> pluginToExtensionMap = {
+        {"TimelineComponent.so", "timeline"},
+        {"PianoRollComponent.so", "piano_roll"},
+        {"MixerComponent.so", "mixer"},
+        {"FXRackComponent.so", "fxrack"},
+        {"MarketplaceComponent.so", "marketplace"},
+        {"SettingsComponent.so", "settings"},
+        {"KBShortcuts.so", "keyboard_shortcuts"},
+        {"FileBrowserComponent.so", "filebrowser"},
+        {"AppControls.so", "app_controls"}
+    };
+    
+    // Try to find the extension ID for this plugin
+    auto it = pluginToExtensionMap.find(pluginName);
+    if (it != pluginToExtensionMap.end()) {
+        const std::string& extensionId = it->second;
+        
+        // Check Firebase data if available
+        if (firebaseState == FirebaseState::Success) {
+            for (const auto& ext : extensions) {
+                if (ext.id == extensionId) {
+                    bool verified = ext.verified;
+                    std::cout << "Plugin '" << pluginName << "' Firebase verification: " << (verified ? "VERIFIED" : "UNVERIFIED") << std::endl;
+                    return verified;
+                }
+            }
+        }
+    }
+    
+    // Fallback to hardcoded trusted plugins if Firebase data not available
+    static const std::vector<std::string> fallbackTrustedPlugins = {
         "TimelineComponent.so",
         "PianoRollComponent.so",
         "MixerComponent.so",
@@ -1005,5 +1079,90 @@ bool Application::isPluginTrusted(const std::string& pluginName) const {
         "MarketplaceComponent.so"
     };
     
-    return std::find(trustedPlugins.begin(), trustedPlugins.end(), pluginName) != trustedPlugins.end();
+    bool isTrusted = std::find(fallbackTrustedPlugins.begin(), fallbackTrustedPlugins.end(), pluginName) != fallbackTrustedPlugins.end();
+    std::cout << "Plugin '" << pluginName << "' using fallback trust: " << (isTrusted ? "TRUSTED" : "SANDBOXED") << std::endl;
+    return isTrusted;
+}
+
+// Firebase implementation
+void Application::initFirebase() {
+#ifdef FIREBASE_AVAILABLE
+    try {
+        firebase::AppOptions options;
+        options.set_api_key("AIzaSyCz8-U53Iga6AbMXvB7XMjOSSkqVLGYpOA");
+        options.set_app_id("1:1068093358007:web:bdc95a20f8e60375bf7232");
+        options.set_project_id("mulo-marketplace");
+        options.set_storage_bucket("mulo-marketplace.appspot.com");
+
+        firebaseApp.reset(firebase::App::Create(options));
+        
+        // Configure Firestore settings for better cache handling
+        firebase::firestore::Settings settings;
+        settings.set_cache_size_bytes(firebase::firestore::Settings::kCacheSizeUnlimited);
+        settings.set_persistence_enabled(false);  // Disable local persistence to avoid file issues
+        
+        firestore = firebase::firestore::Firestore::GetInstance(firebaseApp.get());
+        firestore->set_settings(settings);
+        
+        std::cout << "Firebase initialized successfully" << std::endl;     
+    } catch (const std::exception& e) {
+        std::cout << "Firebase initialization failed: " << e.what() << std::endl;
+        firebaseState = FirebaseState::Error;
+    }       
+#else
+    std::cout << "Firebase not available - using mock data" << std::endl;
+    
+    // Create some mock extension data
+    extensions.clear();
+    ExtensionData mockExt1;
+    mockExt1.id = "mock-extension-1";
+    mockExt1.name = "Sample Extension 1";
+    mockExt1.author = "Demo Author";
+    mockExt1.description = "A sample extension for demonstration purposes";
+    mockExt1.version = "1.0.0";
+    mockExt1.verified = true;
+    extensions.push_back(mockExt1);
+    
+    ExtensionData mockExt2;
+    mockExt2.id = "mock-extension-2";
+    mockExt2.name = "Another Extension";
+    mockExt2.author = "Test Developer";
+    mockExt2.description = "Another sample extension";
+    mockExt2.version = "0.5.0";
+    mockExt2.verified = false;
+    extensions.push_back(mockExt2);
+    
+    firebaseState = FirebaseState::Success;
+#endif
+}
+
+void Application::fetchExtensions(std::function<void(FirebaseState, const std::vector<ExtensionData>&)> callback) {
+#ifdef FIREBASE_AVAILABLE
+    if (!firestore) {
+        callback(FirebaseState::Error, {});
+        return;
+    }
+    
+    if (firebaseState == FirebaseState::Loading) {
+        return; // Already loading
+    }
+    
+    firebaseState = FirebaseState::Loading;
+    firebaseCallback = callback;
+    extensions.clear();
+    
+    extFuture = firestore->Collection("extensions").Get();
+#else
+    // Mock async behavior
+    std::cout << "Mock: Fetching extensions..." << std::endl;
+    if (firebaseState == FirebaseState::Loading) {
+        return; // Already loading
+    }
+    
+    firebaseState = FirebaseState::Loading;
+    
+    // Simulate async callback (in real app would use timer)
+    firebaseState = FirebaseState::Success;
+    callback(FirebaseState::Success, extensions);
+#endif
 }
