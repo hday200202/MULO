@@ -27,6 +27,8 @@
 #ifdef FIREBASE_AVAILABLE
 #include <firebase/app.h>
 #include <firebase/firestore.h>
+#include <firebase/auth.h>
+#include <firebase/storage.h>
 #endif
 
 class Application;
@@ -213,6 +215,15 @@ public:
     void initFirebase();
     void fetchExtensions(std::function<void(FirebaseState, const std::vector<ExtensionData>&)> callback);
     void uploadExtension(const std::string& description, const std::string& binaryPath, const std::string& sourcePath, std::function<void(bool)> callback);
+    
+    // Authentication methods
+    void loginUser(const std::string& email, const std::string& password, std::function<void(bool, const std::string&)> callback);
+    void registerUser(const std::string& email, const std::string& password, const std::string& displayName, std::function<void(bool, const std::string&)> callback);
+    void logoutUser();
+    bool isUserLoggedIn() const { return userLoggedIn; }
+    std::string getCurrentUserEmail() const { return currentUserEmail; }
+    std::string getCurrentUserDisplayName() const { return currentUserDisplayName; }
+    
     FirebaseState getFirebaseState() const { return firebaseState; }
     const std::vector<ExtensionData>& getExtensions() const { return extensions; }
 
@@ -286,13 +297,23 @@ private:
 #ifdef FIREBASE_AVAILABLE
     std::unique_ptr<firebase::App> firebaseApp;
     firebase::firestore::Firestore* firestore = nullptr;
+    firebase::auth::Auth* auth = nullptr;
+    firebase::storage::Storage* storage = nullptr;
     firebase::Future<firebase::firestore::QuerySnapshot> extFuture;
     firebase::Future<firebase::firestore::DocumentReference> uploadFuture;
+    firebase::Future<firebase::auth::AuthResult> authFuture;
+    firebase::Future<firebase::storage::Metadata> storageFuture;
 #endif
     FirebaseState firebaseState = FirebaseState::Idle;
     std::vector<ExtensionData> extensions;
     std::function<void(FirebaseState, const std::vector<ExtensionData>&)> firebaseCallback;
     std::function<void(bool)> uploadCallback;
+    
+    // Authentication state
+    bool userLoggedIn = false;
+    std::string currentUserEmail = "";
+    std::string currentUserDisplayName = "";
+    std::function<void(bool, const std::string&)> authCallback;
 
     void initUI();
     void initUIResources();

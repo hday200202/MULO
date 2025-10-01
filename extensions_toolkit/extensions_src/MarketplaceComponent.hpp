@@ -2,6 +2,11 @@
 
 #include "MULOComponent.hpp"
 #include "../../src/DebugConfig.hpp"
+#include <algorithm>
+#include <fstream>
+#include <filesystem>
+#include <vector>
+#include <functional>
 
 class MarketplaceComponent : public MULOComponent {
 public:
@@ -41,6 +46,8 @@ private:
     UploadState uploadState = UploadState::Idle;
     bool shouldRebuildUI = false;
     bool showUploadSection = false;
+    bool showLoginDialog = false;
+    bool isRegistering = false;
 
     std::vector<LocalExtensionData> extensionList;
     uilo::ScrollableColumn* extensionListContainer = nullptr;
@@ -50,13 +57,46 @@ private:
     std::string selectedBinaryPath = "";
     std::string selectedSourcePath = "";
     std::string uploadDescription = "";
+    std::string uploadErrorMessage = "";
+    size_t binaryFileSize = 0;
+    size_t sourceFileSize = 0;
+    int uploadRetryCount = 0;
+    bool networkError = false;
+    std::string lastErrorDetails = "";
+    
+    // Login dialog components
+    uilo::TextInput* emailInput = nullptr;
+    uilo::TextInput* passwordInput = nullptr;
+    uilo::TextInput* displayNameInput = nullptr;
+    std::string loginEmail = "";
+    std::string loginPassword = "";
+    std::string loginDisplayName = "";
+    std::string loginMessage = "";
 
     void fetchExtensions();
     void uploadExtension();
     void selectBinaryFile();
     void selectSourceFile();
+    bool validateFiles();
+    std::string formatFileSize(size_t bytes);
+    bool isValidBinaryFile(const std::string& path);
+    bool isValidSourceFile(const std::string& path);
+    bool performSecurityScan(const std::string& binaryPath, const std::string& sourcePath);
+    bool checkFileSignature(const std::string& path);
+    bool scanForMaliciousPatterns(const std::string& content);
+    std::string calculateFileHash(const std::string& path);
+    void handleUploadError(const std::string& error);
+    void resetUploadState();
+    bool canRetryUpload() const;
+    void showErrorDialog(const std::string& title, const std::string& message);
+    void showLogin();
+    void hideLogin();
+    void performLogin();
+    void performRegister();
+    void toggleLoginMode();
     uilo::Container* buildInitialLayout();
     uilo::Container* buildUploadSection();
+    uilo::Container* buildLoginDialog();
     void rebuildExtensionList();
     void toggleUploadSection();
 };
@@ -64,9 +104,9 @@ private:
 #include "Application.hpp"
 
 inline void MarketplaceComponent::init() {
-    resolution.size.x = app->getWindow().getSize().x / 3;
-    resolution.size.y = app->getWindow().getSize().y / 1.5;
-    windowView.setSize(static_cast<sf::Vector2f>(resolution.size));
+    resolution.width = app->getWindow().getSize().x / 3;
+    resolution.height = app->getWindow().getSize().y / 1.5;
+    windowView.setSize(static_cast<sf::Vector2f>(sf::Vector2u(resolution.width, resolution.height)));
     initialized = true;
 }
 
@@ -83,8 +123,8 @@ inline void MarketplaceComponent::update() {
     if (!window.isOpen()) return;
     
     if (shouldRebuildUI) {
-        if (showUploadSection) {
-            // Rebuild the entire UI when switching to upload section
+        if (showLoginDialog || showUploadSection) {
+            // Rebuild the entire UI when switching sections
             ui->clearPages();
             ui->addPage(page({buildInitialLayout()}), "marketplace");
         } else {
@@ -191,7 +231,7 @@ inline uilo::Container* MarketplaceComponent::buildInitialLayout() {
             ),
             spacer(Modifier().setfixedWidth(16).align(Align::RIGHT))
         }),
-        showUploadSection ? buildUploadSection() : extensionListContainer,
+        showLoginDialog ? buildLoginDialog() : (showUploadSection ? buildUploadSection() : extensionListContainer),
         row(Modifier().setfixedHeight(64).setColor(app->resources.activeTheme->foreground_color), contains{
             spacer(Modifier().setfixedWidth(16).align(Align::LEFT)),
             button(
@@ -223,6 +263,42 @@ inline uilo::Container* MarketplaceComponent::buildUploadSection() {
              "Upload Extension", app->resources.dejavuSansFont)
     );
     
+    // Authentication status
+    if (!app->isUserLoggedIn()) {
+        uploadContainer->addElement(
+            text(Modifier().align(Align::CENTER_X).setfixedHeight(24).setColor(sf::Color::Red), 
+                 "Please log in to upload extensions", app->resources.dejavuSansFont)
+        );
+        
+        uploadContainer->addElement(
+            button(
+                Modifier().align(Align::CENTER_X).setfixedWidth(120).setfixedHeight(40).setColor(app->resources.activeTheme->accent_color)
+                    .onLClick([&](){ showLogin(); }),
+                ButtonStyle::Pill, "Login", app->resources.dejavuSansFont
+            )
+        );
+        
+        return uploadContainer;
+    }
+    
+    // Show logged in user with logout option
+    auto userRow = row(Modifier().setfixedHeight(40), contains{
+        text(Modifier().align(Align::LEFT | Align::CENTER_Y).setColor(sf::Color::Green), 
+             "Logged in as: " + app->getCurrentUserDisplayName(), app->resources.dejavuSansFont),
+        button(
+            Modifier().align(Align::RIGHT | Align::CENTER_Y).setfixedWidth(80).setfixedHeight(32).setColor(app->resources.activeTheme->mute_color)
+                .onLClick([&](){ app->logoutUser(); shouldRebuildUI = true; }),
+            ButtonStyle::Pill, "Logout", app->resources.dejavuSansFont
+        )
+    });
+    uploadContainer->addElement(userRow);
+    
+    // Security notice
+    uploadContainer->addElement(
+        text(Modifier().align(Align::CENTER_X).setfixedHeight(40).setColor(sf::Color(255, 165, 0)), 
+             "⚠️ All uploads are scanned for security. Malicious code will be rejected.", app->resources.dejavuSansFont)
+    );
+    
     // Description section
     uploadContainer->addElement(
         text(Modifier().align(Align::LEFT).setfixedHeight(24).setColor(app->resources.activeTheme->primary_text_color), 
@@ -243,8 +319,14 @@ inline uilo::Container* MarketplaceComponent::buildUploadSection() {
     );
     
     auto binaryRow = row(Modifier().setfixedHeight(48), contains{
-        text(Modifier().align(Align::LEFT | Align::CENTER_Y).setColor(app->resources.activeTheme->secondary_text_color), 
-             selectedBinaryPath.empty() ? "No file selected" : selectedBinaryPath, app->resources.dejavuSansFont),
+        column(Modifier().align(Align::LEFT | Align::CENTER_Y), contains{
+            text(Modifier().setColor(app->resources.activeTheme->secondary_text_color).setfixedHeight(20), 
+                 selectedBinaryPath.empty() ? "No file selected" : std::filesystem::path(selectedBinaryPath).filename().string(), 
+                 app->resources.dejavuSansFont),
+            text(Modifier().setColor(app->resources.activeTheme->secondary_text_color).setfixedHeight(16), 
+                 selectedBinaryPath.empty() ? "" : formatFileSize(binaryFileSize), 
+                 app->resources.dejavuSansFont)
+        }),
         button(
             Modifier().align(Align::RIGHT | Align::CENTER_Y).setfixedWidth(120).setfixedHeight(32).setColor(app->resources.activeTheme->button_color)
                 .onLClick([&](){ selectBinaryFile(); }),
@@ -260,8 +342,14 @@ inline uilo::Container* MarketplaceComponent::buildUploadSection() {
     );
     
     auto sourceRow = row(Modifier().setfixedHeight(48), contains{
-        text(Modifier().align(Align::LEFT | Align::CENTER_Y).setColor(app->resources.activeTheme->secondary_text_color), 
-             selectedSourcePath.empty() ? "No file selected" : selectedSourcePath, app->resources.dejavuSansFont),
+        column(Modifier().align(Align::LEFT | Align::CENTER_Y), contains{
+            text(Modifier().setColor(app->resources.activeTheme->secondary_text_color).setfixedHeight(20), 
+                 selectedSourcePath.empty() ? "No file selected" : std::filesystem::path(selectedSourcePath).filename().string(), 
+                 app->resources.dejavuSansFont),
+            text(Modifier().setColor(app->resources.activeTheme->secondary_text_color).setfixedHeight(16), 
+                 selectedSourcePath.empty() ? "" : formatFileSize(sourceFileSize), 
+                 app->resources.dejavuSansFont)
+        }),
         button(
             Modifier().align(Align::RIGHT | Align::CENTER_Y).setfixedWidth(120).setfixedHeight(32).setColor(app->resources.activeTheme->button_color)
                 .onLClick([&](){ selectSourceFile(); }),
@@ -284,12 +372,45 @@ inline uilo::Container* MarketplaceComponent::buildUploadSection() {
             statusColor = sf::Color::Green;
             break;
         case UploadState::Error:
-            statusText = "Upload failed. Please try again.";
+            statusText = uploadErrorMessage.empty() ? "Upload failed. Please try again." : uploadErrorMessage;
             statusColor = sf::Color::Red;
             break;
         case UploadState::Idle:
         default:
             break;
+    }
+    
+    // Show validation errors even when not uploading
+    if (!uploadErrorMessage.empty() && uploadState != UploadState::Uploading) {
+        uploadContainer->addElement(
+            text(Modifier().align(Align::CENTER_X).setfixedHeight(24).setColor(sf::Color::Red), 
+                 uploadErrorMessage, app->resources.dejavuSansFont)
+        );
+        
+        // Show retry count if there have been retries
+        if (uploadRetryCount > 0) {
+            uploadContainer->addElement(
+                text(Modifier().align(Align::CENTER_X).setfixedHeight(20).setColor(app->resources.activeTheme->secondary_text_color), 
+                     "Retry attempt: " + std::to_string(uploadRetryCount) + "/3", app->resources.dejavuSansFont)
+            );
+        }
+        
+        // Show retry button if upload can be retried
+        if (canRetryUpload() && uploadState == UploadState::Error) {
+            auto retryRow = row(Modifier().setfixedHeight(40), contains{
+                button(
+                    Modifier().align(Align::CENTER_X | Align::CENTER_Y).setfixedWidth(100).setfixedHeight(32).setColor(app->resources.activeTheme->accent_color)
+                        .onLClick([&](){ uploadExtension(); }),
+                    ButtonStyle::Pill, "Retry Upload", app->resources.dejavuSansFont
+                ),
+                button(
+                    Modifier().align(Align::CENTER_X | Align::CENTER_Y).setfixedWidth(80).setfixedHeight(32).setColor(app->resources.activeTheme->mute_color)
+                        .onLClick([&](){ resetUploadState(); }),
+                    ButtonStyle::Pill, "Reset", app->resources.dejavuSansFont
+                )
+            });
+            uploadContainer->addElement(retryRow);
+        }
     }
     
     if (!statusText.empty()) {
@@ -299,8 +420,16 @@ inline uilo::Container* MarketplaceComponent::buildUploadSection() {
         );
     }
     
+    // Show upload progress details
+    if (uploadState == UploadState::Uploading) {
+        uploadContainer->addElement(
+            text(Modifier().align(Align::CENTER_X).setfixedHeight(20).setColor(app->resources.activeTheme->secondary_text_color), 
+                 "Uploading files to Firebase Storage...", app->resources.dejavuSansFont)
+        );
+    }
+    
     // Upload button
-    bool canUpload = !uploadDescription.empty() && !selectedBinaryPath.empty() && !selectedSourcePath.empty() && uploadState != UploadState::Uploading;
+    bool canUpload = app->isUserLoggedIn() && !uploadDescription.empty() && !selectedBinaryPath.empty() && !selectedSourcePath.empty() && uploadState != UploadState::Uploading;
     
     uploadContainer->addElement(
         button(
@@ -316,44 +445,541 @@ inline uilo::Container* MarketplaceComponent::buildUploadSection() {
 
 inline void MarketplaceComponent::selectBinaryFile() {
 #ifdef _WIN32
-    selectedBinaryPath = app->selectFile({"*.dll"});
+    std::string path = app->selectFile({"*.dll"});
 #elif __APPLE__
-    selectedBinaryPath = app->selectFile({"*.dylib"});
+    std::string path = app->selectFile({"*.dylib"});
 #else
-    selectedBinaryPath = app->selectFile({"*.so"});
+    std::string path = app->selectFile({"*.so"});
 #endif
+    
+    if (!path.empty() && isValidBinaryFile(path)) {
+        selectedBinaryPath = path;
+        
+        // Get file size with error handling
+        try {
+            std::ifstream file(path, std::ios::binary | std::ios::ate);
+            if (file.is_open()) {
+                binaryFileSize = file.tellg();
+                file.close();
+                
+                // Clear any previous errors
+                if (uploadErrorMessage.find("binary") != std::string::npos) {
+                    uploadErrorMessage = "";
+                }
+            } else {
+                uploadErrorMessage = "Cannot read binary file";
+            }
+        } catch (const std::exception& e) {
+            uploadErrorMessage = "Error reading binary file: " + std::string(e.what());
+        }
+    } else if (!path.empty()) {
+        uploadErrorMessage = "Invalid binary file selected";
+    }
+    
     shouldRebuildUI = true;
 }
 
 inline void MarketplaceComponent::selectSourceFile() {
-    selectedSourcePath = app->selectFile({"*.hpp"});
+    std::string path = app->selectFile({"*.hpp"});
+    
+    if (!path.empty() && isValidSourceFile(path)) {
+        selectedSourcePath = path;
+        
+        // Get file size with error handling
+        try {
+            std::ifstream file(path, std::ios::binary | std::ios::ate);
+            if (file.is_open()) {
+                sourceFileSize = file.tellg();
+                file.close();
+                
+                // Clear any previous errors
+                if (uploadErrorMessage.find("source") != std::string::npos) {
+                    uploadErrorMessage = "";
+                }
+            } else {
+                uploadErrorMessage = "Cannot read source file";
+            }
+        } catch (const std::exception& e) {
+            uploadErrorMessage = "Error reading source file: " + std::string(e.what());
+        }
+    } else if (!path.empty()) {
+        uploadErrorMessage = "Invalid source file selected";
+    }
+    
     shouldRebuildUI = true;
 }
 
 inline void MarketplaceComponent::uploadExtension() {
-    if (uploadDescription.empty() || selectedBinaryPath.empty() || selectedSourcePath.empty()) {
+    if (!validateFiles()) {
         uploadState = UploadState::Error;
         shouldRebuildUI = true;
         return;
     }
     
     uploadState = UploadState::Uploading;
+    uploadErrorMessage = "";
     shouldRebuildUI = true;
     
-    // Call Application's upload method (to be implemented)
+    // Call Application's upload method with enhanced error handling
     app->uploadExtension(uploadDescription, selectedBinaryPath, selectedSourcePath, [&](bool success) {
-        uploadState = success ? UploadState::Success : UploadState::Error;
         if (success) {
+            uploadState = UploadState::Success;
+            uploadErrorMessage = "";
+            uploadRetryCount = 0;
+            
             // Clear form on success
             uploadDescription = "";
             selectedBinaryPath = "";
             selectedSourcePath = "";
+            binaryFileSize = 0;
+            sourceFileSize = 0;
+            
             if (descriptionInput) {
                 descriptionInput->setText("");
             }
+        } else {
+            handleUploadError("Upload failed. Please check your connection and try again.");
         }
         shouldRebuildUI = true;
     });
+}
+
+inline void MarketplaceComponent::showLogin() {
+    showLoginDialog = true;
+    isRegistering = false;
+    loginEmail = "";
+    loginPassword = "";
+    loginDisplayName = "";
+    loginMessage = "";
+    shouldRebuildUI = true;
+}
+
+inline void MarketplaceComponent::hideLogin() {
+    showLoginDialog = false;
+    shouldRebuildUI = true;
+}
+
+inline void MarketplaceComponent::performLogin() {
+    if (loginEmail.empty() || loginPassword.empty()) {
+        loginMessage = "Please enter email and password";
+        shouldRebuildUI = true;
+        return;
+    }
+    
+    loginMessage = "Logging in...";
+    shouldRebuildUI = true;
+    
+    app->loginUser(loginEmail, loginPassword, [&](bool success, const std::string& message) {
+        loginMessage = message;
+        if (success) {
+            hideLogin();
+        }
+        shouldRebuildUI = true;
+    });
+}
+
+inline void MarketplaceComponent::performRegister() {
+    if (loginEmail.empty() || loginPassword.empty() || loginDisplayName.empty()) {
+        loginMessage = "Please fill in all fields";
+        shouldRebuildUI = true;
+        return;
+    }
+    
+    loginMessage = "Registering...";
+    shouldRebuildUI = true;
+    
+    app->registerUser(loginEmail, loginPassword, loginDisplayName, [&](bool success, const std::string& message) {
+        loginMessage = message;
+        if (success) {
+            hideLogin();
+        }
+        shouldRebuildUI = true;
+    });
+}
+
+inline void MarketplaceComponent::toggleLoginMode() {
+    isRegistering = !isRegistering;
+    loginMessage = "";
+    shouldRebuildUI = true;
+}
+
+inline uilo::Container* MarketplaceComponent::buildLoginDialog() {
+    using namespace uilo;
+    
+    auto loginContainer = column(Modifier().setColor(app->resources.activeTheme->middle_color), contains{});
+    
+    // Title
+    loginContainer->addElement(
+        text(Modifier().align(Align::CENTER_X).setfixedHeight(32).setColor(app->resources.activeTheme->primary_text_color), 
+             isRegistering ? "Register Account" : "Login", app->resources.dejavuSansFont)
+    );
+    
+    // Email input
+    loginContainer->addElement(
+        text(Modifier().align(Align::LEFT).setfixedHeight(24).setColor(app->resources.activeTheme->primary_text_color), 
+             "Email:", app->resources.dejavuSansFont)
+    );
+    
+    emailInput = textInput(
+        Modifier().setfixedHeight(40).setColor(app->resources.activeTheme->foreground_color)
+            .onTextChange([&](const std::string& text){ loginEmail = text; }),
+        "Enter email address...", app->resources.dejavuSansFont
+    );
+    loginContainer->addElement(emailInput);
+    
+    // Password input
+    loginContainer->addElement(
+        text(Modifier().align(Align::LEFT).setfixedHeight(24).setColor(app->resources.activeTheme->primary_text_color), 
+             "Password:", app->resources.dejavuSansFont)
+    );
+    
+    passwordInput = textInput(
+        Modifier().setfixedHeight(40).setColor(app->resources.activeTheme->foreground_color)
+            .onTextChange([&](const std::string& text){ loginPassword = text; }),
+        "Enter password...", app->resources.dejavuSansFont
+    );
+    loginContainer->addElement(passwordInput);
+    
+    // Display name input (only for registration)
+    if (isRegistering) {
+        loginContainer->addElement(
+            text(Modifier().align(Align::LEFT).setfixedHeight(24).setColor(app->resources.activeTheme->primary_text_color), 
+                 "Display Name:", app->resources.dejavuSansFont)
+        );
+        
+        displayNameInput = textInput(
+            Modifier().setfixedHeight(40).setColor(app->resources.activeTheme->foreground_color)
+                .onTextChange([&](const std::string& text){ loginDisplayName = text; }),
+            "Enter display name...", app->resources.dejavuSansFont
+        );
+        loginContainer->addElement(displayNameInput);
+    }
+    
+    // Status message
+    if (!loginMessage.empty()) {
+        sf::Color messageColor = app->resources.activeTheme->primary_text_color;
+        if (loginMessage.find("successful") != std::string::npos) {
+            messageColor = sf::Color::Green;
+        } else if (loginMessage.find("failed") != std::string::npos || loginMessage.find("Please") != std::string::npos) {
+            messageColor = sf::Color::Red;
+        }
+        
+        loginContainer->addElement(
+            text(Modifier().align(Align::CENTER_X).setfixedHeight(24).setColor(messageColor), 
+                 loginMessage, app->resources.dejavuSansFont)
+        );
+    }
+    
+    // Buttons
+    auto buttonRow = row(Modifier().setfixedHeight(50), contains{
+        button(
+            Modifier().align(Align::LEFT | Align::CENTER_Y).setfixedWidth(100).setfixedHeight(40).setColor(app->resources.activeTheme->accent_color)
+                .onLClick([&](){ isRegistering ? performRegister() : performLogin(); }),
+            ButtonStyle::Pill, isRegistering ? "Register" : "Login", app->resources.dejavuSansFont
+        ),
+        button(
+            Modifier().align(Align::CENTER_X | Align::CENTER_Y).setfixedWidth(120).setfixedHeight(40).setColor(app->resources.activeTheme->button_color)
+                .onLClick([&](){ toggleLoginMode(); }),
+            ButtonStyle::Pill, isRegistering ? "Switch to Login" : "Switch to Register", app->resources.dejavuSansFont
+        ),
+        button(
+            Modifier().align(Align::RIGHT | Align::CENTER_Y).setfixedWidth(80).setfixedHeight(40).setColor(app->resources.activeTheme->mute_color)
+                .onLClick([&](){ hideLogin(); }),
+            ButtonStyle::Pill, "Cancel", app->resources.dejavuSansFont
+        )
+    });
+    
+    loginContainer->addElement(buttonRow);
+    
+    return loginContainer;
+}
+
+inline bool MarketplaceComponent::validateFiles() {
+    uploadErrorMessage = "";
+    
+    if (uploadDescription.empty()) {
+        uploadErrorMessage = "Description is required";
+        return false;
+    }
+    
+    if (uploadDescription.length() < 10) {
+        uploadErrorMessage = "Description must be at least 10 characters";
+        return false;
+    }
+    
+    if (selectedBinaryPath.empty()) {
+        uploadErrorMessage = "Binary file is required";
+        return false;
+    }
+    
+    if (selectedSourcePath.empty()) {
+        uploadErrorMessage = "Source file is required";
+        return false;
+    }
+    
+    // Check file sizes (max 50MB for binary, 1MB for source)
+    if (binaryFileSize > 50 * 1024 * 1024) {
+        uploadErrorMessage = "Binary file too large (max 50MB)";
+        return false;
+    }
+    
+    if (sourceFileSize > 1024 * 1024) {
+        uploadErrorMessage = "Source file too large (max 1MB)";
+        return false;
+    }
+    
+    // Perform security scan with exception handling
+    try {
+        if (!performSecurityScan(selectedBinaryPath, selectedSourcePath)) {
+            return false; // Error message set by performSecurityScan
+        }
+    } catch (const std::exception& e) {
+        uploadErrorMessage = "Security scan failed: " + std::string(e.what());
+        return false;
+    }
+    
+    return true;
+}
+
+inline std::string MarketplaceComponent::formatFileSize(size_t bytes) {
+    if (bytes < 1024) return std::to_string(bytes) + " B";
+    if (bytes < 1024 * 1024) return std::to_string(bytes / 1024) + " KB";
+    return std::to_string(bytes / (1024 * 1024)) + " MB";
+}
+
+inline bool MarketplaceComponent::isValidBinaryFile(const std::string& path) {
+    if (path.empty()) return false;
+    
+    // Check file extension
+    std::string ext = path.substr(path.find_last_of('.'));
+    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+    
+#ifdef _WIN32
+    if (ext != ".dll") return false;
+#elif __APPLE__
+    if (ext != ".dylib") return false;
+#else
+    if (ext != ".so") return false;
+#endif
+    
+    // Check if file exists and is readable
+    std::ifstream file(path, std::ios::binary);
+    return file.good();
+}
+
+inline bool MarketplaceComponent::isValidSourceFile(const std::string& path) {
+    if (path.empty()) return false;
+    
+    // Check file extension
+    std::string ext = path.substr(path.find_last_of('.'));
+    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+    
+    if (ext != ".hpp" && ext != ".h") return false;
+    
+    // Check if file exists and is readable
+    std::ifstream file(path);
+    if (!file.good()) return false;
+    
+    // Basic validation - check if it contains some C++ keywords
+    std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    return content.find("#pragma") != std::string::npos || 
+           content.find("#include") != std::string::npos ||
+           content.find("class") != std::string::npos;
+}
+
+inline bool MarketplaceComponent::performSecurityScan(const std::string& binaryPath, const std::string& sourcePath) {
+    uploadErrorMessage = "";
+    
+    // Check file signatures
+    if (!checkFileSignature(binaryPath)) {
+        uploadErrorMessage = "Binary file signature validation failed";
+        return false;
+    }
+    
+    // Read and scan source code for malicious patterns
+    std::ifstream sourceFile(sourcePath);
+    if (!sourceFile.is_open()) {
+        uploadErrorMessage = "Cannot read source file for security scan";
+        return false;
+    }
+    
+    std::string sourceContent((std::istreambuf_iterator<char>(sourceFile)), std::istreambuf_iterator<char>());
+    sourceFile.close();
+    
+    if (scanForMaliciousPatterns(sourceContent)) {
+        uploadErrorMessage = "Source code contains potentially malicious patterns";
+        return false;
+    }
+    
+    return true;
+}
+
+inline bool MarketplaceComponent::checkFileSignature(const std::string& path) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file.is_open()) return false;
+    
+    // Read first few bytes to check file signature
+    char header[16];
+    file.read(header, sizeof(header));
+    file.close();
+    
+    // Check for common executable signatures
+#ifdef _WIN32
+    // Check for PE signature (MZ header)
+    return header[0] == 'M' && header[1] == 'Z';
+#elif __APPLE__
+    // Check for Mach-O signature
+    uint32_t magic = *reinterpret_cast<uint32_t*>(header);
+    return magic == 0xfeedface || magic == 0xfeedfacf || magic == 0xcafebabe;
+#else
+    // Check for ELF signature
+    return header[0] == 0x7f && header[1] == 'E' && header[2] == 'L' && header[3] == 'F';
+#endif
+}
+
+inline bool MarketplaceComponent::scanForMaliciousPatterns(const std::string& content) {
+    // List of potentially dangerous patterns
+    std::vector<std::string> dangerousPatterns = {
+        "system(",
+        "exec(",
+        "popen(",
+        "ShellExecute",
+        "CreateProcess",
+        "WinExec",
+        "fork(",
+        "eval(",
+        "unlink(",
+        "remove(",
+        "rmdir(",
+        "chmod(",
+        "chown(",
+        "setuid(",
+        "setgid(",
+        "mmap(",
+        "VirtualAlloc",
+        "HeapAlloc",
+        "malloc(",
+        "realloc(",
+        "free(",
+        "delete",
+        "new ",
+        "fopen(",
+        "fwrite(",
+        "fprintf(",
+        "sprintf(",
+        "strcpy(",
+        "strcat(",
+        "gets(",
+        "scanf(",
+        "network",
+        "socket(",
+        "connect(",
+        "bind(",
+        "listen(",
+        "accept(",
+        "send(",
+        "recv(",
+        "curl",
+        "http",
+        "https",
+        "ftp",
+        "registry",
+        "RegOpenKey",
+        "RegSetValue",
+        "RegDeleteKey"
+    };
+    
+    // Convert content to lowercase for case-insensitive search
+    std::string lowerContent = content;
+    std::transform(lowerContent.begin(), lowerContent.end(), lowerContent.begin(), ::tolower);
+    
+    // Check for dangerous patterns
+    for (const auto& pattern : dangerousPatterns) {
+        if (lowerContent.find(pattern) != std::string::npos) {
+            return true; // Found malicious pattern
+        }
+    }
+    
+    // Check for suspicious includes
+    std::vector<std::string> suspiciousIncludes = {
+        "#include <windows.h>",
+        "#include <unistd.h>",
+        "#include <sys/socket.h>",
+        "#include <netinet/in.h>",
+        "#include <arpa/inet.h>",
+        "#include <sys/mman.h>",
+        "#include <sys/stat.h>",
+        "#include <fcntl.h>"
+    };
+    
+    for (const auto& include : suspiciousIncludes) {
+        if (lowerContent.find(include) != std::string::npos) {
+            return true; // Found suspicious include
+        }
+    }
+    
+    return false; // No malicious patterns found
+}
+
+inline std::string MarketplaceComponent::calculateFileHash(const std::string& path) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file.is_open()) return "";
+    
+    // Simple hash calculation (in production, use SHA-256 or similar)
+    std::hash<std::string> hasher;
+    std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    file.close();
+    
+    return std::to_string(hasher(content));
+}
+
+inline void MarketplaceComponent::handleUploadError(const std::string& error) {
+    uploadState = UploadState::Error;
+    uploadErrorMessage = error;
+    lastErrorDetails = error;
+    uploadRetryCount++;
+    
+    // Log error for debugging
+    std::cout << "Upload error: " << error << " (Retry count: " << uploadRetryCount << ")" << std::endl;
+    
+    // Check for network-related errors
+    if (error.find("network") != std::string::npos || 
+        error.find("connection") != std::string::npos ||
+        error.find("timeout") != std::string::npos) {
+        networkError = true;
+    }
+    
+    shouldRebuildUI = true;
+}
+
+inline void MarketplaceComponent::resetUploadState() {
+    uploadState = UploadState::Idle;
+    uploadErrorMessage = "";
+    uploadRetryCount = 0;
+    networkError = false;
+    lastErrorDetails = "";
+    selectedBinaryPath = "";
+    selectedSourcePath = "";
+    uploadDescription = "";
+    binaryFileSize = 0;
+    sourceFileSize = 0;
+    
+    if (descriptionInput) {
+        descriptionInput->setText("");
+    }
+    
+    shouldRebuildUI = true;
+}
+
+inline bool MarketplaceComponent::canRetryUpload() const {
+    return uploadRetryCount < 3 && !uploadErrorMessage.empty();
+}
+
+inline void MarketplaceComponent::showErrorDialog(const std::string& title, const std::string& message) {
+    // In a full implementation, this would show a modal dialog
+    // For now, we'll just set the error message
+    uploadErrorMessage = title + ": " + message;
+    shouldRebuildUI = true;
 }
 
 inline void MarketplaceComponent::rebuildExtensionList() {

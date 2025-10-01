@@ -8,9 +8,7 @@
 #include <memory>
 
 #include "Effect.hpp"
-
-// Forward declarations
-class AudioClip;
+#include "AudioClip.hpp"
 
 // Base Track class - contains common functionality for all track types
 class Track {
