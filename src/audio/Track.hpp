@@ -20,6 +20,12 @@ public:
         MIDI
     };
 
+    struct AutomationPoint {
+        double time;
+        float value;
+        float curve;
+    };
+
     Track();
     virtual ~Track() = default;
 
@@ -73,6 +79,53 @@ public:
     bool moveEffect(int fromIndex, int toIndex);
     void clearEffects();
 
+    inline void addAutomationPoint(
+        const std::string& effectName, 
+        const std::string& parameterName, 
+        const AutomationPoint& automationPoint
+    ) {
+        automationData[effectName][parameterName].push_back(automationPoint);
+    }
+
+    inline void applyAutomation(double positionSeconds) {
+        // for any parameter that is automated, apply the 0.f - 1.f level to that parameter
+        // for the current position in engine.
+
+        // TODO volume at position
+
+        // TODO pan at position
+
+        for (size_t i = 0; i < effects.size(); ++i) {
+            const auto& effect = effects[i];
+            // Apply automation values to effect parameters
+            auto params = effect->getAllParameters();
+            std::string effectKey = effect->getName() + "_" + std::to_string(i);
+            auto it = automationData.find(effectKey);
+            if (it != automationData.end()) {
+                auto& paramMap = it->second;
+                for (int p = 0; p < params.size(); ++p) {
+                    auto* ap = params[p];
+                    if (!ap) continue;
+                    std::string name = ap->getName(256).toStdString();
+                    auto pit = paramMap.find(name);
+                    if (pit != paramMap.end() && !pit->second.empty()) {
+                        // use first automation point value for now
+                        float val = pit->second.front().value;
+                        effect->setParameter(p, val);
+                    }
+                }
+            }
+        }
+
+        // Temporary
+        for (auto& [effect, params] : automationData) {
+            std::cout << effect << "\n";
+            for (auto& [paramName, values] : params) {
+                std::cout << "\t" << paramName + ": " << values[0].value << "\n";
+            }
+        }
+    }
+
 protected:
     // Common track data
     std::string name;
@@ -88,6 +141,23 @@ protected:
     // Effects chain
     std::vector<std::unique_ptr<Effect>> effects;
 
+    // Effect name -> parameter name -> automation points
+    std::unordered_map<std::string, std::unordered_map<std::string, std::vector<AutomationPoint>>> automationData;
+
     // Helper method for effects management
     void updateEffectIndices();
 };
+
+inline float floatToDecibels(float linear, float minusInfinityDb = -100.0f) {
+    constexpr double reference = 0.75;
+    if (linear <= 0.0)
+        return minusInfinityDb;
+    return static_cast<float>(20.0 * std::log10(static_cast<double>(linear) / reference));
+}
+
+inline float decibelsToFloat(float db, float minusInfinityDb = -100.0f) {
+    constexpr double reference = 0.75;
+    if (db <= minusInfinityDb)
+        return 0.0f;
+    return static_cast<float>(reference * std::pow(10.0, static_cast<double>(db) / 20.0));
+}

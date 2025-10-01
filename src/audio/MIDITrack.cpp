@@ -100,6 +100,21 @@ void MIDITrack::process(double playheadSeconds, juce::AudioBuffer<float>& output
     processEffectsWithMidi(outputBuffer, midiBuffer);
     
     // Apply track volume and mute
+    // Apply track-level automation: volume and pan (use first automation point if present)
+    auto it = automationData.find(name);
+    if (it != automationData.end()) {
+        auto& paramMap = it->second;
+        auto vit = paramMap.find("volume");
+        if (vit != paramMap.end() && !vit->second.empty()) {
+            volumeDb = floatToDecibels(vit->second.front().value);
+        }
+        auto pit = paramMap.find("pan");
+        if (pit != paramMap.end() && !pit->second.empty()) {
+            float norm = pit->second.front().value; // 0..1
+            pan = juce::jlimit(-1.0f, 1.0f, norm * 2.0f - 1.0f);
+        }
+    }
+
     if (muted) {
         outputBuffer.clear();
     } else {
@@ -116,6 +131,19 @@ void MIDITrack::prepareToPlay(double sampleRate, int bufferSize) {
     for (auto& effect : effects) {
         if (effect) {
             effect->prepareToPlay(sampleRate, bufferSize);
+        }
+    }
+    
+    // Add virtual instrument parameters (effect at index 0) if it exists
+    if (!effects.empty() && effects[0]) {
+        const auto params = effects[0]->getAllParameters();
+        for (const auto param : params) {
+            if (!param) continue;
+            std::string name = param->getName(256).toStdString();
+            if (name.find("MIDI CC") != std::string::npos) continue; // Filter out MIDI CC parameters for virtual instruments
+            float value = param->getValue();
+            std::string effectKey = effects[0]->getName() + "_0";
+            automationData[effectKey][name].emplace_back(0.0, value, 0.5f);
         }
     }
 }
@@ -174,13 +202,30 @@ size_t MIDITrack::getMIDIClipCount() const {
 }
 
 void MIDITrack::processEffectsWithMidi(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiBuffer) {
-    for (const auto& effect : effects) {
+    for (size_t i = 0; i < effects.size(); ++i) {
+        const auto& effect = effects[i];
         if (effect && effect->enabled()) {
+            // apply automation (first point) to parameters
+            auto params = effect->getAllParameters();
+            std::string effectKey = effect->getName() + "_" + std::to_string(i);
+            auto it = automationData.find(effectKey);
+            if (it != automationData.end()) {
+                auto& paramMap = it->second;
+                for (int p = 0; p < params.size(); ++p) {
+                    auto* ap = params[p];
+                    if (!ap) continue;
+                    std::string name = ap->getName(256).toStdString();
+                    auto pit = paramMap.find(name);
+                    if (pit != paramMap.end() && !pit->second.empty()) {
+                        float val = pit->second.front().value;
+                        effect->setParameter(p, val);
+                    }
+                }
+            }
+
             if (effect->isSynthesizer()) {
-                // Synthesizers need both audio buffer and MIDI data
                 effect->processAudio(buffer, midiBuffer);
             } else {
-                // Regular effects only process audio
                 effect->processAudio(buffer);
             }
         }

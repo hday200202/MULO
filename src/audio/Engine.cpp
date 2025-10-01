@@ -959,6 +959,7 @@ void Engine::audioDeviceIOCallbackWithContext(
                 bool shouldPlay = !anyTrackSoloed ? !track->isMuted() : track->isSolo();
                 if (shouldPlay) {
                     trackBuffer.clear();
+                    track->applyAutomation(positionSeconds);
                     track->process(positionSeconds, trackBuffer, numSamples, sampleRate);
                     
                     // For MIDI tracks, effects are processed internally with MIDI data

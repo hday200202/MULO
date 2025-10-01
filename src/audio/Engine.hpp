@@ -192,17 +192,3 @@ private:
     std::string currentState;
     std::vector<PendingEffect> pendingEffects;
 };
-
-inline float floatToDecibels(float linear, float minusInfinityDb = -100.0f) {
-    constexpr double reference = 0.75;
-    if (linear <= 0.0)
-        return minusInfinityDb;
-    return static_cast<float>(20.0 * std::log10(static_cast<double>(linear) / reference));
-}
-
-inline float decibelsToFloat(float db, float minusInfinityDb = -100.0f) {
-    constexpr double reference = 0.75;
-    if (db <= minusInfinityDb)
-        return 0.0f;
-    return static_cast<float>(reference * std::pow(10.0, static_cast<double>(db) / 20.0));
-}

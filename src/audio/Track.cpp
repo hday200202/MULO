@@ -25,6 +25,24 @@ Effect* Track::addEffect(const std::string& vstPath) {
         
         if (addedEffect && addedEffect->isSynthesizer()) {
         }
+
+        // All Parameters
+        const auto params = addedEffect->getAllParameters();
+        int i = 0;
+        for (const auto param : params) {
+            std::string name = param->getName(256).toStdString();
+            
+            if (name.find("CC") != std::string::npos) // Filter out any parameter containing "CC"
+                continue;
+
+            float value = param->getValue();
+            std::string effectKey = addedEffect->getName() + "_" + std::to_string(effects.size() - 1);
+            automationData[effectKey][name].emplace_back(0.0, value, 0.5f);
+            if (i == addedEffect->getNumParameters() - 1)
+                break;
+
+            ++i;
+        }
         
         return addedEffect;
     }

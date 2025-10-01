@@ -466,6 +466,12 @@ float Effect::getParameter(int index) const {
     return 0.0f;
 }
 
+const juce::Array<juce::AudioProcessorParameter *>& Effect::getAllParameters() const {
+    if (!plugin) return {};
+
+    return plugin->getParameters();
+}
+
 int Effect::getNumParameters() const {
     if (!plugin) return 0;
     return plugin->getParameters().size();
@@ -691,9 +697,7 @@ void Effect::cleanupScheduledPlugins() {
                     if (auto* editor = plugin->getActiveEditor()) {
                         plugin->editorBeingDeleted(editor);
                     }
-                } catch (const std::exception& e) {
-                } catch (...) {
-                }
+                } catch (const std::exception& e) {} catch (...) {}
             }
             
             plugin->releaseResources();
