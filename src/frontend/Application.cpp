@@ -5,6 +5,7 @@
 
 #include <tinyfiledialogs/tinyfiledialogs.hpp>
 #include <filesystem>
+#include <fstream>
 #include <chrono>
 #include <unordered_map>
 
@@ -148,6 +149,15 @@ void Application::update() {
         if (firebaseCallback) {
             firebaseCallback(firebaseState, extensions);
             firebaseCallback = nullptr;
+        }
+    }
+    
+    // Process upload requests
+    if (uploadFuture.status() == firebase::kFutureStatusComplete) {
+        bool success = (uploadFuture.error() == firebase::firestore::kErrorNone);
+        if (uploadCallback) {
+            uploadCallback(success);
+            uploadCallback = nullptr;
         }
     }
 #endif
@@ -1163,5 +1173,64 @@ void Application::fetchExtensions(std::function<void(FirebaseState, const std::v
     // Simulate async callback (in real app would use timer)
     firebaseState = FirebaseState::Success;
     callback(FirebaseState::Success, extensions);
+#endif
+}
+
+void Application::uploadExtension(const std::string& description, const std::string& binaryPath, const std::string& sourcePath, std::function<void(bool)> callback) {
+#ifdef FIREBASE_AVAILABLE
+    if (!firestore) {
+        callback(false);
+        return;
+    }
+    
+    uploadCallback = callback;
+    
+    // Extract filename from binary path for extension name
+    std::filesystem::path binPath(binaryPath);
+    std::string extensionName = binPath.stem().string();
+    
+    // Read binary file content
+    std::ifstream binaryFile(binaryPath, std::ios::binary);
+    if (!binaryFile.is_open()) {
+        callback(false);
+        return;
+    }
+    
+    std::vector<uint8_t> binaryData((std::istreambuf_iterator<char>(binaryFile)), std::istreambuf_iterator<char>());
+    binaryFile.close();
+    
+    // Read source file content
+    std::ifstream sourceFile(sourcePath);
+    if (!sourceFile.is_open()) {
+        callback(false);
+        return;
+    }
+    
+    std::string sourceContent((std::istreambuf_iterator<char>(sourceFile)), std::istreambuf_iterator<char>());
+    sourceFile.close();
+    
+    // Create extension document
+    firebase::firestore::MapFieldValue extensionData;
+    extensionData["name"] = firebase::firestore::FieldValue::String(extensionName);
+    extensionData["description"] = firebase::firestore::FieldValue::String(description);
+    extensionData["author"] = firebase::firestore::FieldValue::String("User"); // TODO: Get from auth
+    extensionData["version"] = firebase::firestore::FieldValue::String("1.0.0");
+    extensionData["verified"] = firebase::firestore::FieldValue::Boolean(false);
+    extensionData["binaryData"] = firebase::firestore::FieldValue::Blob(binaryData.data(), binaryData.size());
+    extensionData["sourceCode"] = firebase::firestore::FieldValue::String(sourceContent);
+    extensionData["uploadDate"] = firebase::firestore::FieldValue::ServerTimestamp();
+    
+    // Upload to Firestore
+    uploadFuture = firestore->Collection("extensions").Add(extensionData);
+#else
+    // Mock upload for testing
+    std::cout << "Mock: Uploading extension..." << std::endl;
+    std::cout << "  Name: " << std::filesystem::path(binaryPath).stem().string() << std::endl;
+    std::cout << "  Description: " << description << std::endl;
+    std::cout << "  Binary: " << binaryPath << std::endl;
+    std::cout << "  Source: " << sourcePath << std::endl;
+    
+    // Simulate successful upload
+    callback(true);
 #endif
 }

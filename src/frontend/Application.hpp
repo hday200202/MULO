@@ -212,6 +212,7 @@ public:
     
     void initFirebase();
     void fetchExtensions(std::function<void(FirebaseState, const std::vector<ExtensionData>&)> callback);
+    void uploadExtension(const std::string& description, const std::string& binaryPath, const std::string& sourcePath, std::function<void(bool)> callback);
     FirebaseState getFirebaseState() const { return firebaseState; }
     const std::vector<ExtensionData>& getExtensions() const { return extensions; }
 
@@ -286,10 +287,12 @@ private:
     std::unique_ptr<firebase::App> firebaseApp;
     firebase::firestore::Firestore* firestore = nullptr;
     firebase::Future<firebase::firestore::QuerySnapshot> extFuture;
+    firebase::Future<firebase::firestore::DocumentReference> uploadFuture;
 #endif
     FirebaseState firebaseState = FirebaseState::Idle;
     std::vector<ExtensionData> extensions;
     std::function<void(FirebaseState, const std::vector<ExtensionData>&)> firebaseCallback;
+    std::function<void(bool)> uploadCallback;
 
     void initUI();
     void initUIResources();

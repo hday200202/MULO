@@ -145,7 +145,7 @@ target_include_directories(MULO PRIVATE
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(GTK3 REQUIRED gtk+-3.0)
-    pkg_check_modules(WEBKIT2GTK REQUIRED webkit2gtk-4.0)
+    pkg_check_modules(WEBKIT2GTK REQUIRED webkit2gtk-4.1)
     target_include_directories(MULO PRIVATE ${GTK3_INCLUDE_DIRS} ${WEBKIT2GTK_INCLUDE_DIRS})
     target_link_libraries(MULO PRIVATE ${GTK3_LIBRARIES} ${WEBKIT2GTK_LIBRARIES})
     add_definitions(${GTK3_CFLAGS_OTHER} ${WEBKIT2GTK_CFLAGS_OTHER})

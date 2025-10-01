@@ -6,6 +6,7 @@
 class MarketplaceComponent : public MULOComponent {
 public:
     enum class LocalFirebaseState { Idle, Loading, Success, Error };
+    enum class UploadState { Idle, Uploading, Success, Error };
 
     struct LocalExtensionData {
         std::string id = "";
@@ -37,14 +38,27 @@ private:
 
     // State management
     LocalFirebaseState currentState = LocalFirebaseState::Idle;
+    UploadState uploadState = UploadState::Idle;
     bool shouldRebuildUI = false;
+    bool showUploadSection = false;
 
     std::vector<LocalExtensionData> extensionList;
     uilo::ScrollableColumn* extensionListContainer = nullptr;
+    
+    // Upload section components
+    uilo::TextInput* descriptionInput = nullptr;
+    std::string selectedBinaryPath = "";
+    std::string selectedSourcePath = "";
+    std::string uploadDescription = "";
 
     void fetchExtensions();
+    void uploadExtension();
+    void selectBinaryFile();
+    void selectSourceFile();
     uilo::Container* buildInitialLayout();
+    uilo::Container* buildUploadSection();
     void rebuildExtensionList();
+    void toggleUploadSection();
 };
 
 #include "Application.hpp"
@@ -69,7 +83,13 @@ inline void MarketplaceComponent::update() {
     if (!window.isOpen()) return;
     
     if (shouldRebuildUI) {
-        rebuildExtensionList();
+        if (showUploadSection) {
+            // Rebuild the entire UI when switching to upload section
+            ui->clearPages();
+            ui->addPage(page({buildInitialLayout()}), "marketplace");
+        } else {
+            rebuildExtensionList();
+        }
         shouldRebuildUI = false;
     }
 
@@ -153,11 +173,25 @@ inline uilo::Container* MarketplaceComponent::buildInitialLayout() {
     extensionListContainer = scrollableColumn(Modifier(), contains{});
     extensionListContainer->setScrollSpeed(40.f);
 
-    return column(Modifier().setColor(app->resources.activeTheme->middle_color), contains{
+    auto mainContent = column(Modifier().setColor(app->resources.activeTheme->middle_color), contains{
         row(Modifier().setfixedHeight(48).setColor(app->resources.activeTheme->foreground_color), contains{
             text(Modifier().align(Align::CENTER_X | Align::CENTER_Y).setfixedHeight(24), "MULO Extension Marketplace", app->resources.dejavuSansFont)
         }),
-        extensionListContainer,
+        row(Modifier().setfixedHeight(48).setColor(app->resources.activeTheme->foreground_color), contains{
+            spacer(Modifier().setfixedWidth(16).align(Align::LEFT)),
+            button(
+                Modifier().align(Align::CENTER_Y | Align::LEFT).setfixedHeight(32).setfixedWidth(120).setColor(app->resources.activeTheme->button_color)
+                    .onLClick([&](){ showUploadSection = false; shouldRebuildUI = true; }),
+                ButtonStyle::Pill, "Browse", app->resources.dejavuSansFont
+            ),
+            button(
+                Modifier().align(Align::CENTER_Y | Align::LEFT).setfixedHeight(32).setfixedWidth(120).setColor(app->resources.activeTheme->accent_color)
+                    .onLClick([&](){ showUploadSection = true; shouldRebuildUI = true; }),
+                ButtonStyle::Pill, "Upload", app->resources.dejavuSansFont
+            ),
+            spacer(Modifier().setfixedWidth(16).align(Align::RIGHT))
+        }),
+        showUploadSection ? buildUploadSection() : extensionListContainer,
         row(Modifier().setfixedHeight(64).setColor(app->resources.activeTheme->foreground_color), contains{
             spacer(Modifier().setfixedWidth(16).align(Align::LEFT)),
             button(
@@ -172,6 +206,153 @@ inline uilo::Container* MarketplaceComponent::buildInitialLayout() {
             ),
             spacer(Modifier().setfixedWidth(16).align(Align::RIGHT))
         })
+    });
+
+    return mainContent;
+}
+
+inline uilo::Container* MarketplaceComponent::buildUploadSection() {
+    using namespace uilo;
+    
+    auto uploadContainer = scrollableColumn(Modifier(), contains{});
+    uploadContainer->setScrollSpeed(40.f);
+    
+    // Title
+    uploadContainer->addElement(
+        text(Modifier().align(Align::CENTER_X).setfixedHeight(32).setColor(app->resources.activeTheme->primary_text_color), 
+             "Upload Extension", app->resources.dejavuSansFont)
+    );
+    
+    // Description section
+    uploadContainer->addElement(
+        text(Modifier().align(Align::LEFT).setfixedHeight(24).setColor(app->resources.activeTheme->primary_text_color), 
+             "Description:", app->resources.dejavuSansFont)
+    );
+    
+    descriptionInput = textInput(
+        Modifier().setfixedHeight(80).setColor(app->resources.activeTheme->foreground_color)
+            .onTextChange([&](const std::string& text){ uploadDescription = text; }),
+        "Enter extension description...", app->resources.dejavuSansFont
+    );
+    uploadContainer->addElement(descriptionInput);
+    
+    // Binary file selection
+    uploadContainer->addElement(
+        text(Modifier().align(Align::LEFT).setfixedHeight(24).setColor(app->resources.activeTheme->primary_text_color), 
+             "Binary File (.dll/.so/.dylib):", app->resources.dejavuSansFont)
+    );
+    
+    auto binaryRow = row(Modifier().setfixedHeight(48), contains{
+        text(Modifier().align(Align::LEFT | Align::CENTER_Y).setColor(app->resources.activeTheme->secondary_text_color), 
+             selectedBinaryPath.empty() ? "No file selected" : selectedBinaryPath, app->resources.dejavuSansFont),
+        button(
+            Modifier().align(Align::RIGHT | Align::CENTER_Y).setfixedWidth(120).setfixedHeight(32).setColor(app->resources.activeTheme->button_color)
+                .onLClick([&](){ selectBinaryFile(); }),
+            ButtonStyle::Pill, "Select Binary", app->resources.dejavuSansFont
+        )
+    });
+    uploadContainer->addElement(binaryRow);
+    
+    // Source file selection
+    uploadContainer->addElement(
+        text(Modifier().align(Align::LEFT).setfixedHeight(24).setColor(app->resources.activeTheme->primary_text_color), 
+             "Source File (.hpp):", app->resources.dejavuSansFont)
+    );
+    
+    auto sourceRow = row(Modifier().setfixedHeight(48), contains{
+        text(Modifier().align(Align::LEFT | Align::CENTER_Y).setColor(app->resources.activeTheme->secondary_text_color), 
+             selectedSourcePath.empty() ? "No file selected" : selectedSourcePath, app->resources.dejavuSansFont),
+        button(
+            Modifier().align(Align::RIGHT | Align::CENTER_Y).setfixedWidth(120).setfixedHeight(32).setColor(app->resources.activeTheme->button_color)
+                .onLClick([&](){ selectSourceFile(); }),
+            ButtonStyle::Pill, "Select Source", app->resources.dejavuSansFont
+        )
+    });
+    uploadContainer->addElement(sourceRow);
+    
+    // Upload status
+    std::string statusText = "";
+    sf::Color statusColor = app->resources.activeTheme->primary_text_color;
+    
+    switch(uploadState) {
+        case UploadState::Uploading:
+            statusText = "Uploading...";
+            statusColor = sf::Color::Yellow;
+            break;
+        case UploadState::Success:
+            statusText = "Upload successful!";
+            statusColor = sf::Color::Green;
+            break;
+        case UploadState::Error:
+            statusText = "Upload failed. Please try again.";
+            statusColor = sf::Color::Red;
+            break;
+        case UploadState::Idle:
+        default:
+            break;
+    }
+    
+    if (!statusText.empty()) {
+        uploadContainer->addElement(
+            text(Modifier().align(Align::CENTER_X).setfixedHeight(24).setColor(statusColor), 
+                 statusText, app->resources.dejavuSansFont)
+        );
+    }
+    
+    // Upload button
+    bool canUpload = !uploadDescription.empty() && !selectedBinaryPath.empty() && !selectedSourcePath.empty() && uploadState != UploadState::Uploading;
+    
+    uploadContainer->addElement(
+        button(
+            Modifier().align(Align::CENTER_X).setfixedWidth(150).setfixedHeight(40)
+                .setColor(canUpload ? app->resources.activeTheme->accent_color : app->resources.activeTheme->mute_color)
+                .onLClick([&](){ if (canUpload) uploadExtension(); }),
+            ButtonStyle::Pill, "Upload Extension", app->resources.dejavuSansFont
+        )
+    );
+    
+    return uploadContainer;
+}
+
+inline void MarketplaceComponent::selectBinaryFile() {
+#ifdef _WIN32
+    selectedBinaryPath = app->selectFile({"*.dll"});
+#elif __APPLE__
+    selectedBinaryPath = app->selectFile({"*.dylib"});
+#else
+    selectedBinaryPath = app->selectFile({"*.so"});
+#endif
+    shouldRebuildUI = true;
+}
+
+inline void MarketplaceComponent::selectSourceFile() {
+    selectedSourcePath = app->selectFile({"*.hpp"});
+    shouldRebuildUI = true;
+}
+
+inline void MarketplaceComponent::uploadExtension() {
+    if (uploadDescription.empty() || selectedBinaryPath.empty() || selectedSourcePath.empty()) {
+        uploadState = UploadState::Error;
+        shouldRebuildUI = true;
+        return;
+    }
+    
+    uploadState = UploadState::Uploading;
+    shouldRebuildUI = true;
+    
+    // Call Application's upload method (to be implemented)
+    app->uploadExtension(uploadDescription, selectedBinaryPath, selectedSourcePath, [&](bool success) {
+        uploadState = success ? UploadState::Success : UploadState::Error;
+        if (success) {
+            // Clear form on success
+            uploadDescription = "";
+            selectedBinaryPath = "";
+            selectedSourcePath = "";
+            if (descriptionInput) {
+                descriptionInput->setText("");
+            }
+        }
+        shouldRebuildUI = true;
     });
 }
 
