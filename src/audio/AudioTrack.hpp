@@ -29,10 +29,18 @@ public:
     // Audio processing implementation
     void process(double playheadSeconds, juce::AudioBuffer<float>& outputBuffer, int numSamples, double sampleRate) override;
     void prepareToPlay(double sampleRate, int bufferSize) override;
+    
+    // Cache management
+    void preloadAllClips(double sampleRate);
+    void unloadAllClips();
 
 private:
     // Audio-specific data
     std::vector<AudioClip> clips;
     std::unique_ptr<AudioClip> referenceClip;
     juce::AudioFormatManager& formatManager;
+    
+    double currentSampleRate = 0.0;
+    int currentBufferSize = 0;
+    bool isActive = false;
 };
