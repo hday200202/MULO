@@ -124,6 +124,8 @@ void Application::update() {
         if (component)
             component->update();
 
+    updateParameterTracking();
+
     // Process Firebase requests
 #ifdef FIREBASE_AVAILABLE
     if (firebaseState == FirebaseState::Loading && extFuture.status() == firebase::kFutureStatusComplete) {
@@ -510,7 +512,6 @@ void Application::initUIResources() {
     resources.playIcon          = sf::Image(findIcon("play.png"));
     resources.pauseIcon         = sf::Image(findIcon("pause.png"));
     resources.settingsIcon      = sf::Image(findIcon("settings.png"));
-    resources.pianoRollIcon     = sf::Image(findIcon("piano.png"));
     resources.loadIcon          = sf::Image(findIcon("load.png"));
     resources.saveIcon          = sf::Image(findIcon("save.png"));
     resources.exportIcon        = sf::Image(findIcon("export.png"));
@@ -522,6 +523,7 @@ void Application::initUIResources() {
     resources.mixerIcon         = sf::Image(findIcon("mixer.png"));
     resources.storeIcon         = sf::Image(findIcon("store.png"));
     resources.fileIcon          = sf::Image(findIcon("file.png"));
+    resources.automationIcon    = sf::Image(findIcon("showautomation.png"));
 }
 
 std::string Application::selectDirectory() {
@@ -981,9 +983,7 @@ void Application::saveConfig() {
         }
         
         file << config.dump(2);
-        file.close();
-        
-        DEBUG_PRINT("Configuration saved to: " << configPath);
+        file.close();        
     } catch (const std::exception& e) {
         DEBUG_PRINT("Error saving config: " << e.what());
     }
@@ -1164,4 +1164,18 @@ void Application::fetchExtensions(std::function<void(FirebaseState, const std::v
     firebaseState = FirebaseState::Success;
     callback(FirebaseState::Success, extensions);
 #endif
+}
+
+void Application::updateParameterTracking() {
+    // Update parameter tracking for all tracks
+    for (auto& track : getAllTracks()) {
+        if (track) {
+            track->updateParameterTracking();
+        }
+    }
+    
+    // Also update master track
+    if (auto* masterTrack = getMasterTrack()) {
+        masterTrack->updateParameterTracking();
+    }
 }

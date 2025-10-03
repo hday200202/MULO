@@ -19,9 +19,10 @@ private:
     Image* exportButton;
     Image* playButton;
     Image* metronomeButton;
+    Image* automationButton;
     Image* pianoRollButton;
-    Image* extStore;
     Image* mixerButton;
+    Image* extStore;
     Image* settingsButton;
 
     bool wasPlaying = false;
@@ -120,6 +121,21 @@ void AppControls::init() {
         "metronome_button"
     );
 
+    automationButton = image(
+        Modifier()
+            .align(Align::RIGHT | Align::CENTER_Y)
+            .setfixedHeight(48.f)
+            .setfixedWidth(48)
+            .setColor(app->resources.activeTheme->button_color)
+            .onLClick([&](){
+                app->writeConfig<bool>("show_automation", 
+                    !app->readConfig<bool>("show_automation", false));
+            }),
+        app->resources.automationIcon,
+        true,
+        "show_automation_button"
+    );
+
     pianoRollButton = image(
         Modifier()
             .align(Align::RIGHT | Align::CENTER_Y)
@@ -215,13 +231,15 @@ void AppControls::init() {
             spacer(Modifier().setfixedWidth(16).align(Align::CENTER_X)),
             metronomeButton,
             spacer(Modifier().setfixedWidth(16).align(Align::RIGHT)),
+            automationButton,
+            spacer(Modifier().setfixedWidth(16).align(Align::RIGHT)),
             pianoRollButton,
+            spacer(Modifier().setfixedWidth(16).align(Align::RIGHT)),
+            mixerButton,
             spacer(Modifier().setfixedWidth(16).align(Align::RIGHT)),
             extStore,
             spacer(Modifier().setfixedWidth(16).align(Align::RIGHT)),
             settingsButton,
-            spacer(Modifier().setfixedWidth(16).align(Align::RIGHT)),
-            mixerButton,
             spacer(Modifier().setfixedWidth(16).align(Align::RIGHT)),
         }
     );
@@ -354,6 +372,20 @@ bool AppControls::handleEvents() {
         ));
         metronomeButton->setImage(app->resources.metronomeIcon, true);
         metronomeButton->m_isHovered = false;
+    }
+
+    if (automationButton->isHovered()) {
+        automationButton->m_modifier.setColor(sf::Color(
+            std::min(255, (int)(baseButtonColor.r + 50)),
+            std::min(255, (int)(baseButtonColor.g + 50)),
+            std::min(255, (int)(baseButtonColor.b + 50))
+        ));
+        automationButton->setImage(app->resources.automationIcon, true);
+        automationButton->m_isHovered = false;
+    }
+    else {
+        automationButton->m_modifier.setColor(baseButtonColor);
+        automationButton->setImage(app->resources.automationIcon, true);
     }
 
     if (pianoRollButton->isHovered()) {

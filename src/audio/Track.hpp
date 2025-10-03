@@ -79,6 +79,7 @@ public:
     bool moveEffect(int fromIndex, int toIndex);
     void clearEffects();
 
+    // Automation system
     inline void addAutomationPoint(
         const std::string& effectName, 
         const std::string& parameterName, 
@@ -86,6 +87,12 @@ public:
     ) {
         automationData[effectName][parameterName].push_back(automationPoint);
     }
+
+    // Parameter change detection for automation
+    void updateParameterTracking();
+    const std::pair<std::string, std::string>& getPotentialAutomation() const;
+    void clearPotentialAutomation();
+    bool hasPotentialAutomation() const;
 
     inline void applyAutomation(double positionSeconds) {
         // for any parameter that is automated, apply the 0.f - 1.f level to that parameter
@@ -116,14 +123,6 @@ public:
                 }
             }
         }
-
-        // Temporary
-        for (auto& [effect, params] : automationData) {
-            std::cout << effect << "\n";
-            for (auto& [paramName, values] : params) {
-                std::cout << "\t" << paramName + ": " << values[0].value << "\n";
-            }
-        }
     }
 
 protected:
@@ -143,9 +142,17 @@ protected:
 
     // Effect name -> parameter name -> automation points
     std::unordered_map<std::string, std::unordered_map<std::string, std::vector<AutomationPoint>>> automationData;
+    
+    // Parameter change detection for automation
+    std::pair<std::string, std::string> potentialAutomation;
+    std::unordered_map<std::string, std::unordered_map<std::string, float>> lastParameterValues;
+    bool hasActivePotentialAutomation = false;
 
     // Helper method for effects management
     void updateEffectIndices();
+    
+    // Parameter change detection
+    void detectParameterChanges();
 };
 
 inline float floatToDecibels(float linear, float minusInfinityDb = -100.0f) {

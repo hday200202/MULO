@@ -197,6 +197,9 @@ public:
     MIDIClip* getSelectedMIDIClip() const;
     MIDIClip* getTimelineSelectedMIDIClip() const;
 
+    // Parameter tracking for automation
+    void updateParameterTracking();
+
     // Firebase methods for MarketplaceComponent
     struct ExtensionData {
         std::string id = "";

@@ -128,6 +128,7 @@ private:
         Row* masterTrackElement = nullptr;
         Button* muteMasterButton = nullptr;
         Slider* masterVolumeSlider = nullptr;
+        Row* masterTrackLabel = nullptr;
         std::unordered_map<std::string, Button*> trackMuteButtons;
         std::unordered_map<std::string, Slider*> trackVolumeSliders;
         std::unordered_map<std::string, Button*> trackSoloButtons;
@@ -295,6 +296,10 @@ void TimelineComponent::update() {
     
     updateTimelineState();
     
+    // Check if scrubber is being dragged to disable timeline mouse input
+    bool scrubberDragging = app->readConfig<bool>("scrubber_dragging", false);
+    features.enableMouseInput = !scrubberDragging;
+
     if (features.enableMouseInput || features.enableKeyboardInput) {
         handleAllUserInput();
     }
@@ -384,6 +389,20 @@ void TimelineComponent::update() {
             }
         }
     }
+
+    // Record timeline width for scrubber bar size calculation
+    float timelineViewWidth = layout->getSize().x - uiElements.masterTrackLabel->getSize().x;
+    float timelineStart = secondsToXPosition(app->getBpm(), 100.f * app->uiState.timelineZoomLevel, 0.0);
+    float timelineEnd = secondsToXPosition(app->getBpm(), 100.f * app->uiState.timelineZoomLevel, lastClipEndSeconds);
+    float totalTimelineWidth = timelineEnd - timelineStart;
+    app->writeConfig<float>("scrubber_width_ratio", timelineViewWidth / totalTimelineWidth);
+
+    // Where the scrubber bar should start (percentage)
+    if (-timelineState.timelineOffset <= totalTimelineWidth) {
+        float viewStartRatio = -timelineState.timelineOffset / totalTimelineWidth;
+        app->writeConfig("scrubber_start_ratio", viewStartRatio);
+    }
+
 }
 
 void TimelineComponent::updateTimelineState() {
@@ -440,6 +459,35 @@ uilo::Row* TimelineComponent::masterTrack() {
         "Master_volume_slider"
     );
 
+    uiElements.masterTrackLabel = row(
+        Modifier(),
+    contains{
+        spacer(Modifier().setfixedWidth(8).align(Align::LEFT)),
+
+        column(
+            Modifier(),
+        contains{
+            text(
+                Modifier().setColor(app->resources.activeTheme->primary_text_color).setfixedHeight(24).align(Align::LEFT | Align::TOP),
+                "Master",
+                app->resources.dejavuSansFont
+            ),
+
+            row(
+                Modifier(),
+            contains{
+                spacer(Modifier().setfixedWidth(16).align(Align::LEFT)),
+
+                uiElements.muteMasterButton
+            }),
+        }),
+
+        uiElements.masterVolumeSlider,
+
+        spacer(Modifier().setfixedWidth(16).align(Align::RIGHT)),
+
+    }, "Master_Track_Label");
+
     auto* masterTrackColumn = column(
         Modifier()
             .align(Align::RIGHT)
@@ -448,34 +496,7 @@ uilo::Row* TimelineComponent::masterTrack() {
     contains{
         spacer(Modifier().setfixedHeight(12).align(Align::TOP)),
 
-        row(
-            Modifier(),
-        contains{
-            spacer(Modifier().setfixedWidth(8).align(Align::LEFT)),
-
-            column(
-                Modifier(),
-            contains{
-                text(
-                    Modifier().setColor(app->resources.activeTheme->primary_text_color).setfixedHeight(24).align(Align::LEFT | Align::TOP),
-                    "Master",
-                    app->resources.dejavuSansFont
-                ),
-
-                row(
-                    Modifier(),
-                contains{
-                    spacer(Modifier().setfixedWidth(16).align(Align::LEFT)),
-
-                    uiElements.muteMasterButton
-                }),
-            }),
-
-            uiElements.masterVolumeSlider,
-
-            spacer(Modifier().setfixedWidth(16).align(Align::RIGHT)),
-
-        }, "Master_Track_Label"),
+        uiElements.masterTrackLabel,
 
         spacer(Modifier().setfixedHeight(8).align(Align::BOTTOM)),
     }, "Master_Track_Column");
@@ -805,7 +826,7 @@ void TimelineComponent::handleCustomUIElements() {
                     
                     if (clipRect.contains(localMousePos)) {
                         if (!app->getWindow().hasFocus()) continue;
-                        if (!ctrlPressed && !prevCtrlPressed && sf::Mouse::isButtonPressed(sf::Mouse::Button::Left)) {
+                        if (!ctrlPressed && !prevCtrlPressed && sf::Mouse::isButtonPressed(sf::Mouse::Button::Left) && features.enableMouseInput) {
                             if (!dragState.isDraggingClip && !dragState.clipSelectedForDrag) {
                                 selectedMIDIClipInfo.hasSelection = true;
                                 selectedMIDIClipInfo.startTime = mc.startTime;
@@ -886,7 +907,7 @@ void TimelineComponent::handleCustomUIElements() {
                     
                     if (clipRect.contains(localMousePos)) {
                         if (!app->getWindow().hasFocus()) continue;
-                        if (!ctrlPressed && !prevCtrlPressed && sf::Mouse::isButtonPressed(sf::Mouse::Button::Left)) {
+                        if (!ctrlPressed && !prevCtrlPressed && sf::Mouse::isButtonPressed(sf::Mouse::Button::Left) && features.enableMouseInput) {
                             if (!dragState.isDraggingClip && !dragState.clipSelectedForDrag) {
                                 selectedClip = const_cast<AudioClip*>(&clipsVec[i]);
                                 selectedMIDIClipInfo.hasSelection = false;  // Clear MIDI clip selection
@@ -939,7 +960,7 @@ void TimelineComponent::handleCustomUIElements() {
             }
 
             // Handle empty timeline area clicks for virtual cursor
-            if (!dragState.isDraggingClip && sf::Mouse::isButtonPressed(sf::Mouse::Button::Left) && app->getWindow().hasFocus()) {
+            if (!dragState.isDraggingClip && sf::Mouse::isButtonPressed(sf::Mouse::Button::Left) && app->getWindow().hasFocus() && features.enableMouseInput) {
                 const sf::Vector2f localMousePos = mousePos - trackRowPos;
                 
                 // Check if click is in timeline area but not on any clips
@@ -1713,6 +1734,7 @@ void TimelineComponent::handleClipSelection() {
 }
 
 void TimelineComponent::handleAllUserInput() {
+    if (app->ui->isInputBlocked()) return;
     if (!features.enableKeyboardInput && !features.enableMouseInput) return;
     
     if (features.enableKeyboardInput) {
@@ -1778,27 +1800,6 @@ void TimelineComponent::handleKeyboardInput() {
         }
     }
 
-    // Handle zoom controls
-    constexpr float zoomSpeed = 0.2f;
-    constexpr float maxZoom = 5.0f;
-    constexpr float minZoom = 0.1f;
-    
-    float newZoom = app->uiState.timelineZoomLevel;
-
-    if (ctrl && plus && !prevPlus) {
-        newZoom = std::min(maxZoom, app->uiState.timelineZoomLevel + zoomSpeed);
-    }
-    if (ctrl && minus && !prevMinus) {
-        newZoom = std::max(minZoom, app->uiState.timelineZoomLevel - zoomSpeed);
-    }
-
-    // Removed scroll-based zoom - using only +/- keys for zoom
-    // This allows UILO to handle all scroll events for scrolling
-    
-    if (newZoom != app->uiState.timelineZoomLevel) {
-        handleZoomChange(newZoom);
-    }
-
     prevCtrl = ctrl;
     prevPlus = plus;
     prevMinus = minus;
@@ -1817,20 +1818,36 @@ void TimelineComponent::handleMouseInput() {
     const bool ctrlPressed = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) || sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RControl);
     
     // Handle scroll-based zoom (only when Ctrl is held)
-    // This allows UILO to handle shift+scroll and regular scroll for scrolling
     if (ctrlPressed) {
         const float verticalDelta = app->ui->getVerticalScrollDelta();
         if (verticalDelta != 0.f) {
-            constexpr float zoomSpeed = 0.2f;
             constexpr float maxZoom = 5.0f;
             constexpr float minZoom = 0.1f;
             
-            float newZoom = app->uiState.timelineZoomLevel + (verticalDelta > 0 ? zoomSpeed : -zoomSpeed);
+            float currentZoom = app->uiState.timelineZoomLevel;
+            float normalizedZoom = (currentZoom - minZoom) / (maxZoom - minZoom);
+            
+            float baseSpeed = 0.08f;
+            float speedMultiplier = 1.0f;
+            
+            if (normalizedZoom < 0.25f) {
+                float nearMinFactor = normalizedZoom / 0.25f;
+                speedMultiplier = 0.2f + (nearMinFactor * 0.8f);
+            }
+            else if (normalizedZoom > 0.88f) {
+                float nearMaxFactor = (normalizedZoom - 0.88f) / 0.12f;
+                speedMultiplier = 1.0f - (nearMaxFactor * 0.5f);
+            }
+            
+            float adaptiveZoomSpeed = baseSpeed * speedMultiplier;
+            adaptiveZoomSpeed = std::max(0.015f, adaptiveZoomSpeed);
+            
+            float newZoom = currentZoom + (verticalDelta > 0 ? adaptiveZoomSpeed : -adaptiveZoomSpeed);
             newZoom = std::clamp(newZoom, minZoom, maxZoom);
             
             if (newZoom != app->uiState.timelineZoomLevel) {
                 handleZoomChange(newZoom);
-                app->ui->resetScrollDeltas(); // Consume the scroll event so UILO doesn't process it
+                app->ui->resetScrollDeltas();
             }
         }
     }

@@ -133,45 +133,18 @@ void MIDITrack::prepareToPlay(double sampleRate, int bufferSize) {
             effect->prepareToPlay(sampleRate, bufferSize);
         }
     }
-    
-    // Add virtual instrument parameters (effect at index 0) if it exists
-    if (!effects.empty() && effects[0]) {
-        const auto params = effects[0]->getAllParameters();
-        for (const auto param : params) {
-            if (!param) continue;
-            std::string name = param->getName(256).toStdString();
-            if (name.find("MIDI CC") != std::string::npos) continue; // Filter out MIDI CC parameters for virtual instruments
-            float value = param->getValue();
-            std::string effectKey = effects[0]->getName() + "_0";
-            automationData[effectKey][name].emplace_back(0.0, value, 0.5f);
-        }
-    }
 }
 
-// Audio clip management - minimal implementation for compatibility
-void MIDITrack::clearClips() {
-    // MIDI tracks don't use audio clips, but this is required for interface compatibility
-}
+void MIDITrack::clearClips() {}
 
-const std::vector<AudioClip>& MIDITrack::getClips() const {
-    // Return empty vector - MIDI tracks don't use audio clips
-    return emptyClips;
-}
+const std::vector<AudioClip>& MIDITrack::getClips() const { return emptyClips; }
 
-void MIDITrack::addClip(const AudioClip& clip) {
-    // MIDI tracks don't use audio clips - this is a no-op for interface compatibility
-}
+void MIDITrack::addClip(const AudioClip& clip) {}
 
-void MIDITrack::removeClip(size_t index) {
-    // MIDI tracks don't use audio clips - this is a no-op for interface compatibility  
-}
+void MIDITrack::removeClip(size_t index) {}
 
-AudioClip* MIDITrack::getReferenceClip() {
-    // MIDI tracks don't use audio clips
-    return nullptr;
-}
+AudioClip* MIDITrack::getReferenceClip() { return nullptr; }
 
-// MIDI clip management - the actual functionality for MIDI tracks
 void MIDITrack::clearMIDIClips() {
     midiClips.clear();
 }
@@ -205,24 +178,6 @@ void MIDITrack::processEffectsWithMidi(juce::AudioBuffer<float>& buffer, juce::M
     for (size_t i = 0; i < effects.size(); ++i) {
         const auto& effect = effects[i];
         if (effect && effect->enabled()) {
-            // apply automation (first point) to parameters
-            auto params = effect->getAllParameters();
-            std::string effectKey = effect->getName() + "_" + std::to_string(i);
-            auto it = automationData.find(effectKey);
-            if (it != automationData.end()) {
-                auto& paramMap = it->second;
-                for (int p = 0; p < params.size(); ++p) {
-                    auto* ap = params[p];
-                    if (!ap) continue;
-                    std::string name = ap->getName(256).toStdString();
-                    auto pit = paramMap.find(name);
-                    if (pit != paramMap.end() && !pit->second.empty()) {
-                        float val = pit->second.front().value;
-                        effect->setParameter(p, val);
-                    }
-                }
-            }
-
             if (effect->isSynthesizer()) {
                 effect->processAudio(buffer, midiBuffer);
             } else {

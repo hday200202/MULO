@@ -128,3 +128,51 @@ void Track::updateEffectIndices() {
         }
     }
 }
+
+void Track::updateParameterTracking() {
+    for (size_t i = 0; i < effects.size(); ++i) {
+        const auto& effect = effects[i];
+        if (!effect) continue;
+        
+        std::string effectKey = effect->getName() + "_" + std::to_string(i);
+        auto params = effect->getAllParameters();
+        
+        for (int p = 0; p < params.size(); ++p) {
+            auto* param = params[p];
+            if (!param) continue;
+            
+            std::string paramName = param->getName(256).toStdString();
+            float currentValue = param->getValue();
+            
+            // Check if this is the first time we're tracking this parameter
+            if (lastParameterValues[effectKey].find(paramName) == lastParameterValues[effectKey].end()) {
+                lastParameterValues[effectKey][paramName] = currentValue;
+                continue;
+            }
+            
+            // Check if parameter value has changed
+            float lastValue = lastParameterValues[effectKey][paramName];
+            if (std::abs(currentValue - lastValue) > 0.001f) {
+                potentialAutomation = {effectKey, paramName};
+                hasActivePotentialAutomation = true;
+                lastParameterValues[effectKey][paramName] = currentValue;
+
+                std::cout << effectKey << ": " << paramName << " = " << currentValue;
+                return;
+            }
+        }
+    }
+}
+
+const std::pair<std::string, std::string>& Track::getPotentialAutomation() const {
+    return potentialAutomation;
+}
+
+void Track::clearPotentialAutomation() {
+    potentialAutomation = {"", ""};
+    hasActivePotentialAutomation = false;
+}
+
+bool Track::hasPotentialAutomation() const {
+    return hasActivePotentialAutomation;
+}
