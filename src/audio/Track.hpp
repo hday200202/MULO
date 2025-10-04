@@ -6,11 +6,33 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <limits>
 
 #include "Effect.hpp"
 
-// Forward declarations
 class AudioClip;
+
+inline float floatToDecibels(float linear, float minusInfinityDb = -100.0f) {
+    constexpr double reference = 0.75;
+    if (linear <= 0.0)
+        return minusInfinityDb;
+    return static_cast<float>(20.0 * std::log10(static_cast<double>(linear) / reference));
+}
+
+inline float decibelsToFloat(float db, float minusInfinityDb = -100.0f) {
+    constexpr double reference = 0.75;
+    if (db <= minusInfinityDb)
+        return 0.0f;
+    return static_cast<float>(reference * std::pow(10.0, static_cast<double>(db) / 20.0));
+}
+
+inline float volumeSliderToAutomation(float sliderValue, float minusInfinityDb = -100.0f, float maxDb = 6.0f) {
+    return juce::jlimit(0.0f, 1.0f, sliderValue);
+}
+
+inline float automationToVolumeSlider(float automationValue, float minusInfinityDb = -100.0f, float maxDb = 6.0f) {
+    return juce::jlimit(0.0f, 1.0f, automationValue);
+}
 
 // Base Track class - contains common functionality for all track types
 class Track {
@@ -93,18 +115,82 @@ public:
     const std::pair<std::string, std::string>& getPotentialAutomation() const;
     void clearPotentialAutomation();
     bool hasPotentialAutomation() const;
+    
+    float getCurrentParameterValue(const std::string& effectName, const std::string& parameterName) const;
 
     inline void applyAutomation(double positionSeconds) {
-        // for any parameter that is automated, apply the 0.f - 1.f level to that parameter
-        // for the current position in engine.
-
-        // TODO volume at position
-
-        // TODO pan at position
+        // Apply Track parameter automation only if there are points other than the default point
+        auto trackIt = automationData.find("Track");
+        if (trackIt != automationData.end()) {
+            auto& trackParams = trackIt->second;
+            
+            auto volumeIt = trackParams.find("Volume");
+            if (volumeIt != trackParams.end() && !volumeIt->second.empty()) {
+                bool hasTimelineAutomation = false;
+                for (const auto& point : volumeIt->second) {
+                    if (point.time >= 0.0) {
+                        hasTimelineAutomation = true;
+                        break;
+                    }
+                }
+                
+                if (hasTimelineAutomation) {
+                    float targetValue = -1.0f;
+                    float minDistance = std::numeric_limits<float>::max();
+                    
+                    for (const auto& point : volumeIt->second) {
+                        if (point.time >= 0.0) {
+                            float distance = std::abs(point.time - positionSeconds);
+                            if (distance < minDistance) {
+                                minDistance = distance;
+                                targetValue = point.value;
+                            }
+                        }
+                    }
+                    
+                    if (targetValue >= 0.0f) {
+                        float dbValue = automationToVolumeSlider(targetValue);
+                        volumeDb = floatToDecibels(dbValue);
+                    }
+                }
+            }
+            
+            auto panIt = trackParams.find("Pan");
+            if (panIt != trackParams.end() && !panIt->second.empty()) {
+                bool hasTimelineAutomation = false;
+                for (const auto& point : panIt->second) {
+                    if (point.time >= 0.0) {
+                        hasTimelineAutomation = true;
+                        break;
+                    }
+                }
+                
+                if (hasTimelineAutomation) {
+                    float targetValue = -1.0f;
+                    float minDistance = std::numeric_limits<float>::max();
+                    
+                    for (const auto& point : panIt->second) {
+                        if (point.time >= 0.0) {
+                            float distance = std::abs(point.time - positionSeconds);
+                            if (distance < minDistance) {
+                                minDistance = distance;
+                                targetValue = point.value;
+                            }
+                        }
+                    }
+                    
+                    if (targetValue >= 0.0f) {
+                        pan = (targetValue * 2.0f) - 1.0f;
+                        pan = juce::jlimit(-1.0f, 1.0f, pan);
+                    }
+                }
+            }
+        }
 
         for (size_t i = 0; i < effects.size(); ++i) {
             const auto& effect = effects[i];
-            // Apply automation values to effect parameters
+            if (!effect) continue;
+            
             auto params = effect->getAllParameters();
             std::string effectKey = effect->getName() + "_" + std::to_string(i);
             auto it = automationData.find(effectKey);
@@ -116,9 +202,32 @@ public:
                     std::string name = ap->getName(256).toStdString();
                     auto pit = paramMap.find(name);
                     if (pit != paramMap.end() && !pit->second.empty()) {
-                        // use first automation point value for now
-                        float val = pit->second.front().value;
-                        effect->setParameter(p, val);
+                        bool hasTimelineAutomation = false;
+                        for (const auto& point : pit->second) {
+                            if (point.time >= 0.0) {
+                                hasTimelineAutomation = true;
+                                break;
+                            }
+                        }
+                        
+                        if (hasTimelineAutomation) {
+                            float targetValue = -1.0f;
+                            float minDistance = std::numeric_limits<float>::max();
+                            
+                            for (const auto& point : pit->second) {
+                                if (point.time >= 0.0) {
+                                    float distance = std::abs(point.time - positionSeconds);
+                                    if (distance < minDistance) {
+                                        minDistance = distance;
+                                        targetValue = point.value;
+                                    }
+                                }
+                            }
+                            
+                            if (targetValue >= 0.0f) {
+                                effect->setParameter(p, targetValue);
+                            }
+                        }
                     }
                 }
             }
@@ -154,17 +263,3 @@ protected:
     // Parameter change detection
     void detectParameterChanges();
 };
-
-inline float floatToDecibels(float linear, float minusInfinityDb = -100.0f) {
-    constexpr double reference = 0.75;
-    if (linear <= 0.0)
-        return minusInfinityDb;
-    return static_cast<float>(20.0 * std::log10(static_cast<double>(linear) / reference));
-}
-
-inline float decibelsToFloat(float db, float minusInfinityDb = -100.0f) {
-    constexpr double reference = 0.75;
-    if (db <= minusInfinityDb)
-        return 0.0f;
-    return static_cast<float>(reference * std::pow(10.0, static_cast<double>(db) / 20.0));
-}

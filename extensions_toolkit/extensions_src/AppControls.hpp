@@ -307,6 +307,15 @@ bool AppControls::handleEvents() {
         extStore->setImage(app->resources.storeIcon, true);
     }
 
+    if (app->readConfig("show_automation", false)) {
+        automationButton->m_modifier.setColor(baseMuteColor);
+        automationButton->setImage(app->resources.automationIcon, true);
+    }
+    else {
+        automationButton->m_modifier.setColor(baseButtonColor);
+        automationButton->setImage(app->resources.automationIcon, true);
+    }
+
     // Apply hover effects using the captured base colors
     if (loadButton->isHovered()) {
         loadButton->m_modifier.setColor(sf::Color(
@@ -374,19 +383,19 @@ bool AppControls::handleEvents() {
         metronomeButton->m_isHovered = false;
     }
 
-    if (automationButton->isHovered()) {
-        automationButton->m_modifier.setColor(sf::Color(
-            std::min(255, (int)(baseButtonColor.r + 50)),
-            std::min(255, (int)(baseButtonColor.g + 50)),
-            std::min(255, (int)(baseButtonColor.b + 50))
-        ));
-        automationButton->setImage(app->resources.automationIcon, true);
-        automationButton->m_isHovered = false;
-    }
-    else {
-        automationButton->m_modifier.setColor(baseButtonColor);
-        automationButton->setImage(app->resources.automationIcon, true);
-    }
+    // if (automationButton->isHovered()) {
+    //     automationButton->m_modifier.setColor(sf::Color(
+    //         std::min(255, (int)(baseButtonColor.r + 50)),
+    //         std::min(255, (int)(baseButtonColor.g + 50)),
+    //         std::min(255, (int)(baseButtonColor.b + 50))
+    //     ));
+    //     automationButton->setImage(app->resources.automationIcon, true);
+    //     automationButton->m_isHovered = false;
+    // }
+    // else {
+    //     automationButton->m_modifier.setColor(baseButtonColor);
+    //     automationButton->setImage(app->resources.automationIcon, true);
+    // }
 
     if (pianoRollButton->isHovered()) {
         pianoRollButton->m_modifier.setColor(sf::Color(

@@ -958,39 +958,39 @@ void Engine::audioDeviceIOCallbackWithContext(
             if (track) {
                 bool shouldPlay = !anyTrackSoloed ? !track->isMuted() : track->isSolo();
                 if (shouldPlay) {
-                    trackBuffer.clear();
+                    // Create a fresh buffer for each track to avoid cross-contamination
+                    juce::AudioBuffer<float> isolatedTrackBuffer(2, numSamples);
+                    isolatedTrackBuffer.clear();
+                    
                     track->applyAutomation(positionSeconds);
-                    track->process(positionSeconds, trackBuffer, numSamples, sampleRate);
-                    
-                    // For MIDI tracks, effects are processed internally with MIDI data
-                    // For Audio tracks, we need to process effects separately
-                    if (track->getType() != Track::TrackType::MIDI) {
-                        track->processEffects(trackBuffer);
-                    }
-                    
+                    track->process(positionSeconds, isolatedTrackBuffer, numSamples, sampleRate);
+                                 
                     // Check for audio output from this track
                     float trackPeak = 0.0f;
-                    for (int ch = 0; ch < numOutputChannels; ++ch) {
+                    for (int ch = 0; ch < 2; ++ch) {
                         for (int i = 0; i < numSamples; ++i) {
-                            trackPeak = std::max(trackPeak, std::abs(trackBuffer.getSample(ch, i)));
+                            trackPeak = std::max(trackPeak, std::abs(isolatedTrackBuffer.getSample(ch, i)));
                         }
                     }
                     if (trackPeak > 0.001f) { // Only log if there's significant audio
                         DEBUG_PRINT("Track '" << track->getName() << "' peak: " << trackPeak);
                     }
                     
+                    // Mix the stereo track buffer into the output buffer
                     for (int ch = 0; ch < numOutputChannels; ++ch) {
-                        tempMixBuffer.addFrom(ch, 0, trackBuffer, ch, 0, numSamples);
+                        int sourceChannel = ch % 2; // Map multi-channel outputs to stereo sources
+                        tempMixBuffer.addFrom(ch, 0, isolatedTrackBuffer, sourceChannel, 0, numSamples);
                     }
                 }
             }
         }
         // --- Mix metronome track if enabled ---
         if (metronomeEnabled && metronomeTrack) {
-            trackBuffer.clear();
-            metronomeTrack->process(positionSeconds, trackBuffer, numSamples, sampleRate);
+            juce::AudioBuffer<float> metronomeBuffer(numOutputChannels, numSamples);
+            metronomeBuffer.clear();
+            metronomeTrack->process(positionSeconds, metronomeBuffer, numSamples, sampleRate);
             for (int ch = 0; ch < numOutputChannels; ++ch) {
-                tempMixBuffer.addFrom(ch, 0, trackBuffer, ch, 0, numSamples);
+                tempMixBuffer.addFrom(ch, 0, metronomeBuffer, ch, 0, numSamples);
             }
         }
         positionSeconds += static_cast<double>(numSamples) / sampleRate;
