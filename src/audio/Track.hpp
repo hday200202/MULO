@@ -101,88 +101,185 @@ public:
     bool moveEffect(int fromIndex, int toIndex);
     void clearEffects();
 
-    // Automation system
+    // Automation
     inline void addAutomationPoint(
         const std::string& effectName, 
         const std::string& parameterName, 
         const AutomationPoint& automationPoint
     ) {
         automationData[effectName][parameterName].push_back(automationPoint);
+        
+        std::pair<std::string, std::string> paramPair = {effectName, parameterName};
+        if (std::find(automatedParameters.begin(), automatedParameters.end(), paramPair) == automatedParameters.end()) {
+            automatedParameters.push_back(paramPair);
+        }
+    }
+    
+    inline const std::unordered_map<std::string, std::unordered_map<std::string, std::vector<AutomationPoint>>>& getAutomationData() const {
+        return automationData;
+    }
+    
+    inline const std::vector<std::pair<std::string, std::string>>& getAutomatedParameters() const {
+        return automatedParameters;
+    }
+    
+    inline const std::vector<AutomationPoint>* getAutomationPoints(const std::string& effectName, const std::string& parameterName) const {
+        auto effectIt = automationData.find(effectName);
+        if (effectIt != automationData.end()) {
+            auto paramIt = effectIt->second.find(parameterName);
+            if (paramIt != effectIt->second.end()) {
+                return &paramIt->second;
+            }
+        }
+        return nullptr;
+    }
+
+    inline bool removeAutomationPoint(const std::string& effectName, const std::string& parameterName, float time, float tolerance = 0.001f) {
+        auto effectIt = automationData.find(effectName);
+        if (effectIt != automationData.end()) {
+            auto paramIt = effectIt->second.find(parameterName);
+            if (paramIt != effectIt->second.end()) {
+                auto& points = paramIt->second;
+                auto it = std::find_if(points.begin(), points.end(), 
+                    [time, tolerance](const AutomationPoint& point) {
+                        return std::abs(point.time - time) < tolerance;
+                    });
+                if (it != points.end()) {
+                    points.erase(it);
+                    
+                    // Remove from automation list if less than 2 points
+                    if (points.size() < 2) {
+                        std::pair<std::string, std::string> paramPair = {effectName, parameterName};
+                        automatedParameters.erase(
+                            std::remove(automatedParameters.begin(), automatedParameters.end(), paramPair),
+                            automatedParameters.end()
+                        );
+                        
+                        if (points.empty()) {
+                            effectIt->second.erase(paramIt);
+                            if (effectIt->second.empty()) {
+                                automationData.erase(effectIt);
+                            }
+                        }
+                    }
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    inline bool moveAutomationPoint(const std::string& effectName, const std::string& parameterName, 
+                                   float oldTime, float newTime, float newValue, float tolerance = 0.001f) {
+        auto effectIt = automationData.find(effectName);
+        if (effectIt != automationData.end()) {
+            auto paramIt = effectIt->second.find(parameterName);
+            if (paramIt != effectIt->second.end()) {
+                auto& points = paramIt->second;
+                auto it = std::find_if(points.begin(), points.end(), 
+                    [oldTime, tolerance](const AutomationPoint& point) {
+                        return std::abs(point.time - oldTime) < tolerance;
+                    });
+                if (it != points.end()) {
+                    it->time = newTime;
+                    it->value = std::max(0.0f, std::min(1.0f, newValue));
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    inline bool clearAutomationParameter(const std::string& effectName, const std::string& parameterName) {
+        auto effectIt = automationData.find(effectName);
+        if (effectIt != automationData.end()) {
+            auto paramIt = effectIt->second.find(parameterName);
+            if (paramIt != effectIt->second.end()) {
+                std::pair<std::string, std::string> paramPair = {effectName, parameterName};
+                automatedParameters.erase(
+                    std::remove(automatedParameters.begin(), automatedParameters.end(), paramPair),
+                    automatedParameters.end()
+                );
+                
+                effectIt->second.erase(paramIt);
+                if (effectIt->second.empty()) {
+                    automationData.erase(effectIt);
+                }
+                
+                return true;
+            }
+        }
+        return false;
     }
 
     // Parameter change detection for automation
     void updateParameterTracking();
     const std::pair<std::string, std::string>& getPotentialAutomation() const;
+    void setPotentialAutomation(const std::string& effectName, const std::string& parameterName);
     void clearPotentialAutomation();
     bool hasPotentialAutomation() const;
     
     float getCurrentParameterValue(const std::string& effectName, const std::string& parameterName) const;
 
     inline void applyAutomation(double positionSeconds) {
-        // Apply Track parameter automation only if there are points other than the default point
+        auto getInterpolatedValue = [](const std::vector<AutomationPoint>& points, double time) -> float {
+            if (points.empty()) return -1.0f;
+            
+            std::vector<const AutomationPoint*> timelinePoints;
+            for (const auto& point : points) {
+                if (point.time >= 0.0) {
+                    timelinePoints.push_back(&point);
+                }
+            }
+            
+            if (timelinePoints.empty()) return -1.0f;
+            
+            std::sort(timelinePoints.begin(), timelinePoints.end(), 
+                [](const AutomationPoint* a, const AutomationPoint* b) {
+                    return a->time < b->time;
+                });
+            
+            if (time <= timelinePoints[0]->time) {
+                return timelinePoints[0]->value;
+            }
+            
+            if (time >= timelinePoints.back()->time) {
+                return timelinePoints.back()->value;
+            }
+            
+            for (size_t i = 0; i < timelinePoints.size() - 1; ++i) {
+                const auto* p1 = timelinePoints[i];
+                const auto* p2 = timelinePoints[i + 1];
+                
+                if (time >= p1->time && time <= p2->time) {
+                    double t = (time - p1->time) / (p2->time - p1->time);
+                    return p1->value + t * (p2->value - p1->value);
+                }
+            }
+            
+            return -1.0f;
+        };
+        
         auto trackIt = automationData.find("Track");
         if (trackIt != automationData.end()) {
             auto& trackParams = trackIt->second;
             
             auto volumeIt = trackParams.find("Volume");
             if (volumeIt != trackParams.end() && !volumeIt->second.empty()) {
-                bool hasTimelineAutomation = false;
-                for (const auto& point : volumeIt->second) {
-                    if (point.time >= 0.0) {
-                        hasTimelineAutomation = true;
-                        break;
-                    }
-                }
-                
-                if (hasTimelineAutomation) {
-                    float targetValue = -1.0f;
-                    float minDistance = std::numeric_limits<float>::max();
-                    
-                    for (const auto& point : volumeIt->second) {
-                        if (point.time >= 0.0) {
-                            float distance = std::abs(point.time - positionSeconds);
-                            if (distance < minDistance) {
-                                minDistance = distance;
-                                targetValue = point.value;
-                            }
-                        }
-                    }
-                    
-                    if (targetValue >= 0.0f) {
-                        float dbValue = automationToVolumeSlider(targetValue);
-                        volumeDb = floatToDecibels(dbValue);
-                    }
+                float automatedValue = getInterpolatedValue(volumeIt->second, positionSeconds);
+                if (automatedValue >= 0.0f) {
+                    float dbValue = automationToVolumeSlider(automatedValue);
+                    volumeDb = floatToDecibels(dbValue);
                 }
             }
             
+            // Apply Pan automation
             auto panIt = trackParams.find("Pan");
             if (panIt != trackParams.end() && !panIt->second.empty()) {
-                bool hasTimelineAutomation = false;
-                for (const auto& point : panIt->second) {
-                    if (point.time >= 0.0) {
-                        hasTimelineAutomation = true;
-                        break;
-                    }
-                }
-                
-                if (hasTimelineAutomation) {
-                    float targetValue = -1.0f;
-                    float minDistance = std::numeric_limits<float>::max();
-                    
-                    for (const auto& point : panIt->second) {
-                        if (point.time >= 0.0) {
-                            float distance = std::abs(point.time - positionSeconds);
-                            if (distance < minDistance) {
-                                minDistance = distance;
-                                targetValue = point.value;
-                            }
-                        }
-                    }
-                    
-                    if (targetValue >= 0.0f) {
-                        pan = (targetValue * 2.0f) - 1.0f;
-                        pan = juce::jlimit(-1.0f, 1.0f, pan);
-                    }
+                float automatedValue = getInterpolatedValue(panIt->second, positionSeconds);
+                if (automatedValue >= 0.0f) {
+                    pan = (automatedValue * 2.0f) - 1.0f;
+                    pan = juce::jlimit(-1.0f, 1.0f, pan);
                 }
             }
         }
@@ -199,34 +296,13 @@ public:
                 for (int p = 0; p < params.size(); ++p) {
                     auto* ap = params[p];
                     if (!ap) continue;
-                    std::string name = ap->getName(256).toStdString();
-                    auto pit = paramMap.find(name);
+                    
+                    std::string paramName = ap->getName(256).toStdString();
+                    auto pit = paramMap.find(paramName);
                     if (pit != paramMap.end() && !pit->second.empty()) {
-                        bool hasTimelineAutomation = false;
-                        for (const auto& point : pit->second) {
-                            if (point.time >= 0.0) {
-                                hasTimelineAutomation = true;
-                                break;
-                            }
-                        }
-                        
-                        if (hasTimelineAutomation) {
-                            float targetValue = -1.0f;
-                            float minDistance = std::numeric_limits<float>::max();
-                            
-                            for (const auto& point : pit->second) {
-                                if (point.time >= 0.0) {
-                                    float distance = std::abs(point.time - positionSeconds);
-                                    if (distance < minDistance) {
-                                        minDistance = distance;
-                                        targetValue = point.value;
-                                    }
-                                }
-                            }
-                            
-                            if (targetValue >= 0.0f) {
-                                effect->setParameter(p, targetValue);
-                            }
+                        float automatedValue = getInterpolatedValue(pit->second, positionSeconds);
+                        if (automatedValue >= 0.0f) {
+                            effect->setParameter(p, automatedValue);
                         }
                     }
                 }
@@ -251,6 +327,9 @@ protected:
 
     // Effect name -> parameter name -> automation points
     std::unordered_map<std::string, std::unordered_map<std::string, std::vector<AutomationPoint>>> automationData;
+    
+    // List of automated parameters in the order they were automated
+    std::vector<std::pair<std::string, std::string>> automatedParameters;
     
     // Parameter change detection for automation
     std::pair<std::string, std::string> potentialAutomation;

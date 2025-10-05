@@ -18,7 +18,8 @@ void Track::setName(const std::string& n) { name = n; }
 std::string Track::getName() const { return name; }
 void Track::setVolume(float db) { 
     if (std::abs(db - volumeDb) > 0.001f) {
-        volumeDb = db; 
+        volumeDb = db;
+
         // Update automation data
         float sliderValue = decibelsToFloat(volumeDb);
         float normalizedVolume = volumeSliderToAutomation(sliderValue);
@@ -29,7 +30,6 @@ void Track::setVolume(float db) {
             automationData["Track"]["Volume"].emplace_back(-1.0, normalizedVolume, 0.5f);
         }
         
-        // Set potential automation to Volume
         potentialAutomation = {"Track", "Volume"};
         hasActivePotentialAutomation = true;
     }
@@ -42,7 +42,6 @@ void Track::setPan(float p) {
     
     if (std::abs(newPan - pan) > 0.001f) {
         pan = newPan;
-        // Update automation data
         float normalizedPan = (pan + 1.0f) * 0.5f;
                 
         if (!automationData["Track"]["Pan"].empty()) {
@@ -51,7 +50,6 @@ void Track::setPan(float p) {
             automationData["Track"]["Pan"].emplace_back(-1.0, normalizedPan, 0.5f);
         }
         
-        // Set potential automation to Pan
         potentialAutomation = {"Track", "Pan"};
         hasActivePotentialAutomation = true;
     }
@@ -203,8 +201,6 @@ void Track::updateParameterTracking() {
                 potentialAutomation = {effectKey, paramName};
                 hasActivePotentialAutomation = true;
                 lastParameterValues[effectKey][paramName] = currentValue;
-
-                std::cout << effectKey << ": " << paramName << " = " << currentValue << std::endl;
                 return;
             }
         }
@@ -253,6 +249,11 @@ float Track::getCurrentParameterValue(const std::string& effectName, const std::
 
 const std::pair<std::string, std::string>& Track::getPotentialAutomation() const {
     return potentialAutomation;
+}
+
+void Track::setPotentialAutomation(const std::string& effectName, const std::string& parameterName) {
+    potentialAutomation = {effectName, parameterName};
+    hasActivePotentialAutomation = true;
 }
 
 void Track::clearPotentialAutomation() {

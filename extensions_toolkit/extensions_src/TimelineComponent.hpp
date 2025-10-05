@@ -11,6 +11,7 @@
 #include <set>
 #include <unordered_map>
 #include <filesystem>
+#include <algorithm>
 
 class TimelineComponent : public MULOComponent {
 public:
@@ -124,6 +125,17 @@ private:
         bool hasClipboard = false;
     } clipboardState;
 
+    struct AutomationDragState {
+        bool isDragging = false;
+        sf::Vector2f startMousePos;
+        float startTime = 0.0f;
+        float startValue = 0.0f;
+        std::string trackName;
+        std::string effectName;
+        std::string parameterName;
+        std::string laneId;
+    } automationDragState;
+
     struct UIElements {
         Row* masterTrackElement = nullptr;
         Button* muteMasterButton = nullptr;
@@ -135,6 +147,7 @@ private:
         std::unordered_map<std::string, Button*> trackRemoveButtons;
         std::unordered_map<std::string, Text*> automationLaneLabels;
         std::unordered_map<std::string, Row*> automationLaneRows;
+        std::unordered_map<std::string, Button*> automationClearButtons;
     } uiElements;
 
     void handleAllUserInput();
@@ -150,6 +163,7 @@ private:
     void handleClipDragOperations();
     void handlePlacementDragOperations();
     void handleDeletionDragOperations();
+    void handleAutomationDragOperations();
     void updateDragState();
     
     void updateTimelineVisuals();
@@ -186,8 +200,6 @@ private:
     void rebuildUIFromEngine();
     void syncSlidersToEngine();
     void processClipAtPosition(Track* track, const sf::Vector2f& localMousePos, bool isRightClick);
-    
-    const std::vector<std::shared_ptr<sf::Drawable>>& getCachedMeasureLines(float measureWidth, float scrollOffset, const sf::Vector2f& rowSize);
     const std::vector<std::shared_ptr<sf::Drawable>>& getCachedClipGeometry(const std::string& trackName, double bpm, float beatWidth, float scrollOffset, const sf::Vector2f& rowSize, const std::vector<AudioClip>& clips, float verticalOffset, UIResources* resources, UIState* uiState, const AudioClip* selectedClip, const std::string& currentTrackName, const std::string& selectedTrackName);
     
     // Clipboard functions
@@ -253,7 +265,6 @@ TimelineComponent::TimelineComponent() {
     timelineState.deltaTime = 0.0f;
     timelineState.firstFrame = true;
     
-    // Set the static instance pointer for global access
     instance = this;
 }
 
@@ -317,12 +328,10 @@ void TimelineComponent::update() {
     
     updateTimelineState();
     
-    // Check for automation view toggle (handled dynamically in handleCustomUIElements now)
     static bool prevShowAutomation = app->readConfig("show_automation", false);
     bool currentShowAutomation = app->readConfig("show_automation", false);
     
     if (currentShowAutomation != prevShowAutomation) {
-        std::cout << "[AUTOMATION] Automation view toggled: " << (currentShowAutomation ? "enabled" : "disabled") << std::endl;
         prevShowAutomation = currentShowAutomation;
     }
     
@@ -825,7 +834,9 @@ uilo::Row* TimelineComponent::automationLane(
     float currentValue,
     bool isPotential
 ) {
-    std::string laneId = trackName + "_automation";  // Track-specific only
+    std::string laneId = isPotential ? 
+        (trackName + "_potential") : 
+        (trackName + "_" + effectName + "_" + parameterName);
     std::string displayName = effectName.empty() ? parameterName : effectName + " - " + parameterName;
     
     // Create scrollable row element like in the track function
@@ -835,50 +846,309 @@ uilo::Row* TimelineComponent::automationLane(
     );
     containers[laneId + "_scrollable_row"] = scrollableRowElement;
 
-    // Handle automation lane clicks (for future functionality)
-    auto handleAutomationClick = [this, trackName, effectName, parameterName, isPotential, displayName]() {
+    auto handleAutomationClick = [this, trackName, laneId]() {
         if (!app->getWindow().hasFocus()) return;
         
-        // TODO: Handle automation point placement
         sf::Vector2f globalMousePos = app->ui->getMousePosition();
-        auto* automationRow = containers[trackName + "_automation_scrollable_row"];  // Track-specific only
+        auto* automationRow = containers[laneId + "_scrollable_row"];
+        if (automationRow) {
+            sf::Vector2f localMousePos = globalMousePos - automationRow->getPosition();            
+            float timePosition = xPosToSeconds(app->getBpm(), 100.f * app->uiState.timelineZoomLevel, localMousePos.x - timelineState.timelineOffset, timelineState.timelineOffset);
+            
+            sf::Vector2f rowSize = automationRow->getSize();
+            float laneHeight = rowSize.y;
+            float automationValue = 1.0f - (localMousePos.y / laneHeight);
+            automationValue = std::max(0.0f, std::min(1.0f, automationValue));
+            
+            if (timePosition >= 0.0f) {
+                Track* track = app->getTrack(trackName);
+                if (track) {
+                    std::string currentEffectName;
+                    std::string currentParameterName;
+                    
+                    // Determine if this is a potential automation lane
+                    bool isPotentialLane = (laneId.find("_potential") != std::string::npos);
+                    
+                    if (isPotentialLane && track->hasPotentialAutomation()) {
+                        const auto& potentialAuto = track->getPotentialAutomation();
+                        currentEffectName = potentialAuto.first;
+                        currentParameterName = potentialAuto.second;
+                    } else {
+                        // Extract from laneId format: trackName_effectName_parameterName
+                        std::string prefix = trackName + "_";
+                        if (laneId.size() > prefix.size()) {
+                            std::string paramPart = laneId.substr(prefix.size());
+                            size_t lastUnderscore = paramPart.find_last_of('_');
+                            if (lastUnderscore != std::string::npos) {
+                                currentEffectName = paramPart.substr(0, lastUnderscore);
+                                currentParameterName = paramPart.substr(lastUnderscore + 1);
+                            } else {
+                                currentEffectName = "";
+                                currentParameterName = paramPart;
+                            }
+                        }
+                    }
+                    
+                    if (!currentParameterName.empty()) {
+                        // Check if clicking near existing automation point (for dragging)
+                        const auto* points = track->getAutomationPoints(currentEffectName, currentParameterName);
+                        bool startedDrag = false;
+                        
+                        if (points) {
+                            constexpr float clickTolerance = 10.0f; // pixels
+                            auto valueToY = [rowSize](float value) { return rowSize.y * (1.0f - value); };
+                            auto timeToX = [this](float time) { 
+                                return time * 100.f * app->uiState.timelineZoomLevel + timelineState.timelineOffset; 
+                            };
+                            
+                            for (const auto& point : *points) {
+                                float pointX = timeToX(point.time);
+                                float pointY = valueToY(point.value);
+                                
+                                float distance = std::sqrt(std::pow(localMousePos.x - pointX, 2) + std::pow(localMousePos.y - pointY, 2));
+                                
+                                if (distance <= clickTolerance) {
+                                    // Start dragging this point
+                                    automationDragState.isDragging = true;
+                                    automationDragState.startMousePos = globalMousePos;
+                                    automationDragState.startTime = point.time;
+                                    automationDragState.startValue = point.value;
+                                    automationDragState.trackName = trackName;
+                                    automationDragState.effectName = currentEffectName;
+                                    automationDragState.parameterName = currentParameterName;
+                                    automationDragState.laneId = laneId;
+                                    startedDrag = true;
+                                    break;
+                                }
+                            }
+                        }
+                        
+                        // If not dragging, add new automation point
+                        if (!startedDrag) {
+                            // Check if Shift is held to bypass snapping
+                            bool shiftHeld = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LShift) || sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RShift);
+                            
+                            if (!shiftHeld) {
+                                auto [timeSigNum, timeSigDen] = app->getTimeSignature();
+                                auto measureLines = generateTimelineMeasures(100.f * app->uiState.timelineZoomLevel, timelineState.timelineOffset, rowSize, timeSigNum, timeSigDen, &app->resources);
+                                sf::Vector2f snapPos(localMousePos.x, localMousePos.y);
+                                float snapX = getNearestMeasureX(snapPos, measureLines);
+                                timePosition = xPosToSeconds(app->getBpm(), 100.f * app->uiState.timelineZoomLevel, snapX - timelineState.timelineOffset, timelineState.timelineOffset);
+                            }
+                            
+                            Track::AutomationPoint point;
+                            point.time = timePosition;
+                            point.value = automationValue;
+                            point.curve = 0.0f;
+                            
+                            // Check if there are already 2 points at this time position (allow small tolerance)
+                            const auto* existingPoints = track->getAutomationPoints(currentEffectName, currentParameterName);
+                            int pointsAtThisTime = 0;
+                            constexpr float timeTolerance = 0.001f;
+                            
+                            if (existingPoints) {
+                                for (const auto& existingPoint : *existingPoints) {
+                                    if (std::abs(existingPoint.time - timePosition) < timeTolerance) {
+                                        pointsAtThisTime++;
+                                    }
+                                }
+                            }
+                            
+                            // Only add point if there are fewer than 2 points at this time
+                            if (pointsAtThisTime < 2) {
+                                track->addAutomationPoint(currentEffectName, currentParameterName, point);
+                            }
+                            // If there are already 2 points, silently ignore the add request
+                        }
+                    }
+                }
+            }
+        }
+    };
+
+    auto handleAutomationRightClick = [this, trackName, laneId]() {
+        if (!app->getWindow().hasFocus()) return;
+        
+        sf::Vector2f globalMousePos = app->ui->getMousePosition();
+        auto* automationRow = containers[laneId + "_scrollable_row"];
         if (automationRow) {
             sf::Vector2f localMousePos = globalMousePos - automationRow->getPosition();
-            float timePosition = xPosToSeconds(app->getBpm(), 100.f * app->uiState.timelineZoomLevel, localMousePos.x - timelineState.timelineOffset, timelineState.timelineOffset);
-            std::cout << "Automation lane clicked at time: " << timePosition << " for " << displayName << std::endl;
+            sf::Vector2f rowSize = automationRow->getSize();
+            
+            Track* track = app->getTrack(trackName);
+            if (track) {
+                std::string currentEffectName;
+                std::string currentParameterName;
+                
+                // Determine if this is a potential automation lane
+                bool isPotentialLane = (laneId.find("_potential") != std::string::npos);
+                
+                if (isPotentialLane && track->hasPotentialAutomation()) {
+                    const auto& potentialAuto = track->getPotentialAutomation();
+                    currentEffectName = potentialAuto.first;
+                    currentParameterName = potentialAuto.second;
+                } else {
+                    // Extract from laneId format: trackName_effectName_parameterName
+                    std::string prefix = trackName + "_";
+                    if (laneId.size() > prefix.size()) {
+                        std::string paramPart = laneId.substr(prefix.size());
+                        size_t lastUnderscore = paramPart.find_last_of('_');
+                        if (lastUnderscore != std::string::npos) {
+                            currentEffectName = paramPart.substr(0, lastUnderscore);
+                            currentParameterName = paramPart.substr(lastUnderscore + 1);
+                        } else {
+                            currentEffectName = "";
+                            currentParameterName = paramPart;
+                        }
+                    }
+                }
+                
+                if (!currentParameterName.empty()) {
+                    // Find the closest automation point to the click position (both X and Y)
+                    const auto* points = track->getAutomationPoints(currentEffectName, currentParameterName);
+                    if (points) {
+                        constexpr float xTolerance = 30.0f; // pixels in X direction
+                        constexpr float yTolerance = 20.0f; // pixels in Y direction
+                        
+                        // Use the same coordinate calculations as the rendering system
+                        auto valueToY = [rowSize](float value) { 
+                            const float padding = 4.0f;
+                            const float usableHeight = rowSize.y - 2 * padding;
+                            float normalizedValue = std::max(0.0f, std::min(value, 1.0f));
+                            return padding + (1.0f - normalizedValue) * usableHeight;
+                        };
+                        auto timeToX = [this](float time) { 
+                            return secondsToXPosition(app->getBpm(), 100.f * app->uiState.timelineZoomLevel, time) + timelineState.timelineOffset;
+                        };
+                        
+                        float closestDistance = std::numeric_limits<float>::max();
+                        float targetTime = -1.0f;
+                        
+                        for (const auto& point : *points) {
+                            float pointX = timeToX(point.time);
+                            float pointY = valueToY(point.value);
+                            
+                            float xDiff = std::abs(localMousePos.x - pointX);
+                            float yDiff = std::abs(localMousePos.y - pointY);
+                            
+                            // Check if within tolerances
+                            if (xDiff <= xTolerance && yDiff <= yTolerance) {
+                                // Use combined distance for closest point selection
+                                float distance = std::sqrt(xDiff * xDiff + yDiff * yDiff);
+                                if (distance < closestDistance) {
+                                    closestDistance = distance;
+                                    targetTime = point.time;
+                                }
+                            }
+                        }
+                        
+                        // Remove the closest point if found
+                        if (targetTime >= 0.0f) {
+                            track->removeAutomationPoint(currentEffectName, currentParameterName, targetTime, 0.001f);
+                        }
+                    }
+                }
+            }
         }
     };
     
     scrollableRowElement->m_modifier.onLClick([=]() { handleAutomationClick(); });
+    scrollableRowElement->m_modifier.onRClick([=]() { handleAutomationRightClick(); });
 
     auto* automationLabelColumn = column(
         Modifier()
             .align(Align::RIGHT)
             .setfixedWidth(196)
-            .setColor(app->resources.activeTheme->slider_bar_color),  // Darker than track_color
+            .setColor(app->resources.activeTheme->not_muted_color),
     contains{
         spacer(Modifier().setfixedHeight(8).align(Align::TOP)),
 
-        row(
-            Modifier().align(Align::LEFT | Align::CENTER_Y).setHighPriority(true),
-        contains{
-            spacer(Modifier().setfixedWidth(8).align(Align::LEFT)),
-            
-            [&]() {
-                auto* textElement = text(
-                    Modifier().setColor(app->resources.activeTheme->secondary_text_color).setfixedHeight(16).align(Align::LEFT | Align::CENTER_Y),
-                    isPotential ? ("+" + displayName) : displayName,
-                    app->resources.dejavuSansFont,
-                    laneId + "_label_text"
-                );
-                
-                // Store reference for dynamic updates
-                std::string updateKey = trackName + "_automation";
-                uiElements.automationLaneLabels[updateKey] = textElement;
-                
-                return textElement;
-            }()
-        }),
+        [&]() -> Element* {
+            if (isPotential) {
+                // For potential automation lanes, skip the button column entirely and start text from left
+                return row(
+                    Modifier().align(Align::LEFT | Align::CENTER_Y).setHighPriority(true),
+                contains{
+                    spacer(Modifier().setfixedWidth(8).align(Align::LEFT)),
+                    
+                    [&]() {
+                        auto* textElement = text(
+                            Modifier().setColor(app->resources.activeTheme->secondary_text_color).setfixedHeight(16).align(Align::LEFT | Align::CENTER_Y),
+                            "[+] " + displayName,
+                            app->resources.dejavuSansFont,
+                            laneId + "_label_text"
+                        );
+                        
+                        // Store reference for dynamic updates
+                        std::string updateKey = laneId;
+                        uiElements.automationLaneLabels[updateKey] = textElement;
+                        
+                        return textElement;
+                    }()
+                });
+            } else {
+                // For regular automation lanes, use the button + text layout
+                return row(
+                    Modifier().align(Align::RIGHT).setHighPriority(true),
+                contains{
+                    // Red clear button column
+                    [&]() {
+                        auto* clearButton = button(
+                            Modifier().align(Align::CENTER_X | Align::CENTER_Y).setfixedWidth(16).setfixedHeight(16).setColor(app->resources.activeTheme->mute_color)
+                                .onLClick([this, trackName, effectName, parameterName](){
+                                    if (!app->getWindow().hasFocus()) return;
+                                    Track* track = app->getTrack(trackName);
+                                    if (track) {
+                                        track->clearAutomationParameter(effectName, parameterName);
+                                        std::cout << "[AUTOMATION] Cleared automation for " << effectName << " - " << parameterName << std::endl;
+                                    }
+                                }),
+                            ButtonStyle::Pill,
+                            "",
+                            "",
+                            sf::Color::Transparent,
+                            "clear_" + laneId
+                        );
+                        
+                        // Store reference for click handling
+                        std::string buttonKey = trackName + "_" + effectName + "_" + parameterName + "_clear";
+                        uiElements.automationClearButtons[buttonKey] = clearButton;
+                        
+                        return column(
+                            Modifier().setfixedWidth(32).align(Align::LEFT | Align::TOP),
+                        contains{
+                            clearButton
+                        });
+                    }(),
+                    
+                    // Parameter name column
+                    column(
+                        Modifier(),
+                    contains{
+                        row(
+                            Modifier().align(Align::LEFT | Align::CENTER_Y),
+                        contains{
+                            spacer(Modifier().setfixedWidth(8).align(Align::LEFT)),
+                            
+                            [&]() {
+                                auto* textElement = text(
+                                    Modifier().setColor(app->resources.activeTheme->secondary_text_color).setfixedHeight(16).align(Align::LEFT | Align::CENTER_Y),
+                                    displayName,
+                                    app->resources.dejavuSansFont,
+                                    laneId + "_label_text"
+                                );
+                                
+                                // Store reference for dynamic updates
+                                std::string updateKey = laneId;
+                                uiElements.automationLaneLabels[updateKey] = textElement;
+                                
+                                return textElement;
+                            }()
+                        })
+                    })
+                });
+            }
+        }(),
 
         spacer(Modifier().setfixedHeight(8).align(Align::BOTTOM)),
     }, laneId + "_label");
@@ -887,7 +1157,7 @@ uilo::Row* TimelineComponent::automationLane(
 
     auto* automationRow = row(
         Modifier()
-            .setColor(app->resources.activeTheme->slider_bar_color)  // Darker than track_row_color
+            .setColor(app->resources.activeTheme->not_muted_color)  // Darker than track_row_color
             .setfixedHeight(96)  // Same height as track rows
             .align(alignment),
     contains{
@@ -1246,81 +1516,213 @@ void TimelineComponent::handleCustomUIElements() {
         for (const auto& track : allTracks) {
             if (track->getName() == "Master") continue;
             
-            std::string laneId = track->getName() + "_automation_scrollable_row";
-            std::string automationRowId = track->getName() + "_automation_automation_row";
+            // Get current automation state from Track
+            const auto& automatedParams = track->getAutomatedParameters();
+            bool hasPotentialAutomation = track->hasPotentialAutomation();
+            std::pair<std::string, std::string> potentialAuto;
+            if (hasPotentialAutomation) {
+                potentialAuto = track->getPotentialAutomation();
+            }
             
-            // Check if automation lane exists
-            bool automationLaneExists = (containers.find(laneId) != containers.end());
+            // Track which lanes should exist
+            std::set<std::string> expectedLaneIds;
             
-            bool automationRowInTimeline = false;
-            if (automationLaneExists) {
-                const auto& elements = timelineElement->getElements();
-                for (const auto& element : elements) {
-                    if (element->m_name == automationRowId) {
-                        automationRowInTimeline = true;
-                        break;
+            // Add IDs for automated parameter lanes (scrollable_row format)
+            for (const auto& [effectName, parameterName] : automatedParams) {
+                std::string laneId = track->getName() + "_" + effectName + "_" + parameterName + "_automation_scrollable_row";
+                expectedLaneIds.insert(laneId);
+            }
+            
+            // Add ID for potential automation lane (scrollable_row format)
+            if (hasPotentialAutomation) {
+                std::string potentialLaneId = track->getName() + "_potential_automation_scrollable_row";
+                expectedLaneIds.insert(potentialLaneId);
+            }
+            
+            // Find existing automation lanes for this track  
+            const auto& elements = timelineElement->getElements();
+            std::set<std::string> existingLaneIds;
+            std::set<std::string> existingAutomationRows;
+            for (auto* element : elements) {
+                // Look for automation rows with exact track name matching
+                if (element->m_name.find("_automation_row") != std::string::npos) {
+                    // Extract the track name from the element name
+                    // Format should be: trackName_effectName_parameterName_automation_row
+                    //             or: trackName_potential_automation_row
+                    
+                    std::string elementName = element->m_name;
+                    std::string trackName = track->getName();
+                    
+                    // Check if this element belongs to the current track
+                    bool belongsToThisTrack = false;
+                    
+                    if (elementName.find("_potential_automation_row") != std::string::npos) {
+                        // For potential automation: trackName_potential_automation_row
+                        std::string expectedPotentialName = trackName + "_potential_automation_row";
+                        if (elementName == expectedPotentialName) {
+                            belongsToThisTrack = true;
+                        }
+                    } else {
+                        // For regular automation: trackName_effectName_parameterName_automation_row
+                        // Check if it starts with trackName_ and the next part is NOT another track name
+                        std::string expectedPrefix = trackName + "_";
+                        if (elementName.find(expectedPrefix) == 0) {
+                            // Get the part after trackName_
+                            std::string afterTrackName = elementName.substr(expectedPrefix.length());
+                            // Make sure this isn't another track (like drums_1 when track is drums)
+                            // Check if the character after track name is a digit (indicating it's another track)
+                            if (!afterTrackName.empty() && !std::isdigit(afterTrackName[0])) {
+                                belongsToThisTrack = true;
+                            }
+                        }
+                    }
+                    
+                    if (belongsToThisTrack) {
+                        existingAutomationRows.insert(element->m_name);
                     }
                 }
             }
             
-            // Create automation lane if it doesn't exist OR if it's not in the timeline
-            if (!automationLaneExists || !automationRowInTimeline) {
-                auto [effectName, parameterName, currentValue] = getCurrentAutomationParameter(track.get());
-                
-                auto* automationRowElem = automationLane(
-                    track->getName(), 
-                    effectName,
-                    parameterName,
-                    Align::TOP | Align::LEFT, 
-                    currentValue,
-                    true
-                );
-                
+            // Convert automation row names to expected scrollable row names for comparison
+            for (const auto& rowId : existingAutomationRows) {
+                if (rowId.find("_potential_automation_row") != std::string::npos) {
+                    std::string converted = track->getName() + "_potential_automation_scrollable_row";
+                    existingLaneIds.insert(converted);
+                } else if (rowId.find("_automation_row") != std::string::npos) {
+                    // Convert from "_automation_row" suffix to "_automation_scrollable_row"
+                    std::string scrollableId = rowId;
+                    // Replace "_automation_row" with "_automation_scrollable_row"
+                    size_t pos = scrollableId.find("_automation_row");
+                    if (pos != std::string::npos) {
+                        scrollableId.replace(pos, 15, "_automation_scrollable_row");
+                        existingLaneIds.insert(scrollableId);
+                    }
+                }
+            }
+            
+            if (expectedLaneIds != existingLaneIds) {
+                // Find track row position for insertion
                 std::string trackRowId = track->getName() + "_track_row";
-                
-                const auto& elements = timelineElement->getElements();
                 int insertIndex = -1;
-                
-                for (int i = 0; i < static_cast<int>(elements.size()); ++i) {
-                    if (elements[i]->m_name == trackRowId) {
+                const auto& currentElements = timelineElement->getElements();
+                for (int i = 0; i < static_cast<int>(currentElements.size()); ++i) {
+                    if (currentElements[i]->m_name == trackRowId) {
                         insertIndex = i + 1;
                         break;
                     }
                 }
                 
+                // Remove lanes that shouldn't exist anymore
+                for (const auto& existingScrollableId : existingLaneIds) {
+                    if (expectedLaneIds.find(existingScrollableId) == expectedLaneIds.end()) {
+                        // Convert scrollable_row ID back to automation_row ID to find the actual element
+                        std::string automationRowId;
+                        if (existingScrollableId.find("_potential_automation_scrollable_row") != std::string::npos) {
+                            automationRowId = track->getName() + "_potential_automation_row";
+                        } else if (existingScrollableId.find("_automation_scrollable_row") != std::string::npos) {
+                            // Convert from automation_scrollable_row to automation_row
+                            automationRowId = existingScrollableId;
+                            size_t pos = automationRowId.find("_automation_scrollable_row");
+                            if (pos != std::string::npos) {
+                                automationRowId.replace(pos, 26, "_automation_row");
+                            }
+                        }
+                        
+                        // Find and remove the automation row element and its preceding spacer
+                        const auto& elements = timelineElement->getElements();
+                        for (int i = 0; i < static_cast<int>(elements.size()); ++i) {
+                            if (elements[i]->m_name == automationRowId) {
+                                // Remove the automation lane
+                                timelineElement->removeElement(elements[i]);
+
+                                if (i > 0) {
+                                    auto* prevElement = elements[i-1];
+                                    // Check if the previous element is a named automation spacer or generic spacer
+                                    if (prevElement->m_name.empty() || 
+                                        prevElement->m_name.find("spacer") != std::string::npos ||
+                                        prevElement->m_name.find("_automation_spacer") != std::string::npos ||
+                                        prevElement->m_name.find("_potential_automation_spacer") != std::string::npos) {
+                                        timelineElement->removeElement(prevElement);
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                        
+                        containers.erase(existingScrollableId);
+                    }
+                }
+                
+                // Clean up any orphaned spacers that belong to this track
+                const auto& cleanupElements = timelineElement->getElements();
+                std::vector<Element*> spacersToRemove;
+                for (auto* element : cleanupElements) {
+                    if (element->m_name == track->getName() + "_automation_spacer" ||
+                        element->m_name == track->getName() + "_potential_automation_spacer") {
+                        spacersToRemove.push_back(element);
+                    }
+                }
+                for (auto* spacer : spacersToRemove) {
+                    timelineElement->removeElement(spacer);
+                }
+                
+                // Add new lanes that should exist but don't
                 if (insertIndex >= 0) {
-                    auto* spacerElem = spacer(Modifier().setfixedHeight(2.f));
-                    timelineElement->insertElementAt(spacerElem, insertIndex);
-                    timelineElement->insertElementAt(automationRowElem, insertIndex + 1);
+                    for (const auto& [effectName, parameterName] : automatedParams) {
+                        std::string laneScrollableId = track->getName() + "_" + effectName + "_" + parameterName + "_automation_scrollable_row";
+                        if (existingLaneIds.find(laneScrollableId) == existingLaneIds.end()) {
+                            float currentValue = track->getCurrentParameterValue(effectName, parameterName);
+                            auto* automationRowElem = automationLane(
+                                track->getName(), 
+                                effectName,
+                                parameterName,
+                                Align::TOP | Align::LEFT, 
+                                currentValue,
+                                false
+                            );
+                            
+                            timelineElement->insertElementAt(automationRowElem, insertIndex);
+                            insertIndex += 1;
+
+                        }
+                    }
                     
-                    if (automationRowElem) {
-                        const auto& autoElements = automationRowElem->getElements();
-                        if (!autoElements.empty() && autoElements[0]) {
-                            containers[laneId] = static_cast<uilo::Container*>(autoElements[0]);
+                    // Add potential automation lane if needed
+                    if (hasPotentialAutomation) {
+                        std::string potentialScrollableId = track->getName() + "_potential_automation_scrollable_row";
+                        if (existingLaneIds.find(potentialScrollableId) == existingLaneIds.end()) {
+                            float currentValue = track->getCurrentParameterValue(potentialAuto.first, potentialAuto.second);
+                            auto* potentialRowElem = automationLane(
+                                track->getName(), 
+                                potentialAuto.first,
+                                potentialAuto.second,
+                                Align::TOP | Align::LEFT, 
+                                currentValue,
+                                true
+                            );
+                            
+                            timelineElement->insertElementAt(potentialRowElem, insertIndex);
                         }
                     }
                 }
-            } else {
-                auto [effectName, parameterName, currentValue] = getCurrentAutomationParameter(track.get());
-                
-                // Update the automation lane label
-                std::string updateKey = track->getName() + "_automation";
-                auto labelIt = uiElements.automationLaneLabels.find(updateKey);
-                if (labelIt != uiElements.automationLaneLabels.end()) {
-                    std::string displayName = effectName.empty() ? parameterName : effectName + " - " + parameterName;
-                    std::string labelText = track->hasPotentialAutomation() ? ("+" + displayName) : displayName;
-                    labelIt->second->setString(labelText);
-                }
-                
-                auto* automationRow = static_cast<uilo::ScrollableRow*>(containers[laneId]);
-                if (automationRow) {
-                    const double beatWidth = 100.f * app->uiState.timelineZoomLevel;
-                    auto [timeSigNum, timeSigDen] = app->getTimeSignature();
-                    
-                    auto [effectName, parameterName, currentValue] = getCurrentAutomationParameter(track.get());
-                    
-                    // Generate timeline measures for automation lane
+            }
+        }
+        
+        // Automation lane geometry
+        for (const auto& track : allTracks) {
+            if (track->getName() == "Master") continue;
+            
+            const double beatWidth = 100.f * app->uiState.timelineZoomLevel;
+            auto [timeSigNum, timeSigDen] = app->getTimeSignature();
+            
+            const auto& automatedParams = track->getAutomatedParameters();
+            for (const auto& [effectName, parameterName] : automatedParams) {
+                std::string laneId = track->getName() + "_" + effectName + "_" + parameterName + "_scrollable_row";
+                auto laneIt = containers.find(laneId);
+                if (laneIt != containers.end() && laneIt->second) {
+                    auto* automationRow = static_cast<uilo::ScrollableRow*>(laneIt->second);
                     auto lines = generateTimelineMeasures(beatWidth, clampedOffset, automationRow->getSize(), timeSigNum, timeSigDen, &app->resources);
+                    float currentValue = track->getCurrentParameterValue(effectName, parameterName);
                     
                     // Generate automation line visualization
                     auto automationLineDrawables = generateAutomationLine(
@@ -1344,34 +1746,57 @@ void TimelineComponent::handleCustomUIElements() {
                     automationRow->setCustomGeometry(automationGeometry);
                 }
             }
+            
+            // Populate potential automation lane
+            if (track->hasPotentialAutomation()) {
+                std::string potentialLaneId = track->getName() + "_potential_scrollable_row";
+                auto potentialIt = containers.find(potentialLaneId);
+                if (potentialIt != containers.end() && potentialIt->second) {
+                    auto* automationRow = static_cast<uilo::ScrollableRow*>(potentialIt->second);
+                    auto lines = generateTimelineMeasures(beatWidth, clampedOffset, automationRow->getSize(), timeSigNum, timeSigDen, &app->resources);
+                    const auto& potentialAuto = track->getPotentialAutomation();
+                    float currentValue = track->getCurrentParameterValue(potentialAuto.first, potentialAuto.second);
+                    
+                    auto automationLineDrawables = generateAutomationLine(
+                        track->getName(),
+                        potentialAuto.first,
+                        potentialAuto.second,
+                        app->getBpm(),
+                        static_cast<float>(beatWidth),
+                        static_cast<float>(clampedOffset),
+                        automationRow->getSize(),
+                        currentValue,
+                        &app->resources,
+                        &app->uiState,
+                        app
+                    );
+                    
+                    std::vector<std::shared_ptr<sf::Drawable>> automationGeometry;
+                    automationGeometry.reserve(lines.size() + automationLineDrawables.size());                    
+                    automationGeometry.insert(automationGeometry.end(), std::make_move_iterator(lines.begin()), std::make_move_iterator(lines.end()));
+                    automationGeometry.insert(automationGeometry.end(), std::make_move_iterator(automationLineDrawables.begin()), std::make_move_iterator(automationLineDrawables.end()));
+                    automationRow->setCustomGeometry(automationGeometry);
+                }
+            }
         }
     } else {
-        for (const auto& track : app->getAllTracks()) {
+        // Remove all automation lanes when automation view is disabled
+        const auto& allTracks = app->getAllTracks();
+        for (const auto& track : allTracks) {
             if (track->getName() == "Master") continue;
             
-            std::string laneId = track->getName() + "_automation_scrollable_row";
-            std::string automationRowId = track->getName() + "_automation_automation_row";
+            const auto& elements = timelineElement->getElements();
             
-            bool automationLaneExists = (containers.find(laneId) != containers.end());
-            
-            if (automationLaneExists) {
-                // Find and remove the automation row from timeline
-                const auto& elements = timelineElement->getElements();
-                for (int i = static_cast<int>(elements.size()) - 1; i >= 0; --i) {
-                    if (elements[i]->m_name == automationRowId) {
-                        timelineElement->removeElement(elements[i]);
-                        
-                        if (i > 0 && elements[i-1]->m_name.empty()) {
-                            timelineElement->removeElement(elements[i-1]);
-                        }
-                        break;
-                    }
+            std::vector<uilo::Element*> toRemove;
+            for (auto* element : elements) {
+                if (element->m_name.find(track->getName() + "_") != std::string::npos &&
+                    element->m_name.find("_automation_row") != std::string::npos) {
+                    toRemove.push_back(element);
                 }
-                
-                // Remove from containers
-                containers.erase(laneId);
-                
-                std::cout << "[AUTOMATION] Successfully removed automation lane for: " << track->getName() << std::endl;
+            }
+            
+            for (auto* element : toRemove) {
+                timelineElement->removeElement(element);
             }
         }
     }
@@ -1531,9 +1956,7 @@ void TimelineComponent::rebuildUIFromEngine() {
     syncSlidersToEngine();
 }
 
-void TimelineComponent::repositionAutomationLanes() {
-    std::cout << "[AUTOMATION] repositionAutomationLanes() called" << std::endl;
-    
+void TimelineComponent::repositionAutomationLanes() {    
     // Find the timeline scrollable column
     uilo::ScrollableColumn* timelineScrollable = nullptr;
     
@@ -1548,7 +1971,6 @@ void TimelineComponent::repositionAutomationLanes() {
     }
     
     if (!timelineScrollable) {
-        std::cout << "[AUTOMATION] No timeline scrollable found, aborting repositioning" << std::endl;
         return;
     }
     
@@ -1556,7 +1978,6 @@ void TimelineComponent::repositionAutomationLanes() {
     std::vector<std::pair<std::string, uilo::Element*>> automationLanes;
     
     const auto& elements = timelineScrollable->getElements();
-    std::cout << "[AUTOMATION] Found " << elements.size() << " total timeline elements" << std::endl;
     for (auto* element : elements) {
         std::string elementName = element->m_name;
         if (elementName.find("_automation_row") != std::string::npos) {
@@ -1867,25 +2288,166 @@ inline std::vector<std::shared_ptr<sf::Drawable>> generateAutomationLine(
 ) {
     std::vector<std::shared_ptr<sf::Drawable>> drawables;
     
-    // TODO: Access track's automationData when getter method is available
+    Track* track = app->getTrack(trackName);
+    if (!track) {
+        return drawables;
+    }
     
-    // Draw continuous automation line across entire timeline
-    const float timelineWidth = rowSize.x + std::abs(scrollOffset) + 2000.0f;
-    const float startX = scrollOffset - 1000.0f;
-    constexpr float lineHeight = 2.0f;
-    constexpr sf::Color automationColor(100, 150, 255, 180);
+    const auto* automationPoints = track->getAutomationPoints(effectName, parameter);
     
-    // Calculate Y position for current value
-    float normalizedValue = std::max(0.0f, std::min(defaultValue, 1.0f));
     const float padding = 4.0f;
-    float yPosition = (rowSize.y - padding) - (normalizedValue * (rowSize.y - 2 * padding));
+    const float usableHeight = rowSize.y - 2 * padding;
     
-    // Create main automation line that extends across entire timeline
-    auto line = std::make_shared<sf::RectangleShape>();
-    line->setSize({timelineWidth, lineHeight});
-    line->setPosition({startX, yPosition});
-    line->setFillColor(automationColor);
-    drawables.push_back(line);
+    auto valueToY = [&](float value) -> float {
+        float normalizedValue = std::max(0.0f, std::min(value, 1.0f));
+        return padding + (1.0f - normalizedValue) * usableHeight; // Invert Y axis
+    };
+    
+    auto timeToX = [&](double time) -> float {
+        return secondsToXPosition(bpm, beatWidth, time) + scrollOffset;
+    };
+    
+    if (automationPoints && !automationPoints->empty()) {
+        constexpr float pointRadius = 8.0f;
+        sf::Color pointColor = app->resources.activeTheme->clip_color;
+        sf::Color lineColor = pointColor;
+        constexpr float lineHeight = 4.0f;
+        
+        // Sort points by time
+        std::vector<Track::AutomationPoint> sortedPoints;
+        for (const auto& point : *automationPoints) {
+            if (point.time >= 0.0) { // Ignore default automation points at -1.0 seconds
+                sortedPoints.push_back(point);
+            }
+        }
+        std::sort(sortedPoints.begin(), sortedPoints.end(), 
+                  [](const Track::AutomationPoint& a, const Track::AutomationPoint& b) {
+                      return a.time < b.time;
+                  });
+        
+        if (sortedPoints.empty()) {
+            const float timelineWidth = rowSize.x + std::abs(scrollOffset) + 2000.0f;
+            const float startX = scrollOffset - 1000.0f;
+            
+            float yPosition = valueToY(defaultValue);
+            
+            auto line = std::make_shared<sf::RectangleShape>();
+            line->setSize({timelineWidth, lineHeight});
+            line->setPosition({startX, yPosition});
+            line->setFillColor(lineColor);
+            drawables.push_back(line);
+        } else if (sortedPoints.size() == 1) {
+            const auto& point = sortedPoints[0];
+            float yPosition = valueToY(point.value);
+            const float timelineWidth = rowSize.x + std::abs(scrollOffset) + 2000.0f;
+            const float startX = scrollOffset - 1000.0f;
+            
+            auto line = std::make_shared<sf::RectangleShape>();
+            line->setSize({timelineWidth, lineHeight});
+            line->setPosition({startX, yPosition - lineHeight / 2.0f});
+            line->setFillColor(lineColor);
+            drawables.push_back(line);
+            
+            float x = timeToX(point.time);
+            if (x >= -pointRadius && x <= rowSize.x + pointRadius) {
+                auto circle = std::make_shared<sf::CircleShape>(pointRadius);
+                circle->setPosition({x - pointRadius, yPosition - pointRadius});
+                circle->setFillColor(pointColor);
+                circle->setOutlineThickness(1.0f);
+                circle->setOutlineColor(sf::Color::Black);
+                drawables.push_back(circle);
+            }
+        } else {
+            // Draw connecting lines between points
+            for (size_t i = 0; i < sortedPoints.size() - 1; ++i) {
+                const auto& point1 = sortedPoints[i];
+                const auto& point2 = sortedPoints[i + 1];
+                
+                float x1 = timeToX(point1.time);
+                float y1 = valueToY(point1.value);
+                float x2 = timeToX(point2.time);
+                float y2 = valueToY(point2.value);
+                
+                if ((x1 >= -pointRadius && x1 <= rowSize.x + pointRadius) ||
+                    (x2 >= -pointRadius && x2 <= rowSize.x + pointRadius)) {
+                    
+                    float lineLength = std::sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1));
+                    float angleRadians = std::atan2(y2 - y1, x2 - x1);
+                    
+                    auto line = std::make_shared<sf::RectangleShape>();
+                    line->setSize({lineLength, lineHeight});
+                    line->setPosition({x1, y1 - lineHeight / 2.0f});
+                    line->setRotation(sf::radians(angleRadians));
+                    line->setFillColor(lineColor);
+                    drawables.push_back(line);
+                }
+            }
+            
+            // Draw extended automation lines
+            if (!sortedPoints.empty()) {
+                const float timelineExtension = 2000.0f;
+                
+                const auto& firstPoint = sortedPoints[0];
+                float firstPointX = timeToX(firstPoint.time);
+                float firstPointY = valueToY(firstPoint.value);
+                
+                float startX = scrollOffset - timelineExtension;
+                float extendedWidth = firstPointX - startX;
+                
+                if (extendedWidth > 0 && firstPointX >= -pointRadius) {
+                    auto preFirstLine = std::make_shared<sf::RectangleShape>();
+                    preFirstLine->setSize({extendedWidth, lineHeight});
+                    preFirstLine->setPosition({startX, firstPointY - lineHeight / 2.0f});
+                    preFirstLine->setFillColor(lineColor);
+                    drawables.push_back(preFirstLine);
+                }
+                
+                const auto& lastPoint = sortedPoints.back();
+                float lastPointX = timeToX(lastPoint.time);
+                float lastPointY = valueToY(lastPoint.value);
+                
+                float endX = rowSize.x + std::abs(scrollOffset) + timelineExtension;
+                float postExtendedWidth = endX - lastPointX;
+                
+                if (postExtendedWidth > 0 && lastPointX <= rowSize.x + pointRadius) {
+                    auto postLastLine = std::make_shared<sf::RectangleShape>();
+                    postLastLine->setSize({postExtendedWidth, lineHeight});
+                    postLastLine->setPosition({lastPointX, lastPointY - lineHeight / 2.0f});
+                    postLastLine->setFillColor(lineColor);
+                    drawables.push_back(postLastLine);
+                }
+            }
+            
+            // Draw automation points
+            for (const auto& point : sortedPoints) {
+                float x = timeToX(point.time);
+                float y = valueToY(point.value);
+                
+                if (x >= -pointRadius && x <= rowSize.x + pointRadius) {
+                    auto circle = std::make_shared<sf::CircleShape>(pointRadius);
+                    circle->setPosition({x - pointRadius, y - pointRadius});
+                    circle->setFillColor(pointColor);
+                    circle->setOutlineThickness(1.0f);
+                    circle->setOutlineColor(sf::Color::Black);
+                    drawables.push_back(circle);
+                }
+            }
+        }
+    } else {
+        // No automation points
+        const float timelineWidth = rowSize.x + std::abs(scrollOffset) + 2000.0f;
+        const float startX = scrollOffset - 1000.0f;
+        constexpr float lineHeight = 4.0f;
+        
+        // Use current parameter value
+        float yPosition = valueToY(defaultValue);
+        
+        auto line = std::make_shared<sf::RectangleShape>();
+        line->setSize({timelineWidth, lineHeight});
+        line->setPosition({startX, yPosition});
+        line->setFillColor(app->resources.activeTheme->clip_color);
+        drawables.push_back(line);
+    }
         
     return drawables;
 }
@@ -2398,6 +2960,7 @@ void TimelineComponent::handleTrackControls() {
         uiElements.trackVolumeSliders.clear();
         uiElements.trackSoloButtons.clear();
         uiElements.trackRemoveButtons.clear();
+        uiElements.automationClearButtons.clear();
     }
     
     // Handle individual track controls
@@ -2499,6 +3062,7 @@ void TimelineComponent::processDragOperations() {
     if (features.enableClipDeletion) {
         handleDeletionDragOperations();
     }
+    handleAutomationDragOperations();
 }
 
 void TimelineComponent::handleClipDragOperations() {
@@ -2589,6 +3153,55 @@ void TimelineComponent::handleDeletionDragOperations() {
     if (placementState.isDraggingDeletion && (!isRightPressed || !ctrlPressed)) {
         placementState.isDraggingDeletion = false;
         placementState.processedPositions.clear();
+    }
+}
+
+void TimelineComponent::handleAutomationDragOperations() {
+    if (!automationDragState.isDragging) return;
+    
+    bool isLeftPressed = sf::Mouse::isButtonPressed(sf::Mouse::Button::Left);
+    
+    if (isLeftPressed) {
+        // Continue dragging
+        sf::Vector2f currentMousePos = app->ui->getMousePosition();
+        auto* automationRow = containers[automationDragState.laneId + "_scrollable_row"];
+        
+        if (automationRow) {
+            sf::Vector2f localMousePos = currentMousePos - automationRow->getPosition();
+            sf::Vector2f rowSize = automationRow->getSize();
+            
+            // Calculate new time and value
+            float newTime = xPosToSeconds(app->getBpm(), 100.f * app->uiState.timelineZoomLevel, localMousePos.x - timelineState.timelineOffset, timelineState.timelineOffset);
+            float newValue = 1.0f - (localMousePos.y / rowSize.y);
+            newValue = std::max(0.0f, std::min(1.0f, newValue));
+            
+            // Snap to grid unless Shift is held
+            bool shiftHeld = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LShift) || sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RShift);
+            if (!shiftHeld) {
+                auto [timeSigNum, timeSigDen] = app->getTimeSignature();
+                auto measureLines = generateTimelineMeasures(100.f * app->uiState.timelineZoomLevel, timelineState.timelineOffset, rowSize, timeSigNum, timeSigDen, &app->resources);
+                sf::Vector2f snapPos(localMousePos.x, localMousePos.y);
+                float snapX = getNearestMeasureX(snapPos, measureLines);
+                newTime = xPosToSeconds(app->getBpm(), 100.f * app->uiState.timelineZoomLevel, snapX - timelineState.timelineOffset, timelineState.timelineOffset);
+            }
+            
+            if (newTime >= 0.0f) {
+                Track* track = app->getTrack(automationDragState.trackName);
+                if (track) {
+                    track->moveAutomationPoint(
+                        automationDragState.effectName, 
+                        automationDragState.parameterName, 
+                        automationDragState.startTime, 
+                        newTime, 
+                        newValue
+                    );
+                    automationDragState.startTime = newTime; // Update for next move event
+                }
+            }
+        }
+    } else {
+        // End dragging when mouse button released
+        automationDragState.isDragging = false;
     }
 }
 
@@ -2898,16 +3511,18 @@ void TimelineComponent::updateAutomationLaneLabels() {
     const auto& allTracks = app->getAllTracks();
     for (const auto& trackPtr : allTracks) {
         auto* track = trackPtr.get();
+        
+        // Update potential automation lane label
         if (track->hasPotentialAutomation()) {
             auto potentialAuto = track->getPotentialAutomation();
             std::string effectName = potentialAuto.first;
             std::string parameterName = potentialAuto.second;            
-            std::string key = track->getName() + "_automation";
+            std::string key = track->getName() + "_potential"; // Key for potential automation lane
             
             // Update label if it exists
             auto labelIt = uiElements.automationLaneLabels.find(key);
             if (labelIt != uiElements.automationLaneLabels.end()) {
-                std::string labelText = effectName + " - " + parameterName;
+                std::string labelText = "[+] " + effectName + " - " + parameterName;
                 labelIt->second->setString(labelText);
                 
                 auto [currentEffectName, currentParameterName, currentValue] = getCurrentAutomationParameter(track);
@@ -2918,8 +3533,18 @@ void TimelineComponent::updateAutomationLaneLabels() {
                 if (rowIt != uiElements.automationLaneRows.end()) {
                     // Update the automation line position based on the current value
                 }
-            } else {
-                // Label not found in map - automation lane may not be created yet
+            }
+        }
+        
+        // Update regular automation lane labels (remove [+] prefix)
+        const auto& automatedParams = track->getAutomatedParameters();
+        for (const auto& [effectName, parameterName] : automatedParams) {
+            std::string key = track->getName() + "_" + effectName + "_" + parameterName; // Key for regular automation lane
+            
+            auto labelIt = uiElements.automationLaneLabels.find(key);
+            if (labelIt != uiElements.automationLaneLabels.end()) {
+                std::string labelText = effectName + " - " + parameterName; // No [+] prefix for regular automation
+                labelIt->second->setString(labelText);
             }
         }
     }
