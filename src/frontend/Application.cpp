@@ -55,7 +55,12 @@ void Application::initialise(const juce::String& commandLine) {
     char path[MAX_PATH];
     GetModuleFileNameA(NULL, path, MAX_PATH);
     exeDirectory = fs::path(path).parent_path().string();
+#elif __APPLE__
+    // On macOS, use the current executable file from JUCE
+    juce::File exeFile = juce::File::getSpecialLocation(juce::File::SpecialLocationType::currentExecutableFile);
+    exeDirectory = exeFile.getParentDirectory().getFullPathName().toStdString();
 #else
+    // Linux and other Unix-like systems
     exeDirectory = fs::canonical("/proc/self/exe").parent_path().string();
 #endif
     loadConfig();
@@ -96,6 +101,12 @@ Application::~Application() {
 }
 
 void Application::shutdown() {
+    // Stop engine first to ensure clean audio/MIDI cleanup
+    engine.stop();
+    
+    // Close all VST editor windows before shutting down to prevent timer assertion failures
+    closeAllEffectEditors();
+    
     unloadAllPlugins();
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
 }
@@ -895,6 +906,32 @@ void Application::unloadAllPlugins() {
     dropdowns.clear();
     uilo_owned_elements.clear();
     high_priority_elements.clear();
+}
+
+void Application::closeAllEffectEditors() {
+    // Close all VST editor windows to prevent timer assertion failures during shutdown
+    auto& tracks = getAllTracks();
+    for (auto& track : tracks) {
+        if (track) {
+            auto& effects = track->getEffects();
+            for (auto& effect : effects) {
+                if (effect && effect->hasEditor()) {
+                    effect->closeWindow();
+                }
+            }
+        }
+    }
+    
+    // Also close master track effects
+    auto* masterTrack = getMasterTrack();
+    if (masterTrack) {
+        auto& effects = masterTrack->getEffects();
+        for (auto& effect : effects) {
+            if (effect && effect->hasEditor()) {
+                effect->closeWindow();
+            }
+        }
+    }
 }
 
 void Application::saveLayoutConfig() {
