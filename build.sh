@@ -15,7 +15,7 @@ BUILD_ALL=0
 UNAME_OUT="$(uname -s)"
 case "${UNAME_OUT}" in
     Linux*)     PLATFORM="Linux";;
-    Darwin*)    PLATFORM="Mac";;
+    Darwin*)    PLATFORM="Darwin";;
     CYGWIN*|MINGW*|MSYS*) PLATFORM="Windows";;
     *)          PLATFORM="Unknown";;
 esac
@@ -73,7 +73,7 @@ build_main() {
             cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=$BUILD_TYPE -A x64
         fi
     else
-        # Use Ninja if available for faster builds on Linux/Mac
+        # Use Ninja if available for faster builds on Linux/Darwin
         if command -v ninja &> /dev/null; then
             echo "Using Ninja generator for faster builds"
             cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DCMAKE_LINKER=lld -G Ninja
@@ -109,8 +109,8 @@ case "$PLATFORM" in
     Windows)
         EXE_PATH="bin/Windows/$BUILD_TYPE/MULO.exe"
         ;;
-    Mac)
-        EXE_PATH="bin/Mac/$BUILD_TYPE/MULO"
+    Darwin)
+        EXE_PATH="bin/Darwin/$BUILD_TYPE/MULO"
         ;;
     Linux)
         EXE_PATH="bin/Linux/$BUILD_TYPE/MULO"
