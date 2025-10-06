@@ -296,6 +296,42 @@ add_library(tinyfiledialogs STATIC external/tinyfiledialogs/tinyfiledialogs.cpp)
 target_include_directories(tinyfiledialogs PUBLIC external/tinyfiledialogs)
 target_link_libraries(MULO PRIVATE tinyfiledialogs)
 
+# Build sandbox library for plugin sandboxing (unified for macOS and Linux)
+if (CMAKE_SYSTEM_NAME STREQUAL "Darwin" OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_library(sandbox_override SHARED src/frontend/sandbox_override.cpp src/frontend/PluginSandbox.cpp)
+    target_include_directories(sandbox_override PRIVATE src/frontend)
+    
+    if (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+        # macOS: Build as dylib for DYLD_INSERT_LIBRARIES
+        set_target_properties(sandbox_override PROPERTIES
+            OUTPUT_NAME "sandbox_override"
+            PREFIX "lib"
+            SUFFIX ".dylib"
+            MACOSX_RPATH ON
+            BUILD_RPATH "@executable_path"
+            INSTALL_RPATH "@executable_path"
+        )
+        message(STATUS "Sandbox library will be built for macOS (DYLD_INSERT_LIBRARIES)")
+    else()
+        # Linux: Build as .so for LD_PRELOAD
+        set_target_properties(sandbox_override PROPERTIES
+            OUTPUT_NAME "sandbox_override"
+            PREFIX "lib"
+            SUFFIX ".so"
+        )
+        target_link_libraries(sandbox_override PRIVATE dl)
+        message(STATUS "Sandbox library will be built for Linux (LD_PRELOAD)")
+    endif()
+    
+    # Output to same directory as MULO executable
+    set_target_properties(sandbox_override PROPERTIES
+        LIBRARY_OUTPUT_DIRECTORY_DEBUG ${CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG}
+        LIBRARY_OUTPUT_DIRECTORY_RELEASE ${CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE}
+        LIBRARY_OUTPUT_DIRECTORY_RELWITHDEBINFO ${CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO}
+        LIBRARY_OUTPUT_DIRECTORY_MINSIZEREL ${CMAKE_RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL}
+    )
+endif()
+
 if(UNIX AND NOT APPLE)
     target_link_libraries(MULO PRIVATE X11)
 endif()
