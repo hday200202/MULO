@@ -2,9 +2,7 @@
 
 #include "Track.hpp"
 #include "MIDIClip.hpp"
-
-// Forward declaration
-class AudioClip;
+#include "AudioClip.hpp"
 
 // MIDITrack - handles MIDI data and MIDI-specific functionality
 class MIDITrack : public Track {

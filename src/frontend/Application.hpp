@@ -307,7 +307,6 @@ private:
     bool loadPlugin(const std::string& path);
     void unloadPlugin(const std::string& name);
     void unloadAllPlugins();
-    void closeAllEffectEditors();
     
     void addTrustedPlugin(const std::string& pluginName);
     void removeTrustedPlugin(const std::string& pluginName);
