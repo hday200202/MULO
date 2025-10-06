@@ -161,4 +161,11 @@ private:
     bool loadPlugin(const std::string& path);
     void unloadPlugin(const std::string& name);
     void unloadAllPlugins();
+    void closeAllEffectEditors();
+    
+    void addTrustedPlugin(const std::string& pluginName);
+    void removeTrustedPlugin(const std::string& pluginName);
+    void setPluginTrusted(const std::string& pluginName, bool trusted);
+    
+    bool isPluginTrusted(const std::string& pluginName) const;
 };

@@ -125,6 +125,23 @@ else()
     endif()
 
     # Looks like we're bootstrapping, reinvoke CMake
+    #
+    # If a previous CMake run created a cached tools build for a different
+    # source directory, CMake will error out. Detect that case and remove the
+    # stale tools build directory before reinvoking CMake.
+    set(_tools_cache "${JUCE_BINARY_DIR}/tools/CMakeCache.txt")
+    if(EXISTS "${_tools_cache}")
+        file(READ "${_tools_cache}" _tools_cache_contents)
+        string(REGEX MATCH "CMAKE_HOME_DIRECTORY:INTERNAL=([^\n\r]+)" _match "${_tools_cache_contents}")
+        if(_match)
+            string(REGEX REPLACE "CMAKE_HOME_DIRECTORY:INTERNAL=([^\n\r]+)" "\\1" _old_source_dir "${_match}")
+            if(NOT _old_source_dir STREQUAL "${JUCE_SOURCE_DIR}")
+                message(WARNING "Removing stale JUCE tools build (cache from ${_old_source_dir}) -> ${JUCE_BINARY_DIR}/tools")
+                file(REMOVE_RECURSE "${JUCE_BINARY_DIR}/tools")
+            endif()
+        endif()
+    endif()
+
     execute_process(COMMAND "${CMAKE_COMMAND}"
             "."
             "-B${JUCE_BINARY_DIR}/tools"

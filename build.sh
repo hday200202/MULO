@@ -14,7 +14,7 @@ DO_CLEAN=0
 UNAME_OUT="$(uname -s)"
 case "${UNAME_OUT}" in
     Linux*)     PLATFORM="Linux";;
-    Darwin*)    PLATFORM="Mac";;
+    Darwin*)    PLATFORM="Darwin";;
     CYGWIN*|MINGW*|MSYS*) PLATFORM="Windows";;
     *)          PLATFORM="Unknown";;
 esac
@@ -49,13 +49,25 @@ fi
 echo "Platform detected: $PLATFORM"
 echo "Configuring build ($BUILD_TYPE)..."
 
-# Use Ninja if available for faster builds, otherwise use default generator
-if command -v ninja &> /dev/null; then
-    echo "Using Ninja generator for faster builds"
-    cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DCMAKE_LINKER=lld -G Ninja
-else
-    cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=$BUILD_TYPE
-fi
+    # Platform-specific CMake configuration
+    if [ "$PLATFORM" = "Windows" ]; then
+        # Force 64-bit build on Windows using Visual Studio generator
+        if command -v ninja &> /dev/null; then
+            echo "Using Ninja generator for faster builds"
+            cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=$BUILD_TYPE -A x64 -G Ninja
+        else
+            echo "Using Visual Studio generator with 64-bit architecture"
+            cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=$BUILD_TYPE -A x64
+        fi
+    else
+        # Use Ninja if available for faster builds on Linux/Darwin
+        if command -v ninja &> /dev/null; then
+            echo "Using Ninja generator for faster builds"
+            cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DCMAKE_LINKER=lld -G Ninja
+        else
+            cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=$BUILD_TYPE
+        fi
+    fi
 
 echo "Building ($BUILD_TYPE)..."
 cmake --build "$BUILD_DIR" --config $BUILD_TYPE -j $(nproc 2>/dev/null || sysctl -n hw.ncpu)
@@ -67,8 +79,8 @@ case "$PLATFORM" in
     Windows)
         EXE_PATH="bin/Windows/$BUILD_TYPE/MULO.exe"
         ;;
-    Mac)
-        EXE_PATH="bin/Mac/$BUILD_TYPE/MULO"
+    Darwin)
+        EXE_PATH="bin/Darwin/$BUILD_TYPE/MULO"
         ;;
     Linux)
         EXE_PATH="bin/Linux/$BUILD_TYPE/MULO"

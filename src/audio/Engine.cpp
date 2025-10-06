@@ -4,12 +4,33 @@ Engine::Engine() {
     formatManager.registerBasicFormats();
     deviceManager.initialise(0, 2, nullptr, false);
     deviceManager.addAudioCallback(this);
+    
+    // Only enable MIDI devices if explicitly needed - avoid auto-enabling all devices
+    // which can cause assertion failures with some MIDI drivers/devices
+    auto midiInputs = juce::MidiInput::getAvailableDevices();
+    DBG("Found " << midiInputs.size() << " MIDI input devices");
+    
+    // Don't automatically enable all MIDI devices - let user enable them if needed
+    // for (const auto& deviceInfo : midiInputs) {
+    //     deviceManager.setMidiInputDeviceEnabled(deviceInfo.identifier, true);
+    //     deviceManager.addMidiInputDeviceCallback(deviceInfo.identifier, this);
+    // }
 
-    masterTrack = std::make_unique<Track>(formatManager);
+    masterTrack = std::make_unique<AudioTrack>(formatManager);
     masterTrack->setName("Master");
 }
 
 Engine::~Engine() {
+    // Only remove callbacks for devices that were actually enabled
+    // Since we're not auto-enabling all MIDI devices anymore, we don't need to remove them all
+    auto midiInputs = juce::MidiInput::getAvailableDevices();
+    for (const auto& deviceInfo : midiInputs) {
+        if (deviceManager.isMidiInputDeviceEnabled(deviceInfo.identifier)) {
+            deviceManager.removeMidiInputDeviceCallback(deviceInfo.identifier, this);
+            deviceManager.setMidiInputDeviceEnabled(deviceInfo.identifier, false);
+        }
+    }
+    
     deviceManager.closeAudioDevice();
     deviceManager.removeAudioCallback(this);
 }
