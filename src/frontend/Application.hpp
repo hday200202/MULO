@@ -8,10 +8,17 @@
 #include <nlohmann/json.hpp>
 #include <iostream>
 #include <juce_core/juce_core.h>
+#include <mutex>
+#include <thread>
+#include <unordered_set>
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <chrono>
 #include <thread>
 #include <list>
+
+#ifdef FIREBASE_AVAILABLE
+    #include <firebase/database.h>
+#endif
 
 #ifdef _WIN32
     #include <windows.h>
@@ -27,6 +34,8 @@
 #ifdef FIREBASE_AVAILABLE
 #include <firebase/app.h>
 #include <firebase/firestore.h>
+#include <firebase/database.h>
+#include <firebase/auth.h>
 #endif
 
 class Application;
@@ -97,6 +106,10 @@ public:
     inline void playSound(const std::string& filePath, float db) { engine.playSound(filePath, db); }
     inline void playSound(const juce::File& file, float db) { engine.playSound(file, db); }
 
+    inline std::string getEngineStateString() const { return engine.getStateString(); }
+    inline void loadEngineStateString(const std::string& stateString) { engine.load(stateString); }
+    inline std::string getEngineStateHash() const { return engine.getStateHash(); }
+
     inline void sendMIDINote(int noteNumber, int velocity, bool noteOn = true) {
         engine.sendRealtimeMIDI(noteNumber, velocity, noteOn);
     }
@@ -141,8 +154,36 @@ public:
     inline std::pair<int, int> getTimeSignature() {return engine.getTimeSignature(); }
 
     inline AudioClip* getReferenceClip(const std::string& trackName) { return engine.getTrackByName(trackName)->getReferenceClip(); }
-    inline void addClipToTrack(const std::string& trackName, const AudioClip& clip) { engine.getTrackByName(trackName)->addClip(clip); }
-    inline void removeClipFromTrack(const std::string& trackName, size_t index) { engine.getTrackByName(trackName)->removeClip(index); }
+    inline void addClipToTrack(const std::string& trackName, const AudioClip& clip) { 
+        engine.getTrackByName(trackName)->addClip(clip); 
+        // Force state update after clip modification
+        std::string currentRoom = readConfig<std::string>("collab_room", "");
+        if (!currentRoom.empty()) {
+            updateRoomEngineState(currentRoom, engine.getStateString());
+        }
+    }
+    inline void removeClipFromTrack(const std::string& trackName, size_t index) { 
+        engine.getTrackByName(trackName)->removeClip(index); 
+        // Force state update after clip modification
+        std::string currentRoom = readConfig<std::string>("collab_room", "");
+        if (!currentRoom.empty()) {
+            updateRoomEngineState(currentRoom, engine.getStateString());
+        }
+    }
+    
+    // Method for updating clip positions (for moves)
+    inline void updateClipInTrack(const std::string& trackName, size_t index, const AudioClip& newClip) {
+        auto* track = engine.getTrackByName(trackName);
+        if (track && index < track->getClips().size()) {
+            track->removeClip(index);
+            track->addClip(newClip);
+            // Force state update after clip modification
+            std::string currentRoom = readConfig<std::string>("collab_room", "");
+            if (!currentRoom.empty()) {
+                updateRoomEngineState(currentRoom, engine.getStateString());
+            }
+        }
+    }
 
     inline double getSampleRate() const { return engine.getSampleRate(); }
     inline void setSampleRate(const double newSampleRate) { 
@@ -191,7 +232,8 @@ public:
 
     inline void loadComposition(const std::string& path) { engine.loadComposition(path); engine.generateMetronomeTrack(); }
     inline std::string getCurrentCompositionName() const { return engine.getCurrentCompositionName(); }
-    inline void saveState() { engine.saveState(); }
+    inline void setCurrentCompositionName(const std::string& name) { engine.setCurrentCompositionName(name); }
+    inline void saveState() { engine.save(); }
     inline void saveToFile(const std::string& path) const { engine.save(path); }
 
     MIDIClip* getSelectedMIDIClip() const;
@@ -217,6 +259,17 @@ public:
     void fetchExtensions(std::function<void(FirebaseState, const std::vector<ExtensionData>&)> callback);
     FirebaseState getFirebaseState() const { return firebaseState; }
     const std::vector<ExtensionData>& getExtensions() const { return extensions; }
+
+    // Collaboration methods
+    void createRoom(const std::string& roomName);
+    void readFromRoom(const std::string& roomName);
+    void joinRoom(const std::string& roomName);
+    void leaveRoom(const std::string& roomName);
+    void updateRoomEngineState(const std::string& roomName, const std::string& engineState);
+    void checkRoomEngineState(const std::string& roomName);
+    void writeToRoom(const std::string& roomName, const std::string& section, const std::string& data);
+    
+    mutable std::mutex firebaseMutex;
 
 private:
     sf::Clock deltaClock;
@@ -288,11 +341,24 @@ private:
 #ifdef FIREBASE_AVAILABLE
     std::unique_ptr<firebase::App> firebaseApp;
     firebase::firestore::Firestore* firestore = nullptr;
+    firebase::database::Database* realtimeDatabase = nullptr;
+    firebase::auth::Auth* auth = nullptr;
     firebase::Future<firebase::firestore::QuerySnapshot> extFuture;
 #endif
     FirebaseState firebaseState = FirebaseState::Idle;
     std::vector<ExtensionData> extensions;
     std::function<void(FirebaseState, const std::vector<ExtensionData>&)> firebaseCallback;
+    std::string lastKnownRemoteEngineState = "";
+    
+    // Thread safety for Firebase operations
+#ifdef FIREBASE_AVAILABLE
+    std::vector<firebase::Future<firebase::database::DataSnapshot>> pendingFirebaseFutures;
+#endif
+    
+    // Thread-safe engine state updates
+    std::mutex engineUpdateMutex;
+    std::string pendingEngineStateUpdate;
+    bool hasPendingEngineUpdate = false;
 
     void initUI();
     void initUIResources();
@@ -316,4 +382,10 @@ private:
     void setPluginTrusted(const std::string& pluginName, bool trusted);
     
     bool isPluginTrusted(const std::string& pluginName) const;
+    
+    // Firebase resource cleanup
+    void cleanupFirebaseResources();
+    
+    // Thread-safe engine updates
+    void processPendingEngineUpdates();
 };

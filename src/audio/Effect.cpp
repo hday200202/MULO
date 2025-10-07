@@ -466,6 +466,17 @@ float Effect::getParameter(int index) const {
     return 0.0f;
 }
 
+std::string Effect::getParameterName(int index) const {
+    if (!plugin) return "";
+    
+    const auto& parameters = plugin->getParameters();
+    if (index >= 0 && index < static_cast<int>(parameters.size())) {
+        return parameters[index]->getName(256).toStdString(); // 256 is max length
+    }
+    
+    return "";
+}
+
 const juce::Array<juce::AudioProcessorParameter *>& Effect::getAllParameters() const {
     if (!plugin) return {};
 

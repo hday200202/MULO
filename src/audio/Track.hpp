@@ -190,6 +190,104 @@ public:
         return false;
     }
 
+    // More precise point moving that matches both time and value
+    inline bool moveAutomationPointPrecise(const std::string& effectName, const std::string& parameterName, 
+                                          float oldTime, float oldValue, float newTime, float newValue, 
+                                          float timeTolerance = 0.0001f, float valueTolerance = 0.001f) {
+        auto effectIt = automationData.find(effectName);
+        if (effectIt != automationData.end()) {
+            auto paramIt = effectIt->second.find(parameterName);
+            if (paramIt != effectIt->second.end()) {
+                auto& points = paramIt->second;
+                auto it = std::find_if(points.begin(), points.end(), 
+                    [oldTime, oldValue, timeTolerance, valueTolerance](const AutomationPoint& point) {
+                        return std::abs(point.time - oldTime) < timeTolerance && 
+                               std::abs(point.value - oldValue) < valueTolerance;
+                    });
+                if (it != points.end()) {
+                    it->time = newTime;
+                    it->value = std::max(0.0f, std::min(1.0f, newValue));
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    // Precise point removal that matches both time and value
+    inline bool removeAutomationPointPrecise(const std::string& effectName, const std::string& parameterName, 
+                                            float time, float value, 
+                                            float timeTolerance = 0.0001f, float valueTolerance = 0.001f) {
+        auto effectIt = automationData.find(effectName);
+        if (effectIt != automationData.end()) {
+            auto paramIt = effectIt->second.find(parameterName);
+            if (paramIt != effectIt->second.end()) {
+                auto& points = paramIt->second;
+                auto it = std::find_if(points.begin(), points.end(), 
+                    [time, value, timeTolerance, valueTolerance](const AutomationPoint& point) {
+                        return std::abs(point.time - time) < timeTolerance && 
+                               std::abs(point.value - value) < valueTolerance;
+                    });
+                if (it != points.end()) {
+                    points.erase(it);
+                    
+                    // Remove from automation list if less than 2 points
+                    if (points.size() < 2) {
+                        std::pair<std::string, std::string> paramPair = {effectName, parameterName};
+                        automatedParameters.erase(
+                            std::remove(automatedParameters.begin(), automatedParameters.end(), paramPair),
+                            automatedParameters.end()
+                        );
+                    }
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    inline bool updateAutomationPointCurve(const std::string& effectName, const std::string& parameterName, 
+                                          float time, float newCurve, float tolerance = 0.001f) {
+        auto effectIt = automationData.find(effectName);
+        if (effectIt != automationData.end()) {
+            auto paramIt = effectIt->second.find(parameterName);
+            if (paramIt != effectIt->second.end()) {
+                auto& points = paramIt->second;
+                auto it = std::find_if(points.begin(), points.end(), 
+                    [time, tolerance](const AutomationPoint& point) {
+                        return std::abs(point.time - time) < tolerance;
+                    });
+                if (it != points.end()) {
+                    it->curve = std::max(0.0f, std::min(1.0f, newCurve));
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    inline bool updateAutomationPointCurvePrecise(const std::string& effectName, const std::string& parameterName, 
+                                                 float time, float value, float newCurve,
+                                                 float timeTolerance = 0.0001f, float valueTolerance = 0.001f) {
+        auto effectIt = automationData.find(effectName);
+        if (effectIt != automationData.end()) {
+            auto paramIt = effectIt->second.find(parameterName);
+            if (paramIt != effectIt->second.end()) {
+                auto& points = paramIt->second;
+                auto it = std::find_if(points.begin(), points.end(), 
+                    [time, value, timeTolerance, valueTolerance](const AutomationPoint& point) {
+                        return std::abs(point.time - time) < timeTolerance && 
+                               std::abs(point.value - value) < valueTolerance;
+                    });
+                if (it != points.end()) {
+                    it->curve = std::max(0.0f, std::min(1.0f, newCurve));
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     inline bool clearAutomationParameter(const std::string& effectName, const std::string& parameterName) {
         auto effectIt = automationData.find(effectName);
         if (effectIt != automationData.end()) {
@@ -253,7 +351,27 @@ public:
                 
                 if (time >= p1->time && time <= p2->time) {
                     double t = (time - p1->time) / (p2->time - p1->time);
-                    return p1->value + t * (p2->value - p1->value);
+                    
+                    if (std::abs(p1->curve - 0.5f) < 0.001f) {
+                        return p1->value + t * (p2->value - p1->value);
+                    } else {
+                        float curve = p1->curve;
+                        float adjustedT;
+                        
+                        if (curve < 0.5f) {
+                            // Ease-in: slow start, fast end
+                            // Ultra-sharp at 0.0f (almost perfect corner)
+                            float factor = 50.0f * (0.5f - curve); // 0.0f->25.0f, 0.5f->0.0f
+                            adjustedT = std::pow(t, 1.0f + factor);
+                        } else {
+                            // Ease-out: fast start, slow end  
+                            // Ultra-sharp at 1.0f (almost perfect corner)
+                            float factor = 50.0f * (curve - 0.5f); // 0.5f->0.0f, 1.0f->25.0f
+                            adjustedT = 1.0f - std::pow(1.0f - t, 1.0f + factor);
+                        }
+                        
+                        return p1->value + adjustedT * (p2->value - p1->value);
+                    }
                 }
             }
             

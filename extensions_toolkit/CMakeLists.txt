@@ -239,15 +239,26 @@ foreach(target ${EXTENSION_TARGETS})
         $<$<AND:$<BOOL:${UNIX}>,$<NOT:$<BOOL:${APPLE}>>>:X11>
     )
 
+    # Temporarily disable Firebase linking due to PIC issues
     # Link Firebase and add include dir only to MarketplaceComponent
-    if (target STREQUAL "MarketplaceComponent")
+    if (false AND target STREQUAL "MarketplaceComponent")
         # Detect platform and set Firebase lib/include paths
         if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
-            set(FIREBASE_LIB "${CMAKE_SOURCE_DIR}/../external/linux/firebase/libfirebase.a")
             set(FIREBASE_INCLUDE "${CMAKE_SOURCE_DIR}/../external/linux/firebase/include")
+            # List all required Firebase .a files for Linux
+            set(FIREBASE_LIBS
+                "${CMAKE_SOURCE_DIR}/../external/linux/firebase/libfirebase_app.a"
+                "${CMAKE_SOURCE_DIR}/../external/linux/firebase/libfirebase_database.a"
+                "${CMAKE_SOURCE_DIR}/../external/linux/firebase/libfirebase_auth.a"
+            )
         elseif (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
-            set(FIREBASE_LIB "${CMAKE_SOURCE_DIR}/../external/mac/firebase/libfirebase.a")
             set(FIREBASE_INCLUDE "${CMAKE_SOURCE_DIR}/../external/mac/firebase/include")
+            # List all required Firebase .a files for Mac
+            set(FIREBASE_LIBS
+                "${CMAKE_SOURCE_DIR}/../external/mac/firebase/libfirebase_app.a"
+                "${CMAKE_SOURCE_DIR}/../external/mac/firebase/libfirebase_database.a"
+                "${CMAKE_SOURCE_DIR}/../external/mac/firebase/libfirebase_auth.a"
+            )
         elseif (CMAKE_SYSTEM_NAME STREQUAL "Windows")
             set(FIREBASE_INCLUDE "${CMAKE_SOURCE_DIR}/../external/windows/firebase/include")
             # List all required Firebase .lib files for Windows (adjust as needed for your SDK)
@@ -278,20 +289,21 @@ foreach(target ${EXTENSION_TARGETS})
         endforeach()
         if (FIREBASE_LIBS_FOUND)
             target_link_libraries(${target} PRIVATE ${FIREBASE_LIBS_FOUND})
-            message(STATUS "Linked Firebase libs to MarketplaceComponent: ${FIREBASE_LIBS_FOUND}")
+            target_compile_definitions(${target} PRIVATE FIREBASE_AVAILABLE)
+            message(STATUS "Linked Firebase libs to ${target}: ${FIREBASE_LIBS_FOUND}")
         else()
-            message(WARNING "No Firebase libraries found for MarketplaceComponent!")
+            message(WARNING "No Firebase libraries found for ${target}!")
         endif()
         # Link Windows system libraries if on Windows
         if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
             target_link_libraries(${target} PRIVATE ${FIREBASE_SYSTEM_LIBS})
-            message(STATUS "Linked Windows system libs to MarketplaceComponent: ${FIREBASE_SYSTEM_LIBS}")
+            message(STATUS "Linked Windows system libs to ${target}: ${FIREBASE_SYSTEM_LIBS}")
         endif()
         if (EXISTS "${FIREBASE_INCLUDE}")
             target_include_directories(${target} PRIVATE "${FIREBASE_INCLUDE}")
-            message(STATUS "Added Firebase include dir to MarketplaceComponent: ${FIREBASE_INCLUDE}")
+            message(STATUS "Added Firebase include dir to ${target}: ${FIREBASE_INCLUDE}")
         else()
-            message(WARNING "Firebase include dir not found for MarketplaceComponent: ${FIREBASE_INCLUDE}")
+            message(WARNING "Firebase include dir not found for ${target}: ${FIREBASE_INCLUDE}")
         endif()
     endif()
 
