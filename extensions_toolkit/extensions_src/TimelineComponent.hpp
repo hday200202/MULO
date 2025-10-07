@@ -22,6 +22,48 @@ public:
 
     void rebuildUI();
 
+<<<<<<< Updated upstream
+=======
+    static bool clipEndDrag = false;
+    static bool clipStartDrag = false;
+
+    // Override to provide access to the selected MIDI clip
+    MIDIClip* getSelectedMIDIClip() const override { 
+        if (!selectedMIDIClipInfo.hasSelection) {
+            return nullptr;
+        }
+        
+        auto* track = app->getTrack(selectedMIDIClipInfo.trackName);
+        if (!track || track->getType() != Track::TrackType::MIDI) {
+            return nullptr;
+        }
+        
+        MIDITrack* midiTrack = static_cast<MIDITrack*>(track);
+        const auto& midiClips = midiTrack->getMIDIClips();
+        
+        for (auto& clip : midiClips) {
+            if (std::abs(clip.startTime - selectedMIDIClipInfo.startTime) < 0.001 &&
+                std::abs(clip.duration - selectedMIDIClipInfo.duration) < 0.001) {
+                return const_cast<MIDIClip*>(&clip);
+            }
+        }
+        
+        return nullptr;
+    }
+
+    struct FeatureFlags {
+        bool enableMouseInput = true;
+        bool enableKeyboardInput = true;
+        bool enableClipDragging = true;
+        bool enableClipPlacement = true;
+        bool enableClipDeletion = true;
+        bool enableAutoFollow = true;
+        bool enableVirtualCursor = true;
+        bool enableWaveforms = true;
+        bool enableUISync = true;
+    } features;
+
+>>>>>>> Stashed changes
 private:
     float timelineOffset = 0.f;
     bool wasVisible = true;
@@ -173,6 +215,15 @@ void TimelineComponent::update() {
     float scrubberPos = app->readConfig<float>("scrubber_position", 0.0f);
     scrubberPositionChanged = (std::abs(scrubberPos - lastScrubberPosition) > 0.001f);
     
+    float mousePosSeconds = xPosToSeconds(
+        app->getBpm(),
+        100.f * app->uiState.timelineZoomLevel,
+        app->ui->getMousePosition().x,
+        timelineState.timelineOffset
+    );
+    float selectedClipEnd = selectedClip->startTime + selectedClip->duration;
+    float originalClipStartTime = 0.f;
+    
     // Calculate the last clip position in the timeline
     double lastClipEndSeconds = 0.0;
     for (const auto& track : app->getAllTracks()) {
@@ -248,6 +299,32 @@ void TimelineComponent::update() {
                 auto* scrollableRow = static_cast<ScrollableRow*>(rowIt->second);
                 scrollableRow->setOffset(timelineOffset);
             }
+        }
+    }
+
+    if(mousePosSeconds <= selectedClipEnd + 5.0 && mousePosSeconds >= selectedClipEnd) {
+        if(app->ui->isMouseDragging()) {
+            clipEndDrag = true;
+        }
+    }
+
+    if(clipEndDrag) {
+        if(mousePosSeconds < selectedClipEnd) {
+            selectedClip->duration = mousePosSeconds - selectedClip->startTime;
+        }
+    }
+
+    if(mousePosSeconds >= selectedClipEnd + 5.0 && mousePosSeconds <= selectedClipEnd) {
+        if(app->ui->isMouseDragging()) {
+            clipEndDrag = true;
+            originalClipStartTime = selectedClip->startTime;
+        }
+    }
+
+    if(clipStartDrag) {
+        if(mousePosSeconds > selectedClip->startTime) {
+            selectedClip->offset = mousePosSeconds - selectedClip->startTime;
+    		selectedClip->startTime = originalClipStartTime + selectedClip->offset;
         }
     }
 }
