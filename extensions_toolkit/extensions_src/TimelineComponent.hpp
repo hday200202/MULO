@@ -16,6 +16,8 @@
 class TimelineComponent : public MULOComponent {
 public:
     static TimelineComponent* instance;
+    static bool clipEndDrag = false;
+    static bool clipStartDrag = false;
     
     AudioClip* selectedClip = nullptr;
     
@@ -355,6 +357,13 @@ void TimelineComponent::update() {
     // Check if scrubber position has changed
     float scrubberPos = app->readConfig<float>("scrubber_position", 0.0f);
     scrubberPositionChanged = (std::abs(scrubberPos - lastScrubberPosition) > 0.001f);
+
+    float mousePosSeconds = xPosToSeconds(
+        app->getBpm(), 
+        100.f * app->uiState.timelineZoomLevel, 
+        app->ui->getMousePosition().x, 
+        timelineState.timelineOffset
+    );
     
     // Calculate the last clip position in the timeline
     double lastClipEndSeconds = 0.0;
@@ -431,6 +440,32 @@ void TimelineComponent::update() {
                 auto* scrollableRow = static_cast<ScrollableRow*>(rowIt->second);
                 scrollableRow->setOffset(timelineState.timelineOffset);
             }
+        }
+    }
+
+    if (mousePosSeconds <= selectedClipEnd + 5.0 && mousePosSeconds >= selectedClipEnd) {
+        if (app->ui->isMouseDragging()) {
+                clipEndDrag = true;
+        }
+    }
+
+    if (clipEndDrag) {
+        if (mousePosSeconds < selectedClipEnd) {
+                selectedClip->duration = mousePosSeconds - selectedClip->startTime;
+        }
+    }
+
+    if (mousePosSeconds >= selectedClip->startTime - 5.0 && mousePosSeconds <= selectedClip->startTime) {
+        if (app->ui->isMouseDragging()) {
+                clipStartDrag = true;
+                originalClipStartTime = selectedClip->startTime;
+        }
+    }
+
+    if (clipStartDrag) {
+        if (mousePosSeconds > selectedClip->startTime) {
+                selectedClip->offset = mousePosSeconds - selectedClip->startTime;
+                selectedClip->startTime = originalClipStartTime + selectedClip->offset;
         }
     }
 
