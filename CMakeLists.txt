@@ -112,6 +112,10 @@ file(GLOB_RECURSE MULO_SOURCES
     "${CMAKE_SOURCE_DIR}/src/audio/*.cpp"
 )
 
+# Exclude sandbox implementation files from main executable
+# (they're built separately as a shared library)
+list(FILTER MULO_SOURCES EXCLUDE REGEX ".*sandbox_override.*\\.cpp$")
+
 # Define executable
 add_executable(MULO ${MULO_SOURCES})
 
@@ -296,7 +300,7 @@ add_library(tinyfiledialogs STATIC external/tinyfiledialogs/tinyfiledialogs.cpp)
 target_include_directories(tinyfiledialogs PUBLIC external/tinyfiledialogs)
 target_link_libraries(MULO PRIVATE tinyfiledialogs)
 
-# Build sandbox library for plugin sandboxing (unified for macOS and Linux)
+# Build sandbox library for plugin sandboxing (unified for macOS, Linux, and Windows)
 if (CMAKE_SYSTEM_NAME STREQUAL "Darwin" OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_library(sandbox_override SHARED src/frontend/sandbox_override.cpp src/frontend/PluginSandbox.cpp)
     target_include_directories(sandbox_override PRIVATE src/frontend)
@@ -330,6 +334,31 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Darwin" OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
         LIBRARY_OUTPUT_DIRECTORY_RELWITHDEBINFO ${CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO}
         LIBRARY_OUTPUT_DIRECTORY_MINSIZEREL ${CMAKE_RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL}
     )
+elseif (WIN32)
+    # Windows: Build as DLL for DLL injection/detours
+    # Note: Windows doesn't have LD_PRELOAD equivalent, so this requires
+    # explicit loading or using tools like Microsoft Detours
+    add_library(sandbox_override SHARED src/frontend/sandbox_override_windows.cpp src/frontend/PluginSandbox.cpp)
+    target_include_directories(sandbox_override PRIVATE src/frontend)
+    
+    set_target_properties(sandbox_override PROPERTIES
+        OUTPUT_NAME "sandbox_override"
+        SUFFIX ".dll"
+        RUNTIME_OUTPUT_DIRECTORY_DEBUG ${CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG}
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE ${CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE}
+        RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO}
+        RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL ${CMAKE_RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL}
+    )
+    
+    # Link Windows-specific libraries
+    target_link_libraries(sandbox_override PRIVATE 
+        kernel32
+        advapi32
+        ws2_32
+    )
+    
+    message(STATUS "Sandbox library will be built for Windows (DLL)")
+    message(STATUS "Note: Windows sandbox requires explicit DLL loading or detours")
 endif()
 
 if(UNIX AND NOT APPLE)

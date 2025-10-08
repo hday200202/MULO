@@ -3,9 +3,13 @@
 #include <iostream>
 #include <string>
 #include <unordered_set>
-#include <fcntl.h>
-#include <unistd.h>
 #include <thread>
+
+// Platform-specific includes
+#ifndef _WIN32
+    #include <fcntl.h>
+    #include <unistd.h>
+#endif
 
 class PluginSandbox {
 private:
