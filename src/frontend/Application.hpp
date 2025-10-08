@@ -15,6 +15,7 @@
 #include <chrono>
 #include <thread>
 #include <list>
+#include "EmailService.hpp"
 
 #ifdef FIREBASE_AVAILABLE
     #include <firebase/database.h>
@@ -57,7 +58,7 @@ public:
     nlohmann::json config;
 
 
-    const juce::String getApplicationName() override { return "MDAW"; }
+    const juce::String getApplicationName() override { return "MULO"; }
     const juce::String getApplicationVersion() override { return "1.0.0"; }
     bool moreThanOneInstanceAllowed() override { return true; }
     void initialise(const juce::String& commandLine) override;
@@ -260,6 +261,21 @@ public:
     FirebaseState getFirebaseState() const { return firebaseState; }
     const std::vector<ExtensionData>& getExtensions() const { return extensions; }
 
+    // User Authentication methods
+    enum class AuthState { Idle, Loading, Success, Error, RequiresMFA };
+    void registerUser(const std::string& emailOrUsername, const std::string& password, std::function<void(AuthState, const std::string&)> callback);
+    void loginUser(const std::string& emailOrUsername, const std::string& password, std::function<void(AuthState, const std::string&)> callback);
+    void verifyMFA(const std::string& verificationCode, std::function<void(AuthState, const std::string&)> callback);
+    void enableMFA(std::function<void(AuthState, const std::string&)> callback);
+    void logoutUser();
+    bool isUserLoggedIn() const;
+    std::string getCurrentUserEmail() const;
+    
+    // Session persistence
+    void saveLastLoggedInUser(const std::string& email);
+    std::string getLastLoggedInUser();
+    bool isReturningUser(const std::string& email);
+    
     // Collaboration methods
     void createRoom(const std::string& roomName);
     void readFromRoom(const std::string& roomName);
@@ -349,6 +365,17 @@ private:
     std::vector<ExtensionData> extensions;
     std::function<void(FirebaseState, const std::vector<ExtensionData>&)> firebaseCallback;
     std::string lastKnownRemoteEngineState = "";
+    
+    // User Authentication members
+    AuthState authState = AuthState::Idle;
+    std::string currentUserEmail = "";
+    bool userLoggedIn = false;
+    bool mfaRequired = false;
+    std::string pendingMFASessionInfo = "";
+    std::string lastLoggedInUser = "";
+    std::unordered_map<std::string, std::string> usernamesToEmails; // Map usernames to emails
+    std::unordered_map<std::string, std::string> pendingVerificationCodes; // Map emails to verification codes
+    std::unordered_map<std::string, std::chrono::steady_clock::time_point> codeTimestamps; // Code expiration
     
     // Thread safety for Firebase operations
 #ifdef FIREBASE_AVAILABLE
