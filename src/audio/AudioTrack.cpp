@@ -66,15 +66,16 @@ void AudioTrack::process(double playheadSeconds,
                 continue;
             }
 
-            int startSampleInClip = static_cast<int>(readStartTimeInClip * sampleRate);
-            int endSampleInClip = static_cast<int>(readEndTimeInClip * sampleRate);
-            int numSamplesToRead = endSampleInClip - startSampleInClip;
+            // Calculate sample positions in the source audio file, accounting for clip offset
+            int startSampleInSourceFile = static_cast<int>((readStartTimeInClip + c.offset) * sampleRate);
+            int endSampleInSourceFile = static_cast<int>((readEndTimeInClip + c.offset) * sampleRate);
+            int numSamplesToRead = endSampleInSourceFile - startSampleInSourceFile;
 
-            if (numSamplesToRead <= 0 || startSampleInClip >= c.preRenderedAudio->getNumSamples()) {
+            if (numSamplesToRead <= 0 || startSampleInSourceFile >= c.preRenderedAudio->getNumSamples()) {
                 continue;
             }
             
-            numSamplesToRead = juce::jmin(numSamplesToRead, c.preRenderedAudio->getNumSamples() - startSampleInClip);
+            numSamplesToRead = juce::jmin(numSamplesToRead, c.preRenderedAudio->getNumSamples() - startSampleInSourceFile);
 
             juce::int64 outputBufferStartSample = static_cast<juce::int64>(juce::jmax(0.0, (c.startTime - blockStartTimeSeconds) * sampleRate));
             outputBufferStartSample = juce::jmax((juce::int64)0, outputBufferStartSample);
@@ -86,22 +87,22 @@ void AudioTrack::process(double playheadSeconds,
                 float leftGain = std::sqrt((1.0f - pan) / 2.0f) * juce::Decibels::decibelsToGain(volumeDb);
                 float rightGain = std::sqrt((1.0f + pan) / 2.0f) * juce::Decibels::decibelsToGain(volumeDb);
                 
-                volPanBuf.copyFrom(0, 0, *c.preRenderedAudio, 0, startSampleInClip, numSamplesToRead);
-                volPanBuf.copyFrom(1, 0, *c.preRenderedAudio, 0, startSampleInClip, numSamplesToRead);
+                volPanBuf.copyFrom(0, 0, *c.preRenderedAudio, 0, startSampleInSourceFile, numSamplesToRead);
+                volPanBuf.copyFrom(1, 0, *c.preRenderedAudio, 0, startSampleInSourceFile, numSamplesToRead);
                 volPanBuf.applyGain(0, 0, numSamplesToRead, leftGain);
                 volPanBuf.applyGain(1, 0, numSamplesToRead, rightGain);
             } else if (c.preRenderedAudio->getNumChannels() == 2 && output.getNumChannels() == 2) {
                 float leftGain = juce::Decibels::decibelsToGain(volumeDb) * (1.0f - juce::jmax(0.0f, pan));
                 float rightGain = juce::Decibels::decibelsToGain(volumeDb) * (1.0f + juce::jmin(0.0f, pan));
                 
-                volPanBuf.copyFrom(0, 0, *c.preRenderedAudio, 0, startSampleInClip, numSamplesToRead);
-                volPanBuf.copyFrom(1, 0, *c.preRenderedAudio, 1, startSampleInClip, numSamplesToRead);
+                volPanBuf.copyFrom(0, 0, *c.preRenderedAudio, 0, startSampleInSourceFile, numSamplesToRead);
+                volPanBuf.copyFrom(1, 0, *c.preRenderedAudio, 1, startSampleInSourceFile, numSamplesToRead);
                 volPanBuf.applyGain(0, 0, numSamplesToRead, leftGain);
                 volPanBuf.applyGain(1, 0, numSamplesToRead, rightGain);
             } else {
                 float gain = juce::Decibels::decibelsToGain(volumeDb);
                 for (int ch = 0; ch < juce::jmin(c.preRenderedAudio->getNumChannels(), output.getNumChannels()); ++ch) {
-                    volPanBuf.copyFrom(ch, 0, *c.preRenderedAudio, ch, startSampleInClip, numSamplesToRead);
+                    volPanBuf.copyFrom(ch, 0, *c.preRenderedAudio, ch, startSampleInSourceFile, numSamplesToRead);
                     volPanBuf.applyGain(ch, 0, numSamplesToRead, gain);
                 }
             }

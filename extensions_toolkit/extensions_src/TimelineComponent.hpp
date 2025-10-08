@@ -12,12 +12,28 @@
 #include <unordered_map>
 #include <filesystem>
 #include <algorithm>
+#include <SFML/Window/Cursor.hpp>
 
 class TimelineComponent : public MULOComponent {
 public:
     static TimelineComponent* instance;
+    static bool clipEndDrag;
+    static bool clipStartDrag;
+    static bool isResizing; // New flag to prevent interference during resize
     
     AudioClip* selectedClip = nullptr;
+    double selectedClipEnd = 0.0;
+    double originalClipStartTime = 0.0;
+    double originalClipDuration = 0.0;
+    double originalClipOffset = 0.0;
+    double resizeDragStartMouseTime = 0.0;
+    
+    // MIDI clip resize state
+    double originalMIDIClipStartTime = 0.0;
+    double originalMIDIClipDuration = 0.0;
+    bool midiClipEndDrag = false;
+    bool midiClipStartDrag = false;
+    bool isMIDIResizing = false;
     
     struct SelectedMIDIClipInfo {
         bool hasSelection = false;
@@ -152,6 +168,7 @@ private:
         std::unordered_map<std::string, Slider*> trackVolumeSliders;
         std::unordered_map<std::string, Button*> trackSoloButtons;
         std::unordered_map<std::string, Button*> trackRemoveButtons;
+        std::unordered_map<std::string, TextBox*> trackNameTextBoxes;
         std::unordered_map<std::string, Text*> automationLaneLabels;
         std::unordered_map<std::string, Row*> automationLaneRows;
         std::unordered_map<std::string, Button*> automationClearButtons;
@@ -187,6 +204,7 @@ private:
     void handleIndividualTrackControls(Track* track, const std::string& name);
     void updateTrackHighlighting();
     void rebuildTrackUI();
+    void handleTrackRenaming();
     
     void updateTimelineState();
     void resetDragState();
@@ -215,8 +233,29 @@ private:
     void duplicateSelectedClips();
     void clearClipboard();
     
+    // Cursor management
+    void updateMouseCursor();
+    void setCursor(sf::Cursor::Type cursorType);
+    bool isMouseOverResizeZone(const AudioClip& clip, float mouseTimeInTrack) const;
+    enum class ResizeZone { None, Start, End };
+    ResizeZone getResizeZone(const AudioClip& clip, float mouseTimeInTrack, float pixelsPerSecond) const;
+    ResizeZone getResizeZone(const MIDIClip& clip, float mouseTimeInTrack, float pixelsPerSecond) const;
+    
+    // Grid snapping helpers
+    double snapToGrid(double timeValue, bool forceSnap = false) const;
+    bool isShiftPressed() const;
+    
     float enginePanToSlider(float enginePan) const { return (enginePan + 1.0f) * 0.5f; }
     float sliderPanToEngine(float sliderPan) const { return (sliderPan * 2.0f) - 1.0f; }
+    
+private:
+    // Cursor state management
+    sf::Cursor::Type currentCursorType = sf::Cursor::Type::Arrow;
+    std::unique_ptr<sf::Cursor> resizeCursorH;
+    std::unique_ptr<sf::Cursor> textCursor;
+    std::unique_ptr<sf::Cursor> handCursor;
+    bool cursorsEnabled = true; // Can be disabled if causing issues
+    void initializeCursors();
 };
 
 inline std::vector<std::shared_ptr<sf::Drawable>> generateClipRects(double bpm, float beatWidth, float scrollOffset, const sf::Vector2f& rowSize, const std::vector<AudioClip>& clips, float verticalOffset, UIResources* resources, UIState* uiState, const AudioClip* selectedClip, const std::string& currentTrackName, const std::string& selectedTrackName);
@@ -263,16 +302,21 @@ inline float xPosToSeconds(double bpm, float beatWidth, float xPos, float scroll
 inline std::unordered_map<std::string, std::vector<float>>& getWaveformCache();
 inline void ensureWaveformIsCached(const AudioClip& clip);
 inline void clearWaveformCache();
+inline double getSourceFileDuration(const AudioClip& clip);
+inline void invalidateClipWaveform(const AudioClip& clip);
 
 TimelineComponent::TimelineComponent() { 
     name = "timeline"; 
-    selectedClip = nullptr; 
+    selectedClip = nullptr;
+    clipEndDrag = false;
+    clipStartDrag = false;
     timelineState.lastFrameTime = std::chrono::steady_clock::now();
     timelineState.lastBlinkTime = std::chrono::steady_clock::now();
     timelineState.deltaTime = 0.0f;
     timelineState.firstFrame = true;
     
     instance = this;
+    initializeCursors();
 }
 
 TimelineComponent::~TimelineComponent() {
@@ -353,6 +397,7 @@ void TimelineComponent::update() {
     syncSlidersToEngine();
     updateTimelineVisuals();    
     handleCustomUIElements();
+    handleTrackRenaming();
     
     // Update automation lane labels if automation view is enabled
     if (app->readConfig("show_automation", false)) {
@@ -362,6 +407,13 @@ void TimelineComponent::update() {
     // Check if scrubber position has changed
     float scrubberPos = app->readConfig<float>("scrubber_position", 0.0f);
     scrubberPositionChanged = (std::abs(scrubberPos - lastScrubberPosition) > 0.001f);
+
+    float mousePosSeconds = xPosToSeconds(
+        app->getBpm(), 
+        100.f * app->uiState.timelineZoomLevel, 
+        app->ui->getMousePosition().x, 
+        timelineState.timelineOffset
+    );
     
     // Calculate the last clip position in the timeline
     double lastClipEndSeconds = 0.0;
@@ -474,13 +526,17 @@ void TimelineComponent::updateTimelineState() {
 }
 
 bool TimelineComponent::handleEvents() {
+    // Only handle events when timeline is visible
+    if (!this->isVisible()) {
+        timelineState.wasVisible = false;
+        return false;
+    }
+    
     bool forceUpdate = app->isPlaying();
 
-    if (this->isVisible() && !timelineState.wasVisible) {
+    if (!timelineState.wasVisible) {
         syncSlidersToEngine();
         timelineState.wasVisible = true;
-    } else if (!this->isVisible()) {
-        timelineState.wasVisible = false;
     }
 
     if (features.enableUISync) {
@@ -516,15 +572,16 @@ uilo::Row* TimelineComponent::masterTrack() {
     uiElements.masterTrackLabel = row(
         Modifier(),
     contains{
-        spacer(Modifier().setfixedWidth(8).align(Align::LEFT)),
+        spacer(Modifier().setfixedWidth(16).align(Align::LEFT)),
 
         column(
             Modifier(),
         contains{
             text(
                 Modifier().setColor(app->resources.activeTheme->primary_text_color).setfixedHeight(24).align(Align::LEFT | Align::TOP),
-                "Master",
-                app->resources.dejavuSansFont
+                " Master",
+                app->resources.dejavuSansFont,
+                "Master_name_text"
             ),
 
             row(
@@ -641,7 +698,7 @@ uilo::Row* TimelineComponent::track(
         if (!ctrlPressed || !app->ui->isMouseDragging()) {
             sf::Vector2f globalMousePos = app->ui->getMousePosition();
             auto* trackRow = containers[trackName + "_scrollable_row"];
-            if (trackRow) {
+            if (trackRow && !isResizing) { // Don't update virtual cursor during resize
                 sf::Vector2f localMousePos = globalMousePos - trackRow->getPosition();
                 float timePosition = xPosToSeconds(app->getBpm(), 100.f * app->uiState.timelineZoomLevel, localMousePos.x - timelineState.timelineOffset, timelineState.timelineOffset);
                 timelineState.virtualCursorTime = timePosition;
@@ -723,11 +780,25 @@ uilo::Row* TimelineComponent::track(
                 contains{
                     spacer(Modifier().setfixedWidth(8).align(Align::LEFT)),
                     
-                    text(
-                        Modifier().setColor(app->resources.activeTheme->primary_text_color).setfixedHeight(24).align(Align::LEFT | Align::TOP),
-                        trackName,
-                        app->resources.dejavuSansFont
-                    )
+                    [&]() {
+                        auto* trackNameTextBox = textBox(
+                            Modifier().setColor(sf::Color::Transparent).setfixedHeight(28).align(Align::LEFT | Align::TOP),
+                            TBStyle::Default,
+                            app->resources.dejavuSansFont,
+                            "", // Empty default text
+                            app->resources.activeTheme->primary_text_color,
+                            sf::Color::Transparent,
+                            trackName + "_name_textbox"
+                        );
+                        
+                        // Set the actual text content to the track name
+                        trackNameTextBox->setText(trackName);
+                        
+                        // Store reference for rename handling
+                        uiElements.trackNameTextBoxes[trackName] = trackNameTextBox;
+                        
+                        return trackNameTextBox;
+                    }()
                 }),
 
                 row(
@@ -1353,16 +1424,49 @@ void TimelineComponent::handleCustomUIElements() {
                     if (clipRect.contains(localMousePos)) {
                         if (!app->getWindow().hasFocus()) continue;
                         if (!ctrlPressed && !prevCtrlPressed && sf::Mouse::isButtonPressed(sf::Mouse::Button::Left) && features.enableMouseInput) {
-                            if (!dragState.isDraggingClip && !dragState.clipSelectedForDrag) {
+                            if (!dragState.isDraggingClip && !dragState.clipSelectedForDrag && !isResizing && !isMIDIResizing) {
+                                float midiMouseTimeInTrack = (localMousePos.x - timelineState.timelineOffset) / pixelsPerSecond;
+                                
+                                ResizeZone zone = getResizeZone(mc, midiMouseTimeInTrack, pixelsPerSecond);
+                                
                                 selectedMIDIClipInfo.hasSelection = true;
                                 selectedMIDIClipInfo.startTime = mc.startTime;
                                 selectedMIDIClipInfo.duration = mc.duration;
                                 selectedMIDIClipInfo.trackName = track->getName();
                                 selectedClip = nullptr;
-                                DEBUG_PRINT("[TIMELINE] Selected MIDI clip: startTime=" << mc.startTime << ", duration=" << mc.duration);
                                 app->setSelectedTrack(track->getName());
                                 
-                                float midiMouseTimeInTrack = (localMousePos.x - timelineState.timelineOffset) / pixelsPerSecond;
+                                if (zone == ResizeZone::End) {
+                                    midiClipEndDrag = true;
+                                    midiClipStartDrag = false;
+                                    if (!isMIDIResizing) {
+                                        originalMIDIClipStartTime = mc.startTime;
+                                        originalMIDIClipDuration = mc.duration;
+                                        resizeDragStartMouseTime = midiMouseTimeInTrack;
+                                    }
+                                    isMIDIResizing = true;
+                                    
+                                    timelineState.virtualCursorTime = mc.startTime + mc.duration;
+                                    timelineState.showVirtualCursor = true;
+                                    timelineState.virtualCursorVisible = true;
+                                } else if (zone == ResizeZone::Start) {
+                                    midiClipStartDrag = true;
+                                    midiClipEndDrag = false;
+                                    if (!isMIDIResizing) {
+                                        originalMIDIClipStartTime = mc.startTime;
+                                        originalMIDIClipDuration = mc.duration;
+                                        resizeDragStartMouseTime = midiMouseTimeInTrack;
+                                    }
+                                    isMIDIResizing = true;
+                                    
+                                    timelineState.virtualCursorTime = mc.startTime;
+                                    timelineState.showVirtualCursor = true;
+                                    timelineState.virtualCursorVisible = true;
+                                } else {
+                                    midiClipEndDrag = false;
+                                    midiClipStartDrag = false;
+                                    isMIDIResizing = false;
+                                }
                                 
                                 bool shiftHeld = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LShift) || sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RShift);
                                 
@@ -1434,12 +1538,48 @@ void TimelineComponent::handleCustomUIElements() {
                     if (clipRect.contains(localMousePos)) {
                         if (!app->getWindow().hasFocus()) continue;
                         if (!ctrlPressed && !prevCtrlPressed && sf::Mouse::isButtonPressed(sf::Mouse::Button::Left) && features.enableMouseInput) {
-                            if (!dragState.isDraggingClip && !dragState.clipSelectedForDrag) {
+                            if (!dragState.isDraggingClip && !dragState.clipSelectedForDrag && !isResizing) {
+                                // Calculate mouse position in seconds
+                                float mouseTimeInTrack = (localMousePos.x - timelineState.timelineOffset) / pixelsPerSecond;
+                                
+                                ResizeZone zone = getResizeZone(ac, mouseTimeInTrack, pixelsPerSecond);
+                                
                                 selectedClip = const_cast<AudioClip*>(&clipsVec[i]);
-                                selectedMIDIClipInfo.hasSelection = false;  // Clear MIDI clip selection
+                                selectedClipEnd = selectedClip->startTime + selectedClip->duration;
+                                selectedMIDIClipInfo.hasSelection = false;
                                 app->setSelectedTrack(track->getName());
                                 
-                                float mouseTimeInTrack = (localMousePos.x - timelineState.timelineOffset) / pixelsPerSecond;
+                                if (zone == ResizeZone::End) {
+                                    clipEndDrag = true;
+                                    clipStartDrag = false;
+                                    if (!isResizing) {
+                                        originalClipDuration = selectedClip->duration;
+                                        resizeDragStartMouseTime = mouseTimeInTrack;
+                                    }
+                                    isResizing = true;
+                                    
+                                    timelineState.virtualCursorTime = selectedClip->startTime + selectedClip->duration;
+                                    timelineState.showVirtualCursor = true;
+                                    timelineState.virtualCursorVisible = true;
+                                } else if (zone == ResizeZone::Start) {
+                                    clipStartDrag = true;
+                                    clipEndDrag = false;
+                                    if (!isResizing) {
+                                        originalClipStartTime = selectedClip->startTime;
+                                        originalClipDuration = selectedClip->duration;
+                                        originalClipOffset = selectedClip->offset;
+                                        resizeDragStartMouseTime = mouseTimeInTrack;
+                                    }
+                                    isResizing = true;
+                                    
+                                    timelineState.virtualCursorTime = selectedClip->startTime;
+                                    timelineState.showVirtualCursor = true;
+                                    timelineState.virtualCursorVisible = true;
+                                } else {
+                                    clipEndDrag = false;
+                                    clipStartDrag = false;
+                                    isResizing = false;
+                                }
                                 
                                 bool shiftHeld = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LShift) || sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RShift);
                                 
@@ -1462,15 +1602,20 @@ void TimelineComponent::handleCustomUIElements() {
                                 }
                                 app->setSavedPosition(timelineState.virtualCursorTime);
                                 
-                                dragState.clipSelectedForDrag = true;
-                                dragState.draggedAudioClip = selectedClip;
-                                dragState.draggedMIDIClip = nullptr;
-                                dragState.dragStartMousePos = mousePos;
-                                dragState.dragStartClipTime = ac.startTime;
-                                
-                                // Calculate where within the clip the mouse initially clicked
-                                float audioMouseTimeInTrack = (localMousePos.x - timelineState.timelineOffset) / pixelsPerSecond;
-                                dragState.dragMouseOffsetInClip = audioMouseTimeInTrack - ac.startTime;
+                                // Only enable clip dragging if we're not resizing
+                                if (!clipEndDrag && !clipStartDrag) {
+                                    dragState.clipSelectedForDrag = true;
+                                    dragState.draggedAudioClip = selectedClip;
+                                    dragState.draggedMIDIClip = nullptr;
+                                    dragState.dragStartMousePos = mousePos;
+                                    dragState.dragStartClipTime = ac.startTime;
+                                    
+                                    // Calculate where within the clip the mouse initially clicked
+                                    float audioMouseTimeInTrack = (localMousePos.x - timelineState.timelineOffset) / pixelsPerSecond;
+                                    dragState.dragMouseOffsetInClip = audioMouseTimeInTrack - ac.startTime;
+                                } else {
+                                    // Skipping normal drag because resize mode is active
+                                }
                                 
                                 dragState.draggedTrackRowPos = trackRowPos;
                                 dragState.draggedTrackName = track->getName();
@@ -1520,7 +1665,7 @@ void TimelineComponent::handleCustomUIElements() {
                     }
                 }
                 
-                if (!clickedOnClip && localMousePos.x >= 0 && localMousePos.y >= 0 && localMousePos.y <= trackRow->getSize().y) {
+                if (!clickedOnClip && localMousePos.x >= 0 && localMousePos.y >= 0 && localMousePos.y <= trackRow->getSize().y && !isResizing && !isMIDIResizing) { // Don't update virtual cursor during resize
                     float mouseTimeInTrack = (localMousePos.x - timelineState.timelineOffset) / pixelsPerSecond;
                     
                     bool shiftHeld = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LShift) || sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RShift);
@@ -1546,7 +1691,7 @@ void TimelineComponent::handleCustomUIElements() {
                     
                     selectedClip = nullptr;
                     selectedMIDIClipInfo.hasSelection = false;  // Clear MIDI clip selection
-                    DEBUG_PRINT("[TIMELINE] Cleared clip selection (clicked empty area)");
+                    // Cleared clip selection (clicked empty area)
                 }
             }
 
@@ -1920,11 +2065,13 @@ void TimelineComponent::handleCustomUIElements() {
                 std::pow(currentMousePos.y - dragState.dragStartMousePos.y, 2)
             );
             
-            if (dragDistance > dragState.DRAG_THRESHOLD) {
+            if (dragDistance > dragState.DRAG_THRESHOLD && !clipEndDrag && !clipStartDrag && !midiClipEndDrag && !midiClipStartDrag) {
                 dragState.isDraggingClip = true;
                 dragState.isDraggingAudioClip = (dragState.draggedAudioClip != nullptr);
                 dragState.isDraggingMIDIClip = (dragState.draggedMIDIClip != nullptr);
                 dragState.clipSelectedForDrag = false;
+            } else if (clipEndDrag || clipStartDrag || midiClipEndDrag || midiClipStartDrag) {
+                // Preventing normal drag because resize mode is active
             }
         } else {
             dragState.clipSelectedForDrag = false;
@@ -1953,9 +2100,17 @@ void TimelineComponent::handleCustomUIElements() {
             }
             
             if (dragState.isDraggingAudioClip && dragState.draggedAudioClip) {
-                dragState.draggedAudioClip->startTime = newStartTime;
+                if (clipEndDrag || clipStartDrag) {
+                    // Skipping audio clip position update because resize is active
+                } else {
+                    dragState.draggedAudioClip->startTime = newStartTime;
+                }
             } else if (dragState.isDraggingMIDIClip && dragState.draggedMIDIClip) {
-                dragState.draggedMIDIClip->startTime = newStartTime;
+                if (clipEndDrag || clipStartDrag) {
+                    // Skipping MIDI clip position update because resize is active
+                } else {
+                    dragState.draggedMIDIClip->startTime = newStartTime;
+                }
             }
         } else {
             dragState.isDraggingClip = false;
@@ -2010,8 +2165,6 @@ void TimelineComponent::rebuildUI() {
 
 void TimelineComponent::rebuildUIFromEngine() {
     if (!initialized) return;
-    
-    DEBUG_PRINT("Rebuilding UI from engine state");
     
     // Clear existing UI elements
     if (auto timelineIt = containers.find("timeline"); timelineIt != containers.end() && timelineIt->second) {
@@ -2147,7 +2300,7 @@ inline std::unordered_map<std::string, std::vector<float>>& getWaveformCache() {
 
 inline void clearWaveformCache() {
     auto& cache = getWaveformCache();
-    DEBUG_PRINT("DEBUG: Clearing waveform cache (" << cache.size() << " entries)");
+    // Clear waveform cache
     cache.clear();
 }
 
@@ -2208,6 +2361,35 @@ inline void ensureWaveformIsCached(const AudioClip& clip) {
     }
 
     cache.emplace(filePath, std::move(peaks));
+}
+
+inline double getSourceFileDuration(const AudioClip& clip) {
+    if (!clip.sourceFile.existsAsFile()) return 0.0;
+    
+    static thread_local juce::AudioFormatManager formatManager;
+    static thread_local bool initialized = false;
+    if (!initialized) {
+        formatManager.registerBasicFormats();
+        initialized = true;
+    }
+    
+    std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(clip.sourceFile));
+    if (!reader) return 0.0;
+    
+    return reader->lengthInSamples / reader->sampleRate;
+}
+
+inline void invalidateClipWaveform(const AudioClip& clip) {
+    if (!clip.sourceFile.existsAsFile()) return;
+    
+    auto& cache = getWaveformCache();
+    const std::string filePath = clip.sourceFile.getFullPathName().toStdString();
+    
+    auto it = cache.find(filePath);
+    if (it != cache.end()) {
+        cache.erase(it);
+        // Invalidated cache for file
+    }
 }
 
 inline std::vector<std::shared_ptr<sf::Drawable>> generateTimelineMeasures(
@@ -2647,37 +2829,46 @@ inline std::vector<std::shared_ptr<sf::Drawable>> generateWaveformData(
     const auto& peaks = cacheIt->second;
     if (peaks.empty() || clipSize.x <= 0) return {};
 
-    constexpr int upsample = 5;
+    constexpr float linesPerSecond = 100.0f;
     constexpr float waveformScale = 0.9f;
     constexpr float peakThreshold = 0.001f;
     
     const int numPeaks = static_cast<int>(peaks.size());
-    const int numSamples = numPeaks * upsample;
+    const double sourceFileDuration = getSourceFileDuration(clip);
+    
+    if (sourceFileDuration <= 0) return {};
+    
+    const int numLines = static_cast<int>(clip.duration * linesPerSecond);
+    if (numLines <= 0) return {};
     
     sf::Color waveformColorWithAlpha = resources->activeTheme->wave_form_color;
     waveformColorWithAlpha.a = 180;
 
-    const float invNumSamples = 1.0f / numSamples;
     const float lineHeightScale = clipSize.y * waveformScale;
     const float baseLineY = clipPosition.y + clipSize.y * 0.5f + verticalOffset;
+    const float lineSpacing = clipSize.x / static_cast<float>(numLines);
 
     auto vertexArray = std::make_shared<sf::VertexArray>(sf::PrimitiveType::Lines);
-    vertexArray->resize(numSamples * 2);
+    vertexArray->resize(numLines * 2);
 
     size_t vertexIndex = 0;
-    for (int i = 0; i < numSamples; ++i) {
-        const float t = i * invNumSamples * (numPeaks - 1);
-        const int idx = static_cast<int>(t);
-        const float frac = t - idx;
+    for (int i = 0; i < numLines; ++i) {
+        const double timeInClip = (static_cast<double>(i) / static_cast<double>(numLines)) * clip.duration;
+        const double timeInSource = clip.offset + timeInClip;
+        const double peakIndexFloat = (timeInSource / sourceFileDuration) * (numPeaks - 1);
+        const int peakIndex = static_cast<int>(peakIndexFloat);
+        const float frac = static_cast<float>(peakIndexFloat - peakIndex);
         
-        float peakValue = peaks[idx];
-        if (idx + 1 < numPeaks) {
-            peakValue = std::fma(peaks[idx + 1] - peaks[idx], frac, peaks[idx]);
+        if (peakIndex >= numPeaks) break;
+        
+        float peakValue = peaks[peakIndex];
+        if (peakIndex + 1 < numPeaks) {
+            peakValue = std::fma(peaks[peakIndex + 1] - peaks[peakIndex], frac, peaks[peakIndex]);
         }
         
         if (peakValue > peakThreshold) {
             const float lineHeight = peakValue * lineHeightScale;
-            const float lineX = std::fma(i * invNumSamples, clipSize.x, clipPosition.x);
+            const float lineX = clipPosition.x + i * lineSpacing;
             const float lineYTop = baseLineY - lineHeight * 0.5f;
             const float lineYBottom = baseLineY + lineHeight * 0.5f;
             
@@ -2879,6 +3070,7 @@ void TimelineComponent::handleAllUserInput() {
     
     if (features.enableMouseInput) {
         handleMouseInput();
+        updateMouseCursor(); // Update cursor based on mouse position
     }
 }
 
@@ -3430,6 +3622,202 @@ void TimelineComponent::updateDragState() {
     
     sf::Vector2f currentMousePos = app->ui->getMousePosition();
     
+    if (isResizing && (clipEndDrag || clipStartDrag) && selectedClip && sf::Mouse::isButtonPressed(sf::Mouse::Button::Left)) {
+        sf::Vector2f trackRowPos;
+        bool foundTrackRow = false;
+        
+        for (const auto& track : app->getAllTracks()) {
+            const std::string rowKey = track->getName() + "_scrollable_row";
+            if (auto rowIt = containers.find(rowKey); rowIt != containers.end() && rowIt->second) {
+                // Check if this track contains our selected clip
+                const auto& clips = track->getClips();
+                for (const auto& clip : clips) {
+                    if (&clip == selectedClip) {
+                        trackRowPos = rowIt->second->getPosition();
+                        foundTrackRow = true;
+                        break;
+                    }
+                }
+                if (foundTrackRow) break;
+            }
+        }
+        
+        if (foundTrackRow) {
+            sf::Vector2f localMousePos = currentMousePos - trackRowPos;
+            const float beatWidth = 100.f * app->uiState.timelineZoomLevel;
+            const float pixelsPerSecond = (beatWidth * app->getBpm()) / 60.0f;
+            float mouseTimeInTrack = (localMousePos.x - timelineState.timelineOffset) / pixelsPerSecond;
+            
+            if (clipEndDrag) {
+                // Resize from end - only change duration, keep start time fixed
+                // Calculate delta from where drag started
+                double mouseDelta = mouseTimeInTrack - resizeDragStartMouseTime;
+                double snappedDelta = snapToGrid(mouseDelta) - mouseDelta; // Get snap adjustment
+                double totalDelta = mouseDelta + snappedDelta;
+                
+                double newDuration = originalClipDuration + totalDelta;
+                
+                // Get source file duration for bounds checking
+                double sourceFileDuration = getSourceFileDuration(*selectedClip);
+                double maxAllowedDuration = sourceFileDuration - selectedClip->offset;
+                
+                newDuration = std::max(0.1, std::min(newDuration, maxAllowedDuration));
+                
+                if (std::abs(newDuration - selectedClip->duration) > 0.001) {
+                    selectedClip->duration = newDuration;
+                    selectedClipEnd = selectedClip->startTime + selectedClip->duration;
+                    invalidateClipWaveform(*selectedClip);
+                    
+                    timelineState.virtualCursorTime = selectedClip->startTime + selectedClip->duration;
+                    timelineState.showVirtualCursor = true;
+                    timelineState.virtualCursorVisible = true;
+                }
+            } else if (clipStartDrag) {
+                // Resize from start - keep end time fixed, change start time, duration, and offset
+                // Calculate delta from where drag started
+                double mouseDelta = mouseTimeInTrack - resizeDragStartMouseTime;
+                double snappedDelta = snapToGrid(mouseDelta) - mouseDelta; // Get snap adjustment
+                double totalDelta = mouseDelta + snappedDelta;
+                
+                double fixedEndTime = originalClipStartTime + originalClipDuration; // Use original values
+                double newStartTime = originalClipStartTime + totalDelta;
+                
+                // Allow slight negative values for smoother interaction at timeline start
+                newStartTime = std::max(-0.1, newStartTime);
+                
+                // Clamp to zero if very close to prevent actual negative start times
+                if (newStartTime < 0.05 && newStartTime > -0.05) {
+                    newStartTime = 0.0;
+                }
+                
+                double newDuration = fixedEndTime - newStartTime;
+                
+                // Calculate how much we're shifting the start time from original
+                double startTimeShift = newStartTime - originalClipStartTime;
+                double newOffset = originalClipOffset + startTimeShift; // Offset moves with start time
+                
+                // Get source file duration for bounds checking
+                double sourceFileDuration = getSourceFileDuration(*selectedClip);
+                
+                // Validate bounds: offset must be >= 0 and offset + duration <= sourceFileDuration
+                if (newOffset < 0.0) {
+                    // If offset would be negative, limit start time so offset = 0
+                    // When offset = 0: newOffset = originalClipOffset + startTimeShift = 0
+                    // So: startTimeShift = -originalClipOffset
+                    // And: newStartTime = originalClipStartTime + startTimeShift
+                    newOffset = 0.0;
+                    double maxLeftShift = -originalClipOffset;
+                    newStartTime = originalClipStartTime + maxLeftShift;
+                    newStartTime = std::max(0.0, newStartTime); // Can't go negative on timeline
+                    newDuration = fixedEndTime - newStartTime;
+                }
+                
+                if (newOffset + newDuration > sourceFileDuration) {
+                    newDuration = sourceFileDuration - newOffset;
+                    newStartTime = fixedEndTime - newDuration;
+                }
+                
+                if (newDuration > 0.1 && newStartTime >= 0.0 && newOffset >= 0.0) {
+                    newStartTime = std::max(0.0, newStartTime);
+                    newDuration = fixedEndTime - newStartTime;
+                    if (newDuration > 0.1) {
+                        selectedClip->startTime = newStartTime;
+                        selectedClip->duration = newDuration;
+                        selectedClip->offset = newOffset;
+                        selectedClipEnd = selectedClip->startTime + selectedClip->duration;
+                        invalidateClipWaveform(*selectedClip);
+                    
+                        timelineState.virtualCursorTime = selectedClip->startTime;
+                        timelineState.showVirtualCursor = true;
+                        timelineState.virtualCursorVisible = true;
+                    }
+                }
+            }
+        }
+        return;
+    }
+    
+    // Handle MIDI clip resizing
+    if (isMIDIResizing && (midiClipEndDrag || midiClipStartDrag) && selectedMIDIClipInfo.hasSelection && sf::Mouse::isButtonPressed(sf::Mouse::Button::Left)) {
+        auto* selectedMIDIClip = getSelectedMIDIClip();
+        if (selectedMIDIClip) {
+            sf::Vector2f trackRowPos;
+            bool foundTrackRow = false;
+            
+            for (const auto& track : app->getAllTracks()) {
+                const std::string rowKey = track->getName() + "_scrollable_row";
+                if (auto rowIt = containers.find(rowKey); rowIt != containers.end() && rowIt->second) {
+                    if (track->getName() == selectedMIDIClipInfo.trackName) {
+                        trackRowPos = rowIt->second->getPosition();
+                        foundTrackRow = true;
+                        break;
+                    }
+                }
+            }
+            
+            if (foundTrackRow) {
+                sf::Vector2f currentMousePos = app->ui->getMousePosition();
+                sf::Vector2f localMousePos = currentMousePos - trackRowPos;
+                const float beatWidth = 100.f * app->uiState.timelineZoomLevel;
+                const float pixelsPerSecond = (beatWidth * app->getBpm()) / 60.0f;
+                float mouseTimeInTrack = (localMousePos.x - timelineState.timelineOffset) / pixelsPerSecond;
+                
+                if (midiClipEndDrag) {
+                    double mouseDelta = mouseTimeInTrack - resizeDragStartMouseTime;
+                    double snappedDelta = snapToGrid(mouseDelta) - mouseDelta;
+                    double totalDelta = mouseDelta + snappedDelta;
+                    
+                    double newDuration = originalMIDIClipDuration + totalDelta;
+                    newDuration = std::max(0.1, newDuration); // Minimum duration
+                    
+                    if (std::abs(newDuration - selectedMIDIClip->duration) > 0.001) {
+                        selectedMIDIClip->duration = newDuration;
+                        selectedMIDIClipInfo.duration = newDuration;
+                        
+                        timelineState.virtualCursorTime = selectedMIDIClip->startTime + selectedMIDIClip->duration;
+                        timelineState.showVirtualCursor = true;
+                        timelineState.virtualCursorVisible = true;
+                    }
+                } else if (midiClipStartDrag) {
+                    double mouseDelta = mouseTimeInTrack - resizeDragStartMouseTime;
+                    double snappedDelta = snapToGrid(mouseDelta) - mouseDelta;
+                    double totalDelta = mouseDelta + snappedDelta;
+                    
+                    double fixedEndTime = originalMIDIClipStartTime + originalMIDIClipDuration;
+                    double newStartTime = originalMIDIClipStartTime + totalDelta;
+                    newStartTime = std::max(0.0, newStartTime); // Can't go negative
+                    
+                    double newDuration = fixedEndTime - newStartTime;
+                    
+                    if (newDuration > 0.1 && newStartTime >= 0.0) {
+                        selectedMIDIClip->startTime = newStartTime;
+                        selectedMIDIClip->duration = newDuration;
+                        selectedMIDIClipInfo.startTime = newStartTime;
+                        selectedMIDIClipInfo.duration = newDuration;
+                        
+                        timelineState.virtualCursorTime = selectedMIDIClip->startTime;
+                        timelineState.showVirtualCursor = true;
+                        timelineState.virtualCursorVisible = true;
+                    }
+                }
+            }
+        }
+        return;
+    }
+    
+    if (!sf::Mouse::isButtonPressed(sf::Mouse::Button::Left)) {
+        clipEndDrag = false;
+        clipStartDrag = false;
+        isResizing = false;
+        midiClipEndDrag = false;
+        midiClipStartDrag = false;
+        isMIDIResizing = false;
+    }
+    
+    if (isResizing || isMIDIResizing) {
+        return;
+    }
+    
     // Update drag positions if currently dragging
     if (dragState.isDraggingClip || dragState.isDraggingAudioClip || dragState.isDraggingMIDIClip) {
         // Calculate time position from mouse position
@@ -3515,7 +3903,7 @@ void TimelineComponent::updatePlayheadFollowing() {
         if (currentPlayheadScreenPos > visibleWidth - followMargin) {
             timelineState.timelineOffset = visibleWidth - followMargin - playheadXPos;
             updateScrolling(); // Apply the new offset
-            DEBUG_PRINT("Auto-following playhead - New offset: " << timelineState.timelineOffset);
+            // Auto-following playhead
         }
     }
 }
@@ -3548,6 +3936,11 @@ void TimelineComponent::renderTrackContent() {
 void TimelineComponent::updateVirtualCursor() {
     if (!features.enableVirtualCursor) {
         timelineState.showVirtualCursor = false;
+        return;
+    }
+    
+    // Don't update virtual cursor during resize - it should stay locked to clip edge
+    if (isResizing) {
         return;
     }
     
@@ -3633,7 +4026,6 @@ void TimelineComponent::copySelectedClips() {
     if (selectedClip) {
         clipboardState.copiedAudioClips.push_back(*selectedClip);
         clipboardState.hasClipboard = true;
-        DEBUG_PRINT("Copied AudioClip at time " + std::to_string(selectedClip->startTime));
     }
     
     // Copy selected MIDIClip
@@ -3641,17 +4033,16 @@ void TimelineComponent::copySelectedClips() {
     if (selectedMIDIClip) {
         clipboardState.copiedMIDIClips.push_back(*selectedMIDIClip);
         clipboardState.hasClipboard = true;
-        DEBUG_PRINT("Copied MIDIClip at time " + std::to_string(selectedMIDIClip->startTime));
     }
     
     if (!clipboardState.hasClipboard) {
-        DEBUG_PRINT("No clips selected to copy");
+        // No clips selected to copy
     }
 }
 
 void TimelineComponent::pasteClips() {
     if (!clipboardState.hasClipboard) {
-        DEBUG_PRINT("No clips in clipboard to paste");
+        // No clips in clipboard to paste
         return;
     }
     
@@ -3659,7 +4050,7 @@ void TimelineComponent::pasteClips() {
     std::string currentTrack = app->getSelectedTrack();
     
     if (currentTrack.empty()) {
-        DEBUG_PRINT("No track selected for pasting");
+        // No track selected for pasting
         return;
     }
     
@@ -3767,8 +4158,282 @@ void TimelineComponent::updateAutomationLaneLabels() {
     }
 }
 
+// Cursor management implementation
+void TimelineComponent::initializeCursors() {
+    try {
+        resizeCursorH = std::make_unique<sf::Cursor>(sf::Cursor::Type::SizeHorizontal);
+        textCursor = std::make_unique<sf::Cursor>(sf::Cursor::Type::Text);
+        handCursor = std::make_unique<sf::Cursor>(sf::Cursor::Type::Hand);
+        cursorsEnabled = true;
+    } catch (const std::exception& e) {
+        DEBUG_PRINT("[CURSOR] Failed to initialize cursors, disabling cursor management: " << e.what());
+        cursorsEnabled = false;
+    }
+}
+
+void TimelineComponent::setCursor(sf::Cursor::Type cursorType) {
+    if (!cursorsEnabled || currentCursorType == cursorType) return;
+    
+    try {
+        sf::Cursor* cursor = nullptr;
+        switch (cursorType) {
+            case sf::Cursor::Type::SizeHorizontal:
+                cursor = resizeCursorH.get();
+                break;
+            case sf::Cursor::Type::Text:
+                cursor = textCursor.get();
+                break;
+            case sf::Cursor::Type::Hand:
+                cursor = handCursor.get();
+                break;
+            default:
+                // Use system default arrow cursor - create it safely
+                try {
+                    sf::Cursor defaultCursor(sf::Cursor::Type::Arrow);
+                    const_cast<sf::RenderWindow&>(app->getWindow()).setMouseCursor(defaultCursor);
+                    currentCursorType = cursorType;
+                } catch (const std::exception& e) {
+                    DEBUG_PRINT("[CURSOR] Failed to set default cursor: " << e.what());
+                }
+                return;
+        }
+        
+        if (cursor) {
+            const_cast<sf::RenderWindow&>(app->getWindow()).setMouseCursor(*cursor);
+            currentCursorType = cursorType;
+        }
+    } catch (const std::exception& e) {
+        DEBUG_PRINT("[CURSOR] Failed to set cursor: " << e.what());
+        // Fallback: don't change cursor if it fails
+    }
+}
+
+void TimelineComponent::updateMouseCursor() {
+    if (!cursorsEnabled) return; // Skip if cursors are disabled
+    
+    sf::Vector2f mousePos = app->ui->getMousePosition();
+    sf::Cursor::Type newCursorType = sf::Cursor::Type::Arrow;
+    
+    // Check if mouse is over any clip resize zones
+    for (const auto& track : app->getAllTracks()) {
+        const std::string rowKey = track->getName() + "_scrollable_row";
+        if (auto rowIt = containers.find(rowKey); rowIt != containers.end() && rowIt->second) {
+            sf::Vector2f trackRowPos = rowIt->second->getPosition();
+            sf::Vector2f localMousePos = mousePos - trackRowPos;
+            
+            const auto& clips = track->getClips();
+            for (const auto& clip : clips) {
+                const float beatWidth = 100.f * app->uiState.timelineZoomLevel;
+                const float pixelsPerSecond = (beatWidth * app->getBpm()) / 60.0f;
+                const float clipWidthPixels = clip.duration * pixelsPerSecond;
+                const float clipXPosition = (clip.startTime * pixelsPerSecond) + timelineState.timelineOffset;
+                const sf::FloatRect clipRect({clipXPosition, 0.f}, {clipWidthPixels, rowIt->second->getSize().y});
+                
+                if (clipRect.contains(localMousePos)) {
+                    float mouseTimeInTrack = (localMousePos.x - timelineState.timelineOffset) / pixelsPerSecond;
+                    ResizeZone zone = getResizeZone(clip, mouseTimeInTrack, pixelsPerSecond);
+                    
+                    if (zone != ResizeZone::None) {
+                        newCursorType = sf::Cursor::Type::SizeHorizontal;
+                        goto cursor_found;
+                    }
+                }
+            }
+            
+            // Check MIDI clips for resize zones
+            if (track->getType() == Track::TrackType::MIDI) {
+                MIDITrack* midiTrack = static_cast<MIDITrack*>(track.get());
+                const auto& midiClips = midiTrack->getMIDIClips();
+                for (const auto& midiClip : midiClips) {
+                    const float beatWidth = 100.f * app->uiState.timelineZoomLevel;
+                    const float pixelsPerSecond = (beatWidth * app->getBpm()) / 60.0f;
+                    const float clipWidthPixels = midiClip.duration * pixelsPerSecond;
+                    const float clipXPosition = (midiClip.startTime * pixelsPerSecond) + timelineState.timelineOffset;
+                    const sf::FloatRect clipRect({clipXPosition, 0.f}, {clipWidthPixels, rowIt->second->getSize().y});
+                    
+                    if (clipRect.contains(localMousePos)) {
+                        float mouseTimeInTrack = (localMousePos.x - timelineState.timelineOffset) / pixelsPerSecond;
+                        ResizeZone zone = getResizeZone(midiClip, mouseTimeInTrack, pixelsPerSecond);
+                        
+                        if (zone != ResizeZone::None) {
+                            newCursorType = sf::Cursor::Type::SizeHorizontal;
+                            goto cursor_found;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    cursor_found:
+    setCursor(newCursorType);
+}
+
+bool TimelineComponent::isMouseOverResizeZone(const AudioClip& clip, float mouseTimeInTrack) const {
+    const float beatWidth = 100.f * app->uiState.timelineZoomLevel;
+    const float pixelsPerSecond = (beatWidth * app->getBpm()) / 60.0f;
+    return getResizeZone(clip, mouseTimeInTrack, pixelsPerSecond) != ResizeZone::None;
+}
+
+TimelineComponent::ResizeZone TimelineComponent::getResizeZone(const AudioClip& clip, float mouseTimeInTrack, float pixelsPerSecond) const {
+    const float resizeThresholdPixels = 10.0f; // 10 pixels
+    const double resizeThresholdTime = resizeThresholdPixels / pixelsPerSecond;
+    
+    const double clipStart = clip.startTime;
+    const double clipEnd = clip.startTime + clip.duration;
+    
+    bool isNearStart = std::abs(mouseTimeInTrack - clipStart) <= resizeThresholdTime;
+    bool isNearEnd = std::abs(mouseTimeInTrack - clipEnd) <= resizeThresholdTime;
+    
+    // Special handling for very small clips (less than 20 pixels wide)
+    const double clipWidthPixels = clip.duration * pixelsPerSecond;
+    if (clipWidthPixels < 20.0f) {
+        // For small clips, expand the threshold and prefer the edge closest to mouse
+        const double smallClipThresholdTime = std::max(resizeThresholdTime, clip.duration * 0.4);
+        isNearStart = std::abs(mouseTimeInTrack - clipStart) <= smallClipThresholdTime;
+        isNearEnd = std::abs(mouseTimeInTrack - clipEnd) <= smallClipThresholdTime;
+    }
+    
+    // If both are detected, choose the closest edge
+    if (isNearStart && isNearEnd) {
+        double distToStart = std::abs(mouseTimeInTrack - clipStart);
+        double distToEnd = std::abs(mouseTimeInTrack - clipEnd);
+        return (distToStart <= distToEnd) ? ResizeZone::Start : ResizeZone::End;
+    }
+    
+    // Priority for edge cases: if very close to start (within 2 pixels), prefer start resize
+    const double priorityThresholdTime = 2.0f / pixelsPerSecond;
+    if (std::abs(mouseTimeInTrack - clipStart) <= priorityThresholdTime) {
+        return ResizeZone::Start;
+    }
+    
+    // Priority for edge cases: if very close to end (within 2 pixels), prefer end resize  
+    if (std::abs(mouseTimeInTrack - clipEnd) <= priorityThresholdTime) {
+        return ResizeZone::End;
+    }
+    
+    if (isNearStart) return ResizeZone::Start;
+    if (isNearEnd) return ResizeZone::End;
+    return ResizeZone::None;
+}
+
+TimelineComponent::ResizeZone TimelineComponent::getResizeZone(const MIDIClip& clip, float mouseTimeInTrack, float pixelsPerSecond) const {
+    const float resizeThresholdPixels = 10.0f;
+    const double resizeThresholdTime = resizeThresholdPixels / pixelsPerSecond;
+    
+    const double clipStart = clip.startTime;
+    const double clipEnd = clip.startTime + clip.duration;
+    
+    bool isNearStart = std::abs(mouseTimeInTrack - clipStart) <= resizeThresholdTime;
+    bool isNearEnd = std::abs(mouseTimeInTrack - clipEnd) <= resizeThresholdTime;
+    
+    const double clipWidthPixels = clip.duration * pixelsPerSecond;
+    if (clipWidthPixels < 20.0f) {
+        const double smallClipThresholdTime = std::max(resizeThresholdTime, clip.duration * 0.4);
+        isNearStart = std::abs(mouseTimeInTrack - clipStart) <= smallClipThresholdTime;
+        isNearEnd = std::abs(mouseTimeInTrack - clipEnd) <= smallClipThresholdTime;
+    }
+    
+    if (isNearStart && isNearEnd) {
+        double distToStart = std::abs(mouseTimeInTrack - clipStart);
+        double distToEnd = std::abs(mouseTimeInTrack - clipEnd);
+        return (distToStart <= distToEnd) ? ResizeZone::Start : ResizeZone::End;
+    }
+    
+    const double priorityThresholdTime = 2.0f / pixelsPerSecond;
+    if (std::abs(mouseTimeInTrack - clipStart) <= priorityThresholdTime) {
+        return ResizeZone::Start;
+    }
+    
+    if (std::abs(mouseTimeInTrack - clipEnd) <= priorityThresholdTime) {
+        return ResizeZone::End;
+    }
+    
+    if (isNearStart) return ResizeZone::Start;
+    if (isNearEnd) return ResizeZone::End;
+    return ResizeZone::None;
+}
+
+// Grid snapping implementation
+double TimelineComponent::snapToGrid(double timeValue, bool forceSnap) const {
+    bool shouldSnap = forceSnap || !isShiftPressed();
+    if (!shouldSnap) return timeValue;
+    
+    const double bpm = app->getBpm();
+    const double beatDuration = 60.0 / bpm;
+    auto [timeSigNum, timeSigDen] = app->getTimeSignature();
+    
+    // Snap to beat subdivisions (16th notes by default)
+    const double snapResolution = beatDuration / 4.0; // 16th notes
+    
+    return std::round(timeValue / snapResolution) * snapResolution;
+}
+
+bool TimelineComponent::isShiftPressed() const {
+    return sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LShift) || 
+           sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RShift);
+}
+
+void TimelineComponent::handleTrackRenaming() {
+    // Find active textbox first to avoid iterator invalidation
+    std::string activeTrackName;
+    TextBox* activeTextBox = nullptr;
+    
+    for (auto& [trackName, textBox] : uiElements.trackNameTextBoxes) {
+        if (textBox && textBox->isActive()) {
+            activeTrackName = trackName;
+            activeTextBox = textBox;
+            break; // Only one can be active at a time
+        }
+    }
+    
+    if (!activeTextBox) return; // No active textbox
+    
+    // Skip Master track renaming (Master track should not be renameable)
+    if (activeTrackName == "Master") {
+        activeTextBox->setActive(false);
+        return;
+    }
+    
+    // Check if Enter was pressed to confirm rename
+    if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Enter)) {
+        std::string newName = activeTextBox->getText();
+        
+        // Validate new name
+        if (!newName.empty() && newName != activeTrackName) {
+            auto track = app->getTrack(activeTrackName);
+            if (track) {
+                // Deactivate first to prevent issues during track modification
+                activeTextBox->setActive(false);
+                
+                // Rename the track (this might trigger UI rebuilds)
+                track->setName(newName);
+                
+                // Remove old textbox reference and add new one
+                uiElements.trackNameTextBoxes.erase(activeTrackName);
+                uiElements.trackNameTextBoxes[newName] = activeTextBox;
+                
+                return; // Exit early after successful rename
+            }
+        }
+        
+        // If we get here, the rename was invalid - just deactivate
+        activeTextBox->setActive(false);
+    }
+    
+    // Check if Escape was pressed to cancel rename
+    else if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Escape)) {
+        // Reset to original name and deactivate
+        activeTextBox->setText(activeTrackName);
+        activeTextBox->setActive(false);
+    }
+}
+
 // Static member definition
 TimelineComponent* TimelineComponent::instance = nullptr;
+bool TimelineComponent::clipEndDrag = false;
+bool TimelineComponent::clipStartDrag = false;
+bool TimelineComponent::isResizing = false;
 
 // Plugin interface for TimelineComponent
 GET_INTERFACE
