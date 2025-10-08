@@ -64,6 +64,9 @@ void Application::initialise(const juce::String& commandLine) {
     }
     if (!uiState.saveDirectory.empty()) {
         engine.setSampleDirectory(uiState.saveDirectory);
+    } else if (!uiState.fileBrowserDirectory.empty()) {
+        engine.setSampleDirectory(uiState.fileBrowserDirectory);
+        DEBUG_PRINT("Using fileBrowserDirectory as sample directory: " << uiState.fileBrowserDirectory);
     }
     
     createWindow();
@@ -87,12 +90,17 @@ void Application::initialise(const juce::String& commandLine) {
 }
 
 Application::~Application() {
+    cleanupFirebaseResources();    
+    saveConfig();
+    unloadAllPlugins();
+    
 #ifdef FIREBASE_AVAILABLE
     if (firestore) {
         delete firestore;
         firestore = nullptr;
     }
 #endif
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
 }
 
 void Application::shutdown() {
@@ -109,6 +117,7 @@ void Application::update() {
     running = ui->isRunning();
     if (!running) return;
     
+    processPendingEngineUpdates();
     handleEvents();
 
     bool rClick = isButtonPressed(mb::Right);
@@ -123,6 +132,8 @@ void Application::update() {
     for (const auto& [name, component] : muloComponents)
         if (component)
             component->update();
+
+    updateParameterTracking();
 
     // Process Firebase requests
 #ifdef FIREBASE_AVAILABLE
@@ -510,7 +521,6 @@ void Application::initUIResources() {
     resources.playIcon          = sf::Image(findIcon("play.png"));
     resources.pauseIcon         = sf::Image(findIcon("pause.png"));
     resources.settingsIcon      = sf::Image(findIcon("settings.png"));
-    resources.pianoRollIcon     = sf::Image(findIcon("piano.png"));
     resources.loadIcon          = sf::Image(findIcon("load.png"));
     resources.saveIcon          = sf::Image(findIcon("save.png"));
     resources.exportIcon        = sf::Image(findIcon("export.png"));
@@ -522,6 +532,7 @@ void Application::initUIResources() {
     resources.mixerIcon         = sf::Image(findIcon("mixer.png"));
     resources.storeIcon         = sf::Image(findIcon("store.png"));
     resources.fileIcon          = sf::Image(findIcon("file.png"));
+    resources.automationIcon    = sf::Image(findIcon("showautomation.png"));
 }
 
 std::string Application::selectDirectory() {
@@ -981,9 +992,7 @@ void Application::saveConfig() {
         }
         
         file << config.dump(2);
-        file.close();
-        
-        DEBUG_PRINT("Configuration saved to: " << configPath);
+        file.close();        
     } catch (const std::exception& e) {
         DEBUG_PRINT("Error saving config: " << e.what());
     }
@@ -1001,6 +1010,13 @@ void Application::loadConfig() {
 
         file >> config;
         file.close();
+        
+        // Populate uiState from loaded config
+        uiState.fileBrowserDirectory = readConfig<std::string>("fileBrowserDirectory", "");
+        uiState.vstDirecory = readConfig<std::string>("vstDirectory", "");
+        uiState.vstDirectories = readConfig<std::vector<std::string>>("vstDirectories", std::vector<std::string>());
+        uiState.saveDirectory = readConfig<std::string>("saveDirectory", "");
+        uiState.selectedTheme = readConfig<std::string>("selectedTheme", "Dark");
         
         DEBUG_PRINT("Configuration loaded from: " << configPath);
     } catch (const nlohmann::json::parse_error& e) {
@@ -1075,7 +1091,9 @@ bool Application::isPluginTrusted(const std::string& pluginName) const {
         "PianoRollComponent.so",
         "MixerComponent.so",
         "FXRackComponent.so",
-        "MarketplaceComponent.so"
+        "MarketplaceComponent.so",
+        "AppControls.so",
+        "MULOCollab.so"
     };
     
     bool isTrusted = std::find(fallbackTrustedPlugins.begin(), fallbackTrustedPlugins.end(), pluginName) != fallbackTrustedPlugins.end();
@@ -1092,6 +1110,7 @@ void Application::initFirebase() {
         options.set_app_id("1:1068093358007:web:bdc95a20f8e60375bf7232");
         options.set_project_id("mulo-marketplace");
         options.set_storage_bucket("mulo-marketplace.appspot.com");
+        options.set_database_url("https://mulo-marketplace-default-rtdb.firebaseio.com/");
 
         firebaseApp.reset(firebase::App::Create(options));
         
@@ -1102,6 +1121,18 @@ void Application::initFirebase() {
         
         firestore = firebase::firestore::Firestore::GetInstance(firebaseApp.get());
         firestore->set_settings(settings);
+        
+        auth = firebase::auth::Auth::GetAuth(firebaseApp.get());        
+        realtimeDatabase = firebase::database::Database::GetInstance(firebaseApp.get());
+        realtimeDatabase->set_persistence_enabled(false);        
+        auto authFuture = auth->SignInAnonymously();
+        authFuture.OnCompletion([this](const firebase::Future<firebase::auth::AuthResult>& result) {
+            if (result.error() == firebase::auth::kAuthErrorNone) {
+                std::cout << "Firebase anonymous authentication successful" << std::endl;
+            } else {
+                std::cout << "Firebase authentication failed: " << result.error_message() << std::endl;
+            }
+        });
         
         std::cout << "Firebase initialized successfully" << std::endl;     
     } catch (const std::exception& e) {
@@ -1151,17 +1182,477 @@ void Application::fetchExtensions(std::function<void(FirebaseState, const std::v
     extensions.clear();
     
     extFuture = firestore->Collection("extensions").Get();
-#else
-    // Mock async behavior
-    std::cout << "Mock: Fetching extensions..." << std::endl;
-    if (firebaseState == FirebaseState::Loading) {
-        return; // Already loading
+#endif
+}
+
+void Application::updateParameterTracking() {
+    // Update parameter tracking for all tracks
+    for (auto& track : getAllTracks()) {
+        if (track) {
+            track->updateParameterTracking();
+        }
     }
     
-    firebaseState = FirebaseState::Loading;
+    // Also update master track
+    if (auto* masterTrack = getMasterTrack()) {
+        masterTrack->updateParameterTracking();
+    }
+}
+
+void Application::createRoom(const std::string& roomName) {
+#ifdef FIREBASE_AVAILABLE
+    if (!realtimeDatabase || !auth) {
+        std::cout << "Firebase not ready for collaboration" << std::endl;
+        return;
+    }
     
-    // Simulate async callback (in real app would use timer)
-    firebaseState = FirebaseState::Success;
-    callback(FirebaseState::Success, extensions);
+    auto currentUser = auth->current_user();
+    if (!currentUser.is_valid()) {
+        std::cout << "User not authenticated" << std::endl;
+        return;
+    }
+    
+    std::cout << "Creating room: " << roomName << std::endl;
+    std::string roomPath = "rooms/" + roomName;
+    auto roomRef = realtimeDatabase->GetReference(roomPath.c_str());
+    
+    auto checkFuture = roomRef.GetValue();
+    checkFuture.OnCompletion([this, roomName, currentUser](const firebase::Future<firebase::database::DataSnapshot>& result) {
+        if (result.error() == firebase::database::kErrorNone) {
+            auto snapshot = result.result();
+            if (snapshot->exists()) {
+                std::cout << "Room already exists: " << roomName << std::endl;
+                return;
+            }
+            
+            // Room doesn't exist, create it
+            std::string engineState = engine.getStateString();
+            std::cout << "Engine state length: " << engineState.length() << std::endl;
+            std::cout << "User ID: '" << currentUser.uid() << "'" << std::endl;
+            
+            std::string roomPath = "rooms/" + roomName;
+            auto roomRef = realtimeDatabase->GetReference(roomPath.c_str());
+            
+            firebase::Variant roomData = firebase::Variant::EmptyMap();
+            firebase::Variant participants = firebase::Variant::EmptyMap();
+            
+            // Get creator's nickname from config
+            std::string creatorNickname = readConfig<std::string>("collab_nickname", "Anonymous");
+            participants.map()[currentUser.uid()] = firebase::Variant(creatorNickname);
+            
+            roomData.map()["engineState"] = firebase::Variant(engineState);
+            roomData.map()["createdBy"] = firebase::Variant(currentUser.uid());
+            roomData.map()["createdAt"] = firebase::Variant(static_cast<int64_t>(std::time(nullptr)));
+            roomData.map()["participants"] = participants;
+            roomData.map()["participantCount"] = firebase::Variant(static_cast<int64_t>(1));
+            
+            auto createFuture = roomRef.SetValue(roomData);
+            createFuture.OnCompletion([roomName](const firebase::Future<void>& result) {
+                if (result.error() == firebase::database::kErrorNone) {
+                    std::cout << "Room created successfully: " << roomName << std::endl;
+                } else {
+                    std::cout << "Failed to create room: " << result.error_message() << std::endl;
+                }
+            });
+        } else {
+            std::cout << "Failed to check if room exists: " << result.error_message() << std::endl;
+        }
+    });
+#else
+    std::cout << "Firebase not available - mock room creation: " << roomName << std::endl;
 #endif
+}
+
+void Application::readFromRoom(const std::string& roomName) {
+#ifdef FIREBASE_AVAILABLE
+    if (!realtimeDatabase) {
+        std::cout << "Firebase not ready for collaboration" << std::endl;
+        return;
+    }
+    
+    std::cout << "Reading from room: " << roomName << std::endl;
+    
+    std::string roomPath = "rooms/" + roomName;
+    auto roomRef = realtimeDatabase->GetReference(roomPath.c_str());
+    auto readFuture = roomRef.GetValue();
+    
+    readFuture.OnCompletion([this, roomName](const firebase::Future<firebase::database::DataSnapshot>& result) {
+        std::lock_guard<std::mutex> lock(firebaseMutex);
+        
+        if (result.error() == firebase::database::kErrorNone) {
+            auto snapshot = result.result();
+            if (snapshot->exists()) {
+                auto roomData = snapshot->value();
+                if (roomData.is_map()) {
+                    auto engineStateIt = roomData.map().find("engineState");
+                    if (engineStateIt != roomData.map().end() && engineStateIt->second.is_string()) {
+                        std::string engineState = engineStateIt->second.string_value();
+                        std::cout << "Loading engine state from room: " << roomName << std::endl;
+                        
+                        // Queue engine state loading instead of applying directly
+                        {
+                            std::lock_guard<std::mutex> updateLock(engineUpdateMutex);
+                            pendingEngineStateUpdate = engineState;
+                            hasPendingEngineUpdate = true;
+                        }
+                        
+                        std::cout << "Queued engine state from room for safe loading" << std::endl;
+                    } else {
+                        std::cout << "No engine state found in room: " << roomName << std::endl;
+                    }
+                } else {
+                    std::cout << "Invalid room data format: " << roomName << std::endl;
+                }
+            } else {
+                std::cout << "Room does not exist: " << roomName << std::endl;
+            }
+        } else {
+            std::cout << "Failed to read room: " << result.error_message() << std::endl;
+        }
+    });
+#else
+    std::cout << "Firebase not available - mock room read: " << roomName << std::endl;
+#endif
+}
+
+void Application::joinRoom(const std::string& roomName) {
+#ifdef FIREBASE_AVAILABLE
+    if (!realtimeDatabase || !auth) {
+        std::cout << "Firebase not ready for collaboration" << std::endl;
+        return;
+    }
+    
+    auto currentUser = auth->current_user();
+    if (!currentUser.is_valid()) {
+        std::cout << "User not authenticated" << std::endl;
+        return;
+    }
+    
+    std::cout << "Joining room: " << roomName << std::endl;
+    
+    std::string roomPath = "rooms/" + roomName;
+    auto roomRef = realtimeDatabase->GetReference(roomPath.c_str());
+    
+    // First check if room exists
+    auto readFuture = roomRef.GetValue();
+    readFuture.OnCompletion([this, roomName, currentUser](const firebase::Future<firebase::database::DataSnapshot>& result) {
+        if (result.error() == firebase::database::kErrorNone) {
+            auto snapshot = result.result();
+            if (snapshot->exists()) {
+                // Get user's nickname from config
+                std::string nickname = readConfig<std::string>("collab_nickname", "Anonymous");
+                
+                // Check if nickname is already taken in this room
+                auto roomData = snapshot->value();
+                if (roomData.is_map()) {
+                    auto participantsIt = roomData.map().find("participants");
+                    if (participantsIt != roomData.map().end() && participantsIt->second.is_map()) {
+                        // Check if any existing participant has the same nickname
+                        for (const auto& participant : participantsIt->second.map()) {
+                            if (participant.second.is_string() && participant.second.string_value() == nickname) {
+                                std::cout << "Nickname '" << nickname << "' is already taken in room: " << roomName << std::endl;
+                                return;
+                            }
+                        }
+                    }
+                }
+                
+                // Nickname is unique, add this user to participants
+                std::string participantPath = "rooms/" + roomName + "/participants/" + currentUser.uid();
+                auto participantRef = realtimeDatabase->GetReference(participantPath.c_str());
+                
+                auto joinFuture = participantRef.SetValue(firebase::Variant(nickname));
+                joinFuture.OnCompletion([this, roomName](const firebase::Future<void>& joinResult) {
+                    if (joinResult.error() == firebase::database::kErrorNone) {
+                        std::cout << "Successfully joined room: " << roomName << std::endl;
+                        
+                        // Update participant count
+                        std::string countPath = "rooms/" + roomName + "/participants";
+                        auto countRef = realtimeDatabase->GetReference(countPath.c_str());
+                        auto countFuture = countRef.GetValue();
+                        countFuture.OnCompletion([this, roomName](const firebase::Future<firebase::database::DataSnapshot>& countResult) {
+                            if (countResult.error() == firebase::database::kErrorNone) {
+                                auto countSnapshot = countResult.result();
+                                if (countSnapshot->exists()) {
+                                    int64_t participantCount = countSnapshot->value().map().size();
+                                    std::string participantCountPath = "rooms/" + roomName + "/participantCount";
+                                    auto participantCountRef = realtimeDatabase->GetReference(participantCountPath.c_str());
+                                    participantCountRef.SetValue(firebase::Variant(participantCount));
+                                }
+                            }
+                        });
+                        
+                        // Load the room's engine state
+                        readFromRoom(roomName);
+                    } else {
+                        std::cout << "Failed to join room: " << joinResult.error_message() << std::endl;
+                    }
+                });
+            } else {
+                std::cout << "Room does not exist: " << roomName << std::endl;
+            }
+        } else {
+            std::cout << "Failed to check room existence: " << result.error_message() << std::endl;
+        }
+    });
+#else
+    std::cout << "Firebase not available - mock room join: " << roomName << std::endl;
+#endif
+}
+
+void Application::leaveRoom(const std::string& roomName) {
+#ifdef FIREBASE_AVAILABLE
+    if (!realtimeDatabase || !auth) {
+        std::cout << "Firebase not ready for collaboration" << std::endl;
+        return;
+    }
+    
+    auto currentUser = auth->current_user();
+    if (!currentUser.is_valid()) {
+        std::cout << "User not authenticated" << std::endl;
+        return;
+    }
+    
+    std::cout << "Leaving room: " << roomName << std::endl;
+    
+    // Remove this user from participants
+    std::string participantPath = "rooms/" + roomName + "/participants/" + currentUser.uid();
+    auto participantRef = realtimeDatabase->GetReference(participantPath.c_str());
+    
+    auto leaveFuture = participantRef.RemoveValue();
+    leaveFuture.OnCompletion([this, roomName](const firebase::Future<void>& leaveResult) {
+        if (leaveResult.error() == firebase::database::kErrorNone) {
+            std::cout << "Successfully left room: " << roomName << std::endl;
+            
+            // Check if room is now empty and delete if so
+            std::string participantsPath = "rooms/" + roomName + "/participants";
+            auto participantsRef = realtimeDatabase->GetReference(participantsPath.c_str());
+            auto checkFuture = participantsRef.GetValue();
+            checkFuture.OnCompletion([this, roomName](const firebase::Future<firebase::database::DataSnapshot>& checkResult) {
+                if (checkResult.error() == firebase::database::kErrorNone) {
+                    auto snapshot = checkResult.result();
+                    if (!snapshot->exists() || snapshot->value().map().empty()) {
+                        // Room is empty, delete it
+                        std::string roomPath = "rooms/" + roomName;
+                        auto roomRef = realtimeDatabase->GetReference(roomPath.c_str());
+                        auto deleteFuture = roomRef.RemoveValue();
+                        deleteFuture.OnCompletion([roomName](const firebase::Future<void>& deleteResult) {
+                            if (deleteResult.error() == firebase::database::kErrorNone) {
+                                std::cout << "Room deleted (was empty): " << roomName << std::endl;
+                            } else {
+                                std::cout << "Failed to delete empty room: " << deleteResult.error_message() << std::endl;
+                            }
+                        });
+                    } else {
+                        // Update participant count
+                        int64_t participantCount = snapshot->value().map().size();
+                        std::string participantCountPath = "rooms/" + roomName + "/participantCount";
+                        auto participantCountRef = realtimeDatabase->GetReference(participantCountPath.c_str());
+                        participantCountRef.SetValue(firebase::Variant(participantCount));
+                        std::cout << "Room " << roomName << " now has " << participantCount << " participants" << std::endl;
+                    }
+                }
+            });
+        } else {
+            std::cout << "Failed to leave room: " << leaveResult.error_message() << std::endl;
+        }
+    });
+#else
+    std::cout << "Firebase not available - mock room leave: " << roomName << std::endl;
+#endif
+}
+
+void Application::updateRoomEngineState(const std::string& roomName, const std::string& engineState) {
+#ifdef FIREBASE_AVAILABLE
+    if (!realtimeDatabase) return;
+    
+    // Skip if this is the same as the last known remote state (avoid ping-pong)
+    if (engineState == lastKnownRemoteEngineState) {
+        std::cout << "Skipping Firebase update - state matches last known remote state" << std::endl;
+        return;
+    }
+    
+    // Additional check: use state hash to prevent unnecessary writes
+    static std::string lastWrittenStateHash;
+    std::string currentStateHash = engine.getStateHash();
+    
+    if (currentStateHash == lastWrittenStateHash) {
+        std::cout << "Skipping Firebase update - state hash unchanged" << std::endl;
+        return;
+    }
+    
+    lastWrittenStateHash = currentStateHash;
+    writeToRoom(roomName, "engineState", engineState);
+    std::cout << "Updated Firebase with new engine state (hash: " << currentStateHash << ")" << std::endl;
+#endif
+}
+
+void Application::writeToRoom(const std::string& roomName, const std::string& section, const std::string& data) {
+#ifdef FIREBASE_AVAILABLE
+    if (!realtimeDatabase) return;
+    
+    std::lock_guard<std::mutex> lock(firebaseMutex);
+    
+    std::string path = "rooms/" + roomName + "/" + section;
+    auto ref = realtimeDatabase->GetReference(path.c_str());
+    ref.SetValue(firebase::Variant(data));
+#endif
+}
+
+void Application::checkRoomEngineState(const std::string& roomName) {
+#ifdef FIREBASE_AVAILABLE
+    if (!realtimeDatabase) return;
+    
+    static std::chrono::steady_clock::time_point lastFirebaseCall;
+    static int consecutiveCallCount = 0;
+    auto now = std::chrono::steady_clock::now();
+    auto timeSinceLastCall = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastFirebaseCall).count();
+    
+    int minDelay = 1000 + (consecutiveCallCount * 200);
+    minDelay = std::min(minDelay, 5000);
+    
+    if (timeSinceLastCall < minDelay) {
+        return;
+    }
+    
+    if (timeSinceLastCall > 10000) {
+        consecutiveCallCount = 0;
+    } else {
+        consecutiveCallCount++;
+    }
+    
+    lastFirebaseCall = now;
+    
+    std::string engineStatePath = "rooms/" + roomName + "/engineState";
+    auto engineStateRef = realtimeDatabase->GetReference(engineStatePath.c_str());
+    
+    // Use async operation without blocking
+    auto readFuture = engineStateRef.GetValue();
+    
+    // Store future for cleanup and non-blocking completion check
+    {
+        std::lock_guard<std::mutex> lock(firebaseMutex);
+        pendingFirebaseFutures.push_back(readFuture);
+    }
+    
+    readFuture.OnCompletion([this](const firebase::Future<firebase::database::DataSnapshot>& result) {
+        // Remove this future from pending list
+        {
+            std::lock_guard<std::mutex> lock(firebaseMutex);
+            pendingFirebaseFutures.erase(
+                std::remove_if(pendingFirebaseFutures.begin(), pendingFirebaseFutures.end(),
+                    [&result](const auto& future) { return &future == &result; }),
+                pendingFirebaseFutures.end()
+            );
+        }
+        
+        if (result.error() == firebase::database::kErrorNone) {
+            auto snapshot = result.result();
+            if (snapshot->exists() && snapshot->value().is_string()) {
+                std::string remoteEngineState = snapshot->value().string_value();
+                
+                if (remoteEngineState != lastKnownRemoteEngineState) {
+                    std::string currentEngineState = engine.getStateString();
+                    if (remoteEngineState != currentEngineState) {
+                        {
+                            std::lock_guard<std::mutex> updateLock(engineUpdateMutex);
+                            if (!hasPendingEngineUpdate) {
+                                pendingEngineStateUpdate = remoteEngineState;
+                                hasPendingEngineUpdate = true;
+                                std::cout << "Queued engine state update from Firebase" << std::endl;
+                            } else {
+                                std::cout << "Skipped queueing - engine update already pending" << std::endl;
+                            }
+                        }
+                    }
+                    lastKnownRemoteEngineState = remoteEngineState;
+                }
+            }
+        } else {
+            std::cout << "Failed to check room engine state: " << result.error_message() << std::endl;
+        }
+    });
+#endif
+}
+
+void Application::cleanupFirebaseResources() {
+#ifdef FIREBASE_AVAILABLE
+    std::lock_guard<std::mutex> lock(firebaseMutex);
+    
+    // Wait for any pending Firebase operations to complete with timeout
+    auto start = std::chrono::steady_clock::now();
+    const auto timeout = std::chrono::seconds(2);
+    
+    while (!pendingFirebaseFutures.empty() && 
+           std::chrono::steady_clock::now() - start < timeout) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    
+    // Clear any remaining futures
+    pendingFirebaseFutures.clear();
+    
+    std::cout << "Firebase resources cleaned up" << std::endl;
+#endif
+
+    // Clear any pending engine updates safely
+    {
+        std::lock_guard<std::mutex> updateLock(engineUpdateMutex);
+        hasPendingEngineUpdate = false;
+        pendingEngineStateUpdate.clear();
+        lastKnownRemoteEngineState.clear();
+    }
+}
+
+void Application::processPendingEngineUpdates() {
+    std::unique_lock<std::mutex> lock(engineUpdateMutex, std::try_to_lock);
+    
+    if (!lock.owns_lock()) {
+        return;
+    }
+    
+    if (hasPendingEngineUpdate) {
+        try {
+            // Validate the engine state before loading
+            if (!pendingEngineStateUpdate.empty()) {
+                // Check if this is the same state we already have to avoid unnecessary work
+                std::string currentStateHash = engine.getStateHash();
+                std::string pendingStateHash = std::to_string(std::hash<std::string>{}(pendingEngineStateUpdate));
+                
+                if (currentStateHash == pendingStateHash) {
+                    std::cout << "Skipping engine state load - state unchanged" << std::endl;
+                } else {
+                    static auto lastLoadTime = std::chrono::steady_clock::now();
+                    auto now = std::chrono::steady_clock::now();
+                    auto timeSinceLastLoad = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastLoadTime).count();
+                    
+                    if (timeSinceLastLoad > 16) {
+                        auto startTime = std::chrono::steady_clock::now();
+                        engine.load(pendingEngineStateUpdate);
+                        auto endTime = std::chrono::steady_clock::now();
+                        auto loadTime = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
+                        std::cout << "Applied pending engine state update safely (" << loadTime << "ms)" << std::endl;
+                        lastLoadTime = endTime;
+                        
+                        hasPendingEngineUpdate = false;
+                        pendingEngineStateUpdate.clear();
+                    } else {
+                        return;
+                    }
+                }
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "Error applying engine state update: " << e.what() << std::endl;
+            hasPendingEngineUpdate = false;
+            pendingEngineStateUpdate.clear();
+        } catch (...) {
+            std::cerr << "Unknown error applying engine state update" << std::endl;
+            hasPendingEngineUpdate = false;
+            pendingEngineStateUpdate.clear();
+        }
+        
+        if (!hasPendingEngineUpdate) {
+            hasPendingEngineUpdate = false;
+            pendingEngineStateUpdate.clear();
+        }
+    }
 }

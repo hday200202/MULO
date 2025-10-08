@@ -11,12 +11,29 @@
 #include <set>
 #include <unordered_map>
 #include <filesystem>
+#include <algorithm>
+#include <SFML/Window/Cursor.hpp>
 
 class TimelineComponent : public MULOComponent {
 public:
     static TimelineComponent* instance;
+    static bool clipEndDrag;
+    static bool clipStartDrag;
+    static bool isResizing; // New flag to prevent interference during resize
     
     AudioClip* selectedClip = nullptr;
+    double selectedClipEnd = 0.0;
+    double originalClipStartTime = 0.0;
+    double originalClipDuration = 0.0;
+    double originalClipOffset = 0.0;
+    double resizeDragStartMouseTime = 0.0;
+    
+    // MIDI clip resize state
+    double originalMIDIClipStartTime = 0.0;
+    double originalMIDIClipDuration = 0.0;
+    bool midiClipEndDrag = false;
+    bool midiClipStartDrag = false;
+    bool isMIDIResizing = false;
     
     struct SelectedMIDIClipInfo {
         bool hasSelection = false;
@@ -124,14 +141,37 @@ private:
         bool hasClipboard = false;
     } clipboardState;
 
+    struct AutomationDragState {
+        bool isDragging = false;
+        bool isCurveEditing = false;
+        bool isInteracting = false;
+        sf::Clock interactionClock;
+        sf::Vector2f startMousePos;
+        float startTime = 0.0f;
+        float startValue = 0.0f;
+        float startCurve = 0.5f;
+        float endValue = 0.0f;
+        std::string trackName;
+        std::string effectName;
+        std::string parameterName;
+        std::string laneId;
+        float originalTime = -1.0f;
+        float originalValue = -1.0f;
+    } automationDragState;
+
     struct UIElements {
         Row* masterTrackElement = nullptr;
         Button* muteMasterButton = nullptr;
         Slider* masterVolumeSlider = nullptr;
+        Row* masterTrackLabel = nullptr;
         std::unordered_map<std::string, Button*> trackMuteButtons;
         std::unordered_map<std::string, Slider*> trackVolumeSliders;
         std::unordered_map<std::string, Button*> trackSoloButtons;
         std::unordered_map<std::string, Button*> trackRemoveButtons;
+        std::unordered_map<std::string, TextBox*> trackNameTextBoxes;
+        std::unordered_map<std::string, Text*> automationLaneLabels;
+        std::unordered_map<std::string, Row*> automationLaneRows;
+        std::unordered_map<std::string, Button*> automationClearButtons;
     } uiElements;
 
     void handleAllUserInput();
@@ -142,10 +182,12 @@ private:
     void handleTrackLeftClick();
     void handleTrackRightClick();
     
+    void repositionAutomationLanes();
     void processDragOperations();
     void handleClipDragOperations();
     void handlePlacementDragOperations();
     void handleDeletionDragOperations();
+    void handleAutomationDragOperations();
     void updateDragState();
     
     void updateTimelineVisuals();
@@ -156,10 +198,13 @@ private:
     
     void syncUIToEngine();
     void handleMasterTrackControls();
+    
+    void updateAutomationLaneLabels();
     void handleTrackControls();
     void handleIndividualTrackControls(Track* track, const std::string& name);
     void updateTrackHighlighting();
     void rebuildTrackUI();
+    void handleTrackRenaming();
     
     void updateTimelineState();
     void resetDragState();
@@ -167,7 +212,9 @@ private:
     void clearProcessedPositions();
 
     Row* masterTrack();
-    Row* track(const std::string& trackName, Align alignment, float volume = 1.0f, float pan = 0.0f);
+    Row* track(const std::string& trackName, Align alignment, float volume = 1.0f, float pan = 0.0f);    
+    std::tuple<std::string, std::string, float> getCurrentAutomationParameter(Track* track);
+    Row* automationLane(const std::string& trackName, const std::string& effectName, const std::string& parameterName, Align alignment, float currentValue = 0.5f, bool isPotential = false);
 
     void handleCustomUIElements();
     void handleDragOperations();
@@ -178,8 +225,6 @@ private:
     void rebuildUIFromEngine();
     void syncSlidersToEngine();
     void processClipAtPosition(Track* track, const sf::Vector2f& localMousePos, bool isRightClick);
-    
-    const std::vector<std::shared_ptr<sf::Drawable>>& getCachedMeasureLines(float measureWidth, float scrollOffset, const sf::Vector2f& rowSize);
     const std::vector<std::shared_ptr<sf::Drawable>>& getCachedClipGeometry(const std::string& trackName, double bpm, float beatWidth, float scrollOffset, const sf::Vector2f& rowSize, const std::vector<AudioClip>& clips, float verticalOffset, UIResources* resources, UIState* uiState, const AudioClip* selectedClip, const std::string& currentTrackName, const std::string& selectedTrackName);
     
     // Clipboard functions
@@ -188,11 +233,46 @@ private:
     void duplicateSelectedClips();
     void clearClipboard();
     
+    // Cursor management
+    void updateMouseCursor();
+    void setCursor(sf::Cursor::Type cursorType);
+    bool isMouseOverResizeZone(const AudioClip& clip, float mouseTimeInTrack) const;
+    enum class ResizeZone { None, Start, End };
+    ResizeZone getResizeZone(const AudioClip& clip, float mouseTimeInTrack, float pixelsPerSecond) const;
+    ResizeZone getResizeZone(const MIDIClip& clip, float mouseTimeInTrack, float pixelsPerSecond) const;
+    
+    // Grid snapping helpers
+    double snapToGrid(double timeValue, bool forceSnap = false) const;
+    bool isShiftPressed() const;
+    
     float enginePanToSlider(float enginePan) const { return (enginePan + 1.0f) * 0.5f; }
     float sliderPanToEngine(float sliderPan) const { return (sliderPan * 2.0f) - 1.0f; }
+    
+private:
+    // Cursor state management
+    sf::Cursor::Type currentCursorType = sf::Cursor::Type::Arrow;
+    std::unique_ptr<sf::Cursor> resizeCursorH;
+    std::unique_ptr<sf::Cursor> textCursor;
+    std::unique_ptr<sf::Cursor> handCursor;
+    bool cursorsEnabled = true; // Can be disabled if causing issues
+    void initializeCursors();
 };
 
 inline std::vector<std::shared_ptr<sf::Drawable>> generateClipRects(double bpm, float beatWidth, float scrollOffset, const sf::Vector2f& rowSize, const std::vector<AudioClip>& clips, float verticalOffset, UIResources* resources, UIState* uiState, const AudioClip* selectedClip, const std::string& currentTrackName, const std::string& selectedTrackName);
+
+inline std::vector<std::shared_ptr<sf::Drawable>> generateAutomationLine(
+    const std::string& trackName,
+    const std::string& effectName,
+    const std::string& parameter,
+    double bpm,
+    float beatWidth,
+    float scrollOffset,
+    const sf::Vector2f& rowSize,
+    float defaultValue,
+    UIResources* resources,
+    UIState* uiState,
+    Application* app
+);
 
 inline std::shared_ptr<sf::Drawable> getPlayHead(double bpm, float beatWidth, float scrollOffset, float seconds, const sf::Vector2f& rowSize
 );
@@ -222,17 +302,21 @@ inline float xPosToSeconds(double bpm, float beatWidth, float xPos, float scroll
 inline std::unordered_map<std::string, std::vector<float>>& getWaveformCache();
 inline void ensureWaveformIsCached(const AudioClip& clip);
 inline void clearWaveformCache();
+inline double getSourceFileDuration(const AudioClip& clip);
+inline void invalidateClipWaveform(const AudioClip& clip);
 
 TimelineComponent::TimelineComponent() { 
     name = "timeline"; 
-    selectedClip = nullptr; 
+    selectedClip = nullptr;
+    clipEndDrag = false;
+    clipStartDrag = false;
     timelineState.lastFrameTime = std::chrono::steady_clock::now();
     timelineState.lastBlinkTime = std::chrono::steady_clock::now();
     timelineState.deltaTime = 0.0f;
     timelineState.firstFrame = true;
     
-    // Set the static instance pointer for global access
     instance = this;
+    initializeCursors();
 }
 
 TimelineComponent::~TimelineComponent() {
@@ -295,17 +379,41 @@ void TimelineComponent::update() {
     
     updateTimelineState();
     
+    static bool prevShowAutomation = app->readConfig("show_automation", false);
+    bool currentShowAutomation = app->readConfig("show_automation", false);
+    
+    if (currentShowAutomation != prevShowAutomation) {
+        prevShowAutomation = currentShowAutomation;
+    }
+    
+    // Check if scrubber is being dragged to disable timeline mouse input
+    bool scrubberDragging = app->readConfig<bool>("scrubber_dragging", false);
+    features.enableMouseInput = !scrubberDragging;
+
     if (features.enableMouseInput || features.enableKeyboardInput) {
         handleAllUserInput();
     }
-    
-    updateTimelineVisuals();
-    
+
+    syncSlidersToEngine();
+    updateTimelineVisuals();    
     handleCustomUIElements();
+    handleTrackRenaming();
+    
+    // Update automation lane labels if automation view is enabled
+    if (app->readConfig("show_automation", false)) {
+        updateAutomationLaneLabels();
+    }
 
     // Check if scrubber position has changed
     float scrubberPos = app->readConfig<float>("scrubber_position", 0.0f);
     scrubberPositionChanged = (std::abs(scrubberPos - lastScrubberPosition) > 0.001f);
+
+    float mousePosSeconds = xPosToSeconds(
+        app->getBpm(), 
+        100.f * app->uiState.timelineZoomLevel, 
+        app->ui->getMousePosition().x, 
+        timelineState.timelineOffset
+    );
     
     // Calculate the last clip position in the timeline
     double lastClipEndSeconds = 0.0;
@@ -384,6 +492,20 @@ void TimelineComponent::update() {
             }
         }
     }
+
+    // Record timeline width for scrubber bar size calculation
+    float timelineViewWidth = layout->getSize().x - uiElements.masterTrackLabel->getSize().x;
+    float timelineStart = secondsToXPosition(app->getBpm(), 100.f * app->uiState.timelineZoomLevel, 0.0);
+    float timelineEnd = secondsToXPosition(app->getBpm(), 100.f * app->uiState.timelineZoomLevel, lastClipEndSeconds);
+    float totalTimelineWidth = timelineEnd - timelineStart;
+    app->writeConfig<float>("scrubber_width_ratio", timelineViewWidth / totalTimelineWidth);
+
+    // Where the scrubber bar should start (percentage)
+    if (-timelineState.timelineOffset <= totalTimelineWidth) {
+        float viewStartRatio = -timelineState.timelineOffset / totalTimelineWidth;
+        app->writeConfig("scrubber_start_ratio", viewStartRatio);
+    }
+
 }
 
 void TimelineComponent::updateTimelineState() {
@@ -404,20 +526,26 @@ void TimelineComponent::updateTimelineState() {
 }
 
 bool TimelineComponent::handleEvents() {
+    // Only handle events when timeline is visible
+    if (!this->isVisible()) {
+        timelineState.wasVisible = false;
+        return false;
+    }
+    
     bool forceUpdate = app->isPlaying();
 
-    if (this->isVisible() && !timelineState.wasVisible) {
+    if (!timelineState.wasVisible) {
         syncSlidersToEngine();
         timelineState.wasVisible = true;
-    } else if (!this->isVisible()) {
-        timelineState.wasVisible = false;
     }
 
     if (features.enableUISync) {
         syncUIToEngine();
     }
 
-    if (app->freshRebuild) rebuildUI();
+    if (app->freshRebuild) {
+        rebuildUI();
+    }
     
     return forceUpdate;
 }
@@ -437,8 +565,39 @@ uilo::Row* TimelineComponent::masterTrack() {
         app->resources.activeTheme->slider_knob_color,
         app->resources.activeTheme->slider_bar_color,
         SliderOrientation::Vertical,
+        0.75f,
         "Master_volume_slider"
     );
+
+    uiElements.masterTrackLabel = row(
+        Modifier(),
+    contains{
+        spacer(Modifier().setfixedWidth(16).align(Align::LEFT)),
+
+        column(
+            Modifier(),
+        contains{
+            text(
+                Modifier().setColor(app->resources.activeTheme->primary_text_color).setfixedHeight(24).align(Align::LEFT | Align::TOP),
+                " Master",
+                app->resources.dejavuSansFont,
+                "Master_name_text"
+            ),
+
+            row(
+                Modifier(),
+            contains{
+                spacer(Modifier().setfixedWidth(16).align(Align::LEFT)),
+
+                uiElements.muteMasterButton
+            }),
+        }),
+
+        uiElements.masterVolumeSlider,
+
+        spacer(Modifier().setfixedWidth(16).align(Align::RIGHT)),
+
+    }, "Master_Track_Label");
 
     auto* masterTrackColumn = column(
         Modifier()
@@ -448,34 +607,7 @@ uilo::Row* TimelineComponent::masterTrack() {
     contains{
         spacer(Modifier().setfixedHeight(12).align(Align::TOP)),
 
-        row(
-            Modifier(),
-        contains{
-            spacer(Modifier().setfixedWidth(8).align(Align::LEFT)),
-
-            column(
-                Modifier(),
-            contains{
-                text(
-                    Modifier().setColor(app->resources.activeTheme->primary_text_color).setfixedHeight(24).align(Align::LEFT | Align::TOP),
-                    "Master",
-                    app->resources.dejavuSansFont
-                ),
-
-                row(
-                    Modifier(),
-                contains{
-                    spacer(Modifier().setfixedWidth(16).align(Align::LEFT)),
-
-                    uiElements.muteMasterButton
-                }),
-            }),
-
-            uiElements.masterVolumeSlider,
-
-            spacer(Modifier().setfixedWidth(16).align(Align::RIGHT)),
-
-        }, "Master_Track_Label"),
+        uiElements.masterTrackLabel,
 
         spacer(Modifier().setfixedHeight(8).align(Align::BOTTOM)),
     }, "Master_Track_Column");
@@ -542,6 +674,7 @@ uilo::Row* TimelineComponent::track(
         app->resources.activeTheme->slider_knob_color,
         app->resources.activeTheme->slider_bar_color,
         SliderOrientation::Vertical,
+        0.75f,
         trackName + "_volume_slider"
     );
 
@@ -552,7 +685,8 @@ uilo::Row* TimelineComponent::track(
     containers[trackName + "_scrollable_row"] = scrollableRowElement;
 
     auto handleTrackLeftClick = [this, trackName]() {
-        if (!app->getWindow().hasFocus()) return;
+        if (!app->getWindow().hasFocus()) return;        
+        if (automationDragState.isDragging) return;
         
         auto track = app->getTrack(trackName);
         if (!track) return;
@@ -564,7 +698,7 @@ uilo::Row* TimelineComponent::track(
         if (!ctrlPressed || !app->ui->isMouseDragging()) {
             sf::Vector2f globalMousePos = app->ui->getMousePosition();
             auto* trackRow = containers[trackName + "_scrollable_row"];
-            if (trackRow) {
+            if (trackRow && !isResizing) { // Don't update virtual cursor during resize
                 sf::Vector2f localMousePos = globalMousePos - trackRow->getPosition();
                 float timePosition = xPosToSeconds(app->getBpm(), 100.f * app->uiState.timelineZoomLevel, localMousePos.x - timelineState.timelineOffset, timelineState.timelineOffset);
                 timelineState.virtualCursorTime = timePosition;
@@ -580,7 +714,8 @@ uilo::Row* TimelineComponent::track(
     };
     
     auto handleTrackRightClick = [this, trackName]() {
-        if (!app->getWindow().hasFocus()) return;
+        if (!app->getWindow().hasFocus()) return;        
+        if (automationDragState.isDragging) return;
         
         auto track = app->getTrack(trackName);
         if (!track) return;
@@ -645,11 +780,25 @@ uilo::Row* TimelineComponent::track(
                 contains{
                     spacer(Modifier().setfixedWidth(8).align(Align::LEFT)),
                     
-                    text(
-                        Modifier().setColor(app->resources.activeTheme->primary_text_color).setfixedHeight(24).align(Align::LEFT | Align::TOP),
-                        trackName,
-                        app->resources.dejavuSansFont
-                    )
+                    [&]() {
+                        auto* trackNameTextBox = textBox(
+                            Modifier().setColor(sf::Color::Transparent).setfixedHeight(28).align(Align::LEFT | Align::TOP),
+                            TBStyle::Default,
+                            app->resources.dejavuSansFont,
+                            "", // Empty default text
+                            app->resources.activeTheme->primary_text_color,
+                            sf::Color::Transparent,
+                            trackName + "_name_textbox"
+                        );
+                        
+                        // Set the actual text content to the track name
+                        trackNameTextBox->setText(trackName);
+                        
+                        // Store reference for rename handling
+                        uiElements.trackNameTextBoxes[trackName] = trackNameTextBox;
+                        
+                        return trackNameTextBox;
+                    }()
                 }),
 
                 row(
@@ -692,6 +841,475 @@ uilo::Row* TimelineComponent::track(
         scrollableRowElement,
         trackLabelColumn
     }, trackName + "_track_row");
+}
+
+std::tuple<std::string, std::string, float> TimelineComponent::getCurrentAutomationParameter(Track* track) {
+    if (!track) {
+        return {"", "Volume", track ? track->getVolume() : 1.0f};
+    }
+    
+    // First check if track has stored potential automation
+    if (track->hasPotentialAutomation()) {
+        const auto& potentialAuto = track->getPotentialAutomation();
+        if (!potentialAuto.first.empty() && !potentialAuto.second.empty()) {
+            // Check if this is a built-in track parameter
+            if (potentialAuto.first == "Track") {
+                float currentValue = track->getCurrentParameterValue(potentialAuto.first, potentialAuto.second);
+                return {potentialAuto.first, potentialAuto.second, currentValue};
+            }
+            
+            // Try to get the current value of this effect parameter
+            auto& effects = track->getEffects();
+            for (size_t i = 0; i < effects.size(); ++i) {
+                const auto& effect = effects[i];
+                if (!effect) continue;
+                
+                std::string effectKey = effect->getName() + "_" + std::to_string(i);
+                if (effectKey == potentialAuto.first) {
+                    auto params = effect->getAllParameters();
+                    for (int p = 0; p < params.size(); ++p) {
+                        auto* param = params[p];
+                        if (!param) continue;
+                        
+                        std::string paramName = param->getName(256).toStdString();
+                        if (paramName == potentialAuto.second) {
+                            float currentValue = param->getValue();
+                            return {effectKey, paramName, currentValue};
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // If no potential automation, check if track has any effects at all
+    auto& effects = track->getEffects();
+    if (!effects.empty()) {
+        // Find the first effect with parameters and use its first parameter
+        for (size_t i = 0; i < effects.size(); ++i) {
+            const auto& effect = effects[i];
+            if (!effect) continue;
+            
+            auto params = effect->getAllParameters();
+            if (!params.isEmpty()) {
+                auto* param = params[0];
+                if (param) {
+                    std::string effectKey = effect->getName() + "_" + std::to_string(i);
+                    std::string paramName = param->getName(256).toStdString();
+                    float currentValue = param->getValue();
+                    return {effectKey, paramName, currentValue};
+                }
+            }
+        }
+    }
+    
+    // Fallback to Volume with proper normalization
+    float normalizedVolume = track->getCurrentParameterValue("Track", "Volume");
+    return {"Track", "Volume", normalizedVolume};
+}
+
+uilo::Row* TimelineComponent::automationLane(
+    const std::string& trackName,
+    const std::string& effectName,
+    const std::string& parameterName,
+    Align alignment,
+    float currentValue,
+    bool isPotential
+) {
+    std::string laneId = isPotential ? 
+        (trackName + "_potential") : 
+        (trackName + "_" + effectName + "_" + parameterName);
+    std::string displayName = effectName.empty() ? parameterName : effectName + " - " + parameterName;
+    
+    // Create scrollable row element like in the track function
+    auto* scrollableRowElement = scrollableRow(
+        Modifier().setHeight(1.f).align(Align::LEFT).setColor(sf::Color::Transparent),
+        contains {}, laneId + "_scrollable_row"
+    );
+    containers[laneId + "_scrollable_row"] = scrollableRowElement;
+
+    auto handleAutomationClick = [this, trackName, laneId, effectName, parameterName]() {
+        if (!app->getWindow().hasFocus()) return;
+        
+        automationDragState.isInteracting = true;
+        automationDragState.interactionClock.restart();
+        
+        sf::Vector2f globalMousePos = app->ui->getMousePosition();
+        auto* automationRow = containers[laneId + "_scrollable_row"];
+        if (automationRow) {
+            sf::Vector2f localMousePos = globalMousePos - automationRow->getPosition();            
+            float timePosition = xPosToSeconds(app->getBpm(), 100.f * app->uiState.timelineZoomLevel, localMousePos.x - timelineState.timelineOffset, timelineState.timelineOffset);
+            
+            sf::Vector2f rowSize = automationRow->getSize();
+            float laneHeight = rowSize.y;
+            float automationValue = 1.0f - (localMousePos.y / laneHeight);
+            automationValue = std::max(0.0f, std::min(1.0f, automationValue));
+            
+            if (timePosition >= 0.0f) {
+                Track* track = app->getTrack(trackName);
+                if (track) {
+                    std::string currentEffectName;
+                    std::string currentParameterName;
+                    
+                    // Determine if this is a potential automation lane
+                    bool isPotentialLane = (laneId.find("_potential") != std::string::npos);
+                    
+                    if (isPotentialLane && track->hasPotentialAutomation()) {
+                        const auto& potentialAuto = track->getPotentialAutomation();
+                        currentEffectName = potentialAuto.first;
+                        currentParameterName = potentialAuto.second;
+                    } else {
+                        currentEffectName = effectName;
+                        currentParameterName = parameterName;
+                    }
+                    
+                    if (!currentParameterName.empty()) {
+                        // Check for automation interaction (point dragging or curve editing)
+                        const auto* points = track->getAutomationPoints(currentEffectName, currentParameterName);
+                        bool startedDrag = false;
+                        
+                        if (points) {
+                            constexpr float clickTolerance = 20.0f;
+                            auto valueToY = [rowSize](float value) { return rowSize.y * (1.0f - value); };
+                            auto timeToX = [this](float time) { 
+                                return secondsToXPosition(app->getBpm(), 100.f * app->uiState.timelineZoomLevel, time) + timelineState.timelineOffset;
+                            };
+                            
+                            // Check for curve editing first when Ctrl is held (takes priority over point selection)
+                            bool ctrlHeld = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) || sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RControl);
+                            if (ctrlHeld && points->size() > 1) {
+                                // Use the exact same sorting logic as the drawing code
+                                std::vector<Track::AutomationPoint> sortedPoints;
+                                for (const auto& point : *points) {
+                                    if (point.time >= 0.0) {
+                                        sortedPoints.push_back(point);
+                                    }
+                                }
+                                std::sort(sortedPoints.begin(), sortedPoints.end(), 
+                                    [](const Track::AutomationPoint& a, const Track::AutomationPoint& b) { 
+                                        return a.time < b.time; 
+                                    });
+                                
+                                float mouseTime = xPosToSeconds(app->getBpm(), 100.f * app->uiState.timelineZoomLevel, localMousePos.x - timelineState.timelineOffset, timelineState.timelineOffset);
+                                
+                                const Track::AutomationPoint* startPoint = nullptr;
+                                const Track::AutomationPoint* endPoint = nullptr;
+                                
+                                for (size_t i = 0; i < sortedPoints.size() - 1; ++i) {
+                                    const auto& point1 = sortedPoints[i];
+                                    const auto& point2 = sortedPoints[i + 1];
+                                    
+                                    if (mouseTime >= point1.time && mouseTime <= point2.time) {
+                                        startPoint = &point1;
+                                        endPoint = &point2;
+                                        break;
+                                    }
+                                }
+                                
+                                if (startPoint && endPoint) {
+                                    // Check for double-click to reset curve to 0.5
+                                    static sf::Clock lastCurveClickTime;
+                                    static float lastClickedPointTime = -999.0f;
+                                    
+                                    float timeSinceLastClick = lastCurveClickTime.getElapsedTime().asMilliseconds();
+                                    
+                                    if (std::abs(lastClickedPointTime - startPoint->time) < 0.001f && timeSinceLastClick < 300) {
+                                        track->updateAutomationPointCurve(currentEffectName, currentParameterName, startPoint->time, 0.5f);
+                                        lastClickedPointTime = -999.0f;
+                                        lastCurveClickTime.restart();
+                                    } else {
+                                        automationDragState.isDragging = true;
+                                        automationDragState.startMousePos = globalMousePos;
+                                        automationDragState.startTime = startPoint->time;
+                                        automationDragState.startValue = startPoint->value;
+                                        automationDragState.startCurve = startPoint->curve;
+                                        automationDragState.endValue = endPoint->value;
+                                        automationDragState.originalTime = startPoint->time;
+                                        automationDragState.originalValue = startPoint->value;
+                                        automationDragState.trackName = trackName;
+                                        automationDragState.effectName = currentEffectName;
+                                        automationDragState.parameterName = currentParameterName;
+                                        automationDragState.laneId = laneId;
+                                        automationDragState.isCurveEditing = true;
+                                        startedDrag = true;
+                                        
+                                        lastClickedPointTime = startPoint->time;
+                                        lastCurveClickTime.restart();
+                                    }
+                                }
+                            }
+                            
+                            if (!startedDrag) {
+                                float closestDistance = std::numeric_limits<float>::max();
+                                const Track::AutomationPoint* closestPoint = nullptr;
+                                                                    
+                                for (const auto& point : *points) {
+                                    float pointX = timeToX(point.time);
+                                    float pointY = valueToY(point.value);
+                                    
+                                    float deltaX = localMousePos.x - pointX;
+                                    float deltaY = localMousePos.y - pointY;
+                                    
+                                    float distance;
+                                    if (std::abs(deltaX) < 2.0f) {
+                                        distance = std::abs(deltaY) + std::abs(deltaX) * 0.1f;
+                                    } else {
+                                        distance = std::sqrt(deltaX * deltaX + deltaY * deltaY);
+                                    }
+                                    
+                                    if (distance <= clickTolerance && distance < closestDistance) {
+                                        closestDistance = distance;
+                                        closestPoint = &point;
+                                    }
+                                }                                
+                                
+                                if (closestPoint) {
+                                    automationDragState.isDragging = true;
+                                    automationDragState.startMousePos = globalMousePos;
+                                    automationDragState.startTime = closestPoint->time;
+                                    automationDragState.startValue = closestPoint->value;
+                                    automationDragState.startCurve = closestPoint->curve;
+                                    automationDragState.originalTime = closestPoint->time;
+                                    automationDragState.originalValue = closestPoint->value;
+                                    automationDragState.trackName = trackName;
+                                    automationDragState.effectName = currentEffectName;
+                                    automationDragState.parameterName = currentParameterName;
+                                    automationDragState.laneId = laneId;
+                                    automationDragState.isCurveEditing = false;
+                                    startedDrag = true;
+                                }
+                            }
+                            
+                            if (!startedDrag && !sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) {
+                                Track::AutomationPoint point;
+                                point.time = timePosition;
+                                point.value = automationValue;
+                                point.curve = 0.5f;
+                                
+                                track->addAutomationPoint(currentEffectName, currentParameterName, point);
+                                
+                                automationDragState.isDragging = true;
+                                automationDragState.startMousePos = globalMousePos;
+                                automationDragState.startTime = point.time;
+                                automationDragState.startValue = point.value;
+                                automationDragState.startCurve = point.curve;
+                                automationDragState.originalTime = point.time;
+                                automationDragState.originalValue = point.value;
+                                automationDragState.trackName = trackName;
+                                automationDragState.effectName = currentEffectName;
+                                automationDragState.parameterName = currentParameterName;
+                                automationDragState.laneId = laneId;
+                                automationDragState.isCurveEditing = false;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Clear interaction flag if we're not dragging
+        if (!automationDragState.isDragging) {
+            automationDragState.isInteracting = false;
+        }
+    };
+
+    auto handleAutomationRightClick = [this, trackName, laneId, effectName, parameterName]() {
+        if (!app->getWindow().hasFocus()) return;
+        
+        // Set automation interaction flag to prevent other timeline events
+        automationDragState.isInteracting = true;
+        automationDragState.interactionClock.restart();
+        
+        sf::Vector2f globalMousePos = app->ui->getMousePosition();
+        auto* automationRow = containers[laneId + "_scrollable_row"];
+        if (automationRow) {
+            sf::Vector2f localMousePos = globalMousePos - automationRow->getPosition();
+            sf::Vector2f rowSize = automationRow->getSize();
+            
+            Track* track = app->getTrack(trackName);
+            if (track) {
+                std::string currentEffectName;
+                std::string currentParameterName;
+                
+                // Determine if this is a potential automation lane
+                bool isPotentialLane = (laneId.find("_potential") != std::string::npos);
+                
+                if (isPotentialLane && track->hasPotentialAutomation()) {
+                    const auto& potentialAuto = track->getPotentialAutomation();
+                    currentEffectName = potentialAuto.first;
+                    currentParameterName = potentialAuto.second;
+                } else {
+                    currentEffectName = effectName;
+                    currentParameterName = parameterName;
+                }
+                
+                if (!currentParameterName.empty()) {
+                    // Find the closest automation point to the click position
+                    const auto* points = track->getAutomationPoints(currentEffectName, currentParameterName);
+                    if (points) {
+                        constexpr float xTolerance = 30.0f;
+                        constexpr float yTolerance = 20.0f;
+                        
+                        auto valueToY = [rowSize](float value) { 
+                            const float padding = 4.0f;
+                            const float usableHeight = rowSize.y - 2 * padding;
+                            float normalizedValue = std::max(0.0f, std::min(value, 1.0f));
+                            return padding + (1.0f - normalizedValue) * usableHeight;
+                        };
+                        auto timeToX = [this](float time) { 
+                            return secondsToXPosition(app->getBpm(), 100.f * app->uiState.timelineZoomLevel, time) + timelineState.timelineOffset;
+                        };
+                        
+                        float closestDistance = std::numeric_limits<float>::max();
+                        float targetTime = -1.0f;
+                        float targetValue = -1.0f;
+                        
+                        for (const auto& point : *points) {
+                            float pointX = timeToX(point.time);
+                            float pointY = valueToY(point.value);
+                            
+                            float xDiff = std::abs(localMousePos.x - pointX);
+                            float yDiff = std::abs(localMousePos.y - pointY);
+                            
+                            if (xDiff <= xTolerance && yDiff <= yTolerance) {
+                                float distance = std::sqrt(xDiff * xDiff + yDiff * yDiff);
+                                if (distance < closestDistance) {
+                                    closestDistance = distance;
+                                    targetTime = point.time;
+                                    targetValue = point.value;
+                                }
+                            }
+                        }
+                        
+                        // Remove the closest point if found
+                        if (targetTime >= 0.0f && targetValue >= 0.0f) {
+                            track->removeAutomationPointPrecise(currentEffectName, currentParameterName, targetTime, targetValue);
+                        }
+                    }
+                }
+            }
+        }
+        
+        automationDragState.isInteracting = false;
+    };
+    
+    scrollableRowElement->m_modifier.onLClick([=]() { handleAutomationClick(); });
+    scrollableRowElement->m_modifier.onRClick([=]() { handleAutomationRightClick(); });
+
+    auto* automationLabelColumn = column(
+        Modifier()
+            .align(Align::RIGHT)
+            .setfixedWidth(196)
+            .setColor(app->resources.activeTheme->not_muted_color),
+    contains{
+        spacer(Modifier().setfixedHeight(8).align(Align::TOP)),
+
+        [&]() -> Element* {
+            if (isPotential) {
+                // For potential automation lanes, skip the button column entirely and start text from left
+                return row(
+                    Modifier().align(Align::LEFT | Align::CENTER_Y).setHighPriority(true),
+                contains{
+                    spacer(Modifier().setfixedWidth(8).align(Align::LEFT)),
+                    
+                    [&]() {
+                        auto* textElement = text(
+                            Modifier().setColor(app->resources.activeTheme->secondary_text_color).setfixedHeight(16).align(Align::LEFT | Align::CENTER_Y),
+                            "[+] " + displayName,
+                            app->resources.dejavuSansFont,
+                            laneId + "_label_text"
+                        );
+                        
+                        // Store reference for dynamic updates
+                        std::string updateKey = laneId;
+                        uiElements.automationLaneLabels[updateKey] = textElement;
+                        
+                        return textElement;
+                    }()
+                });
+            } else {
+                // For regular automation lanes, use the button + text layout
+                return row(
+                    Modifier().align(Align::RIGHT).setHighPriority(true),
+                contains{
+                    // Red clear button column
+                    [&]() {
+                        auto* clearButton = button(
+                            Modifier().align(Align::CENTER_X | Align::CENTER_Y).setfixedWidth(16).setfixedHeight(16).setColor(app->resources.activeTheme->mute_color)
+                                .onLClick([this, trackName, effectName, parameterName](){
+                                    if (!app->getWindow().hasFocus()) return;
+                                    Track* track = app->getTrack(trackName);
+                                    if (track) {
+                                        track->clearAutomationParameter(effectName, parameterName);
+                                    }
+                                }),
+                            ButtonStyle::Pill,
+                            "",
+                            "",
+                            sf::Color::Transparent,
+                            "clear_" + laneId
+                        );
+                        
+                        // Store reference for click handling
+                        std::string buttonKey = trackName + "_" + effectName + "_" + parameterName + "_clear";
+                        uiElements.automationClearButtons[buttonKey] = clearButton;
+                        
+                        return column(
+                            Modifier().setfixedWidth(32).align(Align::LEFT | Align::TOP),
+                        contains{
+                            clearButton
+                        });
+                    }(),
+                    
+                    // Parameter name column
+                    column(
+                        Modifier(),
+                    contains{
+                        row(
+                            Modifier().align(Align::LEFT | Align::CENTER_Y),
+                        contains{
+                            spacer(Modifier().setfixedWidth(8).align(Align::LEFT)),
+                            
+                            [&]() {
+                                auto* textElement = text(
+                                    Modifier().setColor(app->resources.activeTheme->secondary_text_color).setfixedHeight(16).align(Align::LEFT | Align::CENTER_Y),
+                                    displayName,
+                                    app->resources.dejavuSansFont,
+                                    laneId + "_label_text"
+                                );
+                                
+                                // Store reference for dynamic updates
+                                std::string updateKey = laneId;
+                                uiElements.automationLaneLabels[updateKey] = textElement;
+                                
+                                return textElement;
+                            }()
+                        })
+                    })
+                });
+            }
+        }(),
+
+        spacer(Modifier().setfixedHeight(8).align(Align::BOTTOM)),
+    }, laneId + "_label");
+
+    containers[laneId + "_label"] = automationLabelColumn;
+
+    auto* automationRow = row(
+        Modifier()
+            .setColor(app->resources.activeTheme->not_muted_color)  // Darker than track_row_color
+            .setfixedHeight(96)  // Same height as track rows
+            .align(alignment),
+    contains{
+        scrollableRowElement,
+        automationLabelColumn
+    }, laneId + "_automation_row");
+    
+    // Store the row for updates
+    std::string updateKey = trackName + "_automation";
+    uiElements.automationLaneRows[updateKey] = automationRow;
+    
+    return automationRow;
 }
 
 void TimelineComponent::handleCustomUIElements() {
@@ -805,17 +1423,50 @@ void TimelineComponent::handleCustomUIElements() {
                     
                     if (clipRect.contains(localMousePos)) {
                         if (!app->getWindow().hasFocus()) continue;
-                        if (!ctrlPressed && !prevCtrlPressed && sf::Mouse::isButtonPressed(sf::Mouse::Button::Left)) {
-                            if (!dragState.isDraggingClip && !dragState.clipSelectedForDrag) {
+                        if (!ctrlPressed && !prevCtrlPressed && sf::Mouse::isButtonPressed(sf::Mouse::Button::Left) && features.enableMouseInput) {
+                            if (!dragState.isDraggingClip && !dragState.clipSelectedForDrag && !isResizing && !isMIDIResizing) {
+                                float midiMouseTimeInTrack = (localMousePos.x - timelineState.timelineOffset) / pixelsPerSecond;
+                                
+                                ResizeZone zone = getResizeZone(mc, midiMouseTimeInTrack, pixelsPerSecond);
+                                
                                 selectedMIDIClipInfo.hasSelection = true;
                                 selectedMIDIClipInfo.startTime = mc.startTime;
                                 selectedMIDIClipInfo.duration = mc.duration;
                                 selectedMIDIClipInfo.trackName = track->getName();
                                 selectedClip = nullptr;
-                                DEBUG_PRINT("[TIMELINE] Selected MIDI clip: startTime=" << mc.startTime << ", duration=" << mc.duration);
                                 app->setSelectedTrack(track->getName());
                                 
-                                float midiMouseTimeInTrack = (localMousePos.x - timelineState.timelineOffset) / pixelsPerSecond;
+                                if (zone == ResizeZone::End) {
+                                    midiClipEndDrag = true;
+                                    midiClipStartDrag = false;
+                                    if (!isMIDIResizing) {
+                                        originalMIDIClipStartTime = mc.startTime;
+                                        originalMIDIClipDuration = mc.duration;
+                                        resizeDragStartMouseTime = midiMouseTimeInTrack;
+                                    }
+                                    isMIDIResizing = true;
+                                    
+                                    timelineState.virtualCursorTime = mc.startTime + mc.duration;
+                                    timelineState.showVirtualCursor = true;
+                                    timelineState.virtualCursorVisible = true;
+                                } else if (zone == ResizeZone::Start) {
+                                    midiClipStartDrag = true;
+                                    midiClipEndDrag = false;
+                                    if (!isMIDIResizing) {
+                                        originalMIDIClipStartTime = mc.startTime;
+                                        originalMIDIClipDuration = mc.duration;
+                                        resizeDragStartMouseTime = midiMouseTimeInTrack;
+                                    }
+                                    isMIDIResizing = true;
+                                    
+                                    timelineState.virtualCursorTime = mc.startTime;
+                                    timelineState.showVirtualCursor = true;
+                                    timelineState.virtualCursorVisible = true;
+                                } else {
+                                    midiClipEndDrag = false;
+                                    midiClipStartDrag = false;
+                                    isMIDIResizing = false;
+                                }
                                 
                                 bool shiftHeld = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LShift) || sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RShift);
                                 
@@ -886,13 +1537,49 @@ void TimelineComponent::handleCustomUIElements() {
                     
                     if (clipRect.contains(localMousePos)) {
                         if (!app->getWindow().hasFocus()) continue;
-                        if (!ctrlPressed && !prevCtrlPressed && sf::Mouse::isButtonPressed(sf::Mouse::Button::Left)) {
-                            if (!dragState.isDraggingClip && !dragState.clipSelectedForDrag) {
+                        if (!ctrlPressed && !prevCtrlPressed && sf::Mouse::isButtonPressed(sf::Mouse::Button::Left) && features.enableMouseInput) {
+                            if (!dragState.isDraggingClip && !dragState.clipSelectedForDrag && !isResizing) {
+                                // Calculate mouse position in seconds
+                                float mouseTimeInTrack = (localMousePos.x - timelineState.timelineOffset) / pixelsPerSecond;
+                                
+                                ResizeZone zone = getResizeZone(ac, mouseTimeInTrack, pixelsPerSecond);
+                                
                                 selectedClip = const_cast<AudioClip*>(&clipsVec[i]);
-                                selectedMIDIClipInfo.hasSelection = false;  // Clear MIDI clip selection
+                                selectedClipEnd = selectedClip->startTime + selectedClip->duration;
+                                selectedMIDIClipInfo.hasSelection = false;
                                 app->setSelectedTrack(track->getName());
                                 
-                                float mouseTimeInTrack = (localMousePos.x - timelineState.timelineOffset) / pixelsPerSecond;
+                                if (zone == ResizeZone::End) {
+                                    clipEndDrag = true;
+                                    clipStartDrag = false;
+                                    if (!isResizing) {
+                                        originalClipDuration = selectedClip->duration;
+                                        resizeDragStartMouseTime = mouseTimeInTrack;
+                                    }
+                                    isResizing = true;
+                                    
+                                    timelineState.virtualCursorTime = selectedClip->startTime + selectedClip->duration;
+                                    timelineState.showVirtualCursor = true;
+                                    timelineState.virtualCursorVisible = true;
+                                } else if (zone == ResizeZone::Start) {
+                                    clipStartDrag = true;
+                                    clipEndDrag = false;
+                                    if (!isResizing) {
+                                        originalClipStartTime = selectedClip->startTime;
+                                        originalClipDuration = selectedClip->duration;
+                                        originalClipOffset = selectedClip->offset;
+                                        resizeDragStartMouseTime = mouseTimeInTrack;
+                                    }
+                                    isResizing = true;
+                                    
+                                    timelineState.virtualCursorTime = selectedClip->startTime;
+                                    timelineState.showVirtualCursor = true;
+                                    timelineState.virtualCursorVisible = true;
+                                } else {
+                                    clipEndDrag = false;
+                                    clipStartDrag = false;
+                                    isResizing = false;
+                                }
                                 
                                 bool shiftHeld = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LShift) || sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RShift);
                                 
@@ -915,15 +1602,20 @@ void TimelineComponent::handleCustomUIElements() {
                                 }
                                 app->setSavedPosition(timelineState.virtualCursorTime);
                                 
-                                dragState.clipSelectedForDrag = true;
-                                dragState.draggedAudioClip = selectedClip;
-                                dragState.draggedMIDIClip = nullptr;
-                                dragState.dragStartMousePos = mousePos;
-                                dragState.dragStartClipTime = ac.startTime;
-                                
-                                // Calculate where within the clip the mouse initially clicked
-                                float audioMouseTimeInTrack = (localMousePos.x - timelineState.timelineOffset) / pixelsPerSecond;
-                                dragState.dragMouseOffsetInClip = audioMouseTimeInTrack - ac.startTime;
+                                // Only enable clip dragging if we're not resizing
+                                if (!clipEndDrag && !clipStartDrag) {
+                                    dragState.clipSelectedForDrag = true;
+                                    dragState.draggedAudioClip = selectedClip;
+                                    dragState.draggedMIDIClip = nullptr;
+                                    dragState.dragStartMousePos = mousePos;
+                                    dragState.dragStartClipTime = ac.startTime;
+                                    
+                                    // Calculate where within the clip the mouse initially clicked
+                                    float audioMouseTimeInTrack = (localMousePos.x - timelineState.timelineOffset) / pixelsPerSecond;
+                                    dragState.dragMouseOffsetInClip = audioMouseTimeInTrack - ac.startTime;
+                                } else {
+                                    // Skipping normal drag because resize mode is active
+                                }
                                 
                                 dragState.draggedTrackRowPos = trackRowPos;
                                 dragState.draggedTrackName = track->getName();
@@ -939,7 +1631,7 @@ void TimelineComponent::handleCustomUIElements() {
             }
 
             // Handle empty timeline area clicks for virtual cursor
-            if (!dragState.isDraggingClip && sf::Mouse::isButtonPressed(sf::Mouse::Button::Left) && app->getWindow().hasFocus()) {
+            if (!dragState.isDraggingClip && sf::Mouse::isButtonPressed(sf::Mouse::Button::Left) && app->getWindow().hasFocus() && features.enableMouseInput) {
                 const sf::Vector2f localMousePos = mousePos - trackRowPos;
                 
                 // Check if click is in timeline area but not on any clips
@@ -973,7 +1665,7 @@ void TimelineComponent::handleCustomUIElements() {
                     }
                 }
                 
-                if (!clickedOnClip && localMousePos.x >= 0 && localMousePos.y >= 0 && localMousePos.y <= trackRow->getSize().y) {
+                if (!clickedOnClip && localMousePos.x >= 0 && localMousePos.y >= 0 && localMousePos.y <= trackRow->getSize().y && !isResizing && !isMIDIResizing) { // Don't update virtual cursor during resize
                     float mouseTimeInTrack = (localMousePos.x - timelineState.timelineOffset) / pixelsPerSecond;
                     
                     bool shiftHeld = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LShift) || sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RShift);
@@ -999,7 +1691,7 @@ void TimelineComponent::handleCustomUIElements() {
                     
                     selectedClip = nullptr;
                     selectedMIDIClipInfo.hasSelection = false;  // Clear MIDI clip selection
-                    DEBUG_PRINT("[TIMELINE] Cleared clip selection (clicked empty area)");
+                    // Cleared clip selection (clicked empty area)
                 }
             }
 
@@ -1029,6 +1721,318 @@ void TimelineComponent::handleCustomUIElements() {
             scrollableRow->setCustomGeometry(rowGeometry);
         }
     }
+    
+    bool showAutomation = app->readConfig("show_automation", false);
+    
+    if (showAutomation) {
+        const auto& allTracks = app->getAllTracks();
+        
+        for (const auto& track : allTracks) {
+            if (track->getName() == "Master") continue;
+            
+            // Get current automation state from Track
+            const auto& automatedParams = track->getAutomatedParameters();
+            bool hasPotentialAutomation = track->hasPotentialAutomation();
+            std::pair<std::string, std::string> potentialAuto;
+            if (hasPotentialAutomation) {
+                potentialAuto = track->getPotentialAutomation();
+            }
+            
+            // Track which lanes should exist
+            std::set<std::string> expectedLaneIds;
+            
+            // Add IDs for automated parameter lanes (scrollable_row format)
+            for (const auto& [effectName, parameterName] : automatedParams) {
+                std::string laneId = track->getName() + "_" + effectName + "_" + parameterName + "_automation_scrollable_row";
+                expectedLaneIds.insert(laneId);
+            }
+            
+            // Add ID for potential automation lane (scrollable_row format)
+            if (hasPotentialAutomation) {
+                bool alreadyAutomated = false;
+                for (const auto& [effectName, parameterName] : automatedParams) {
+                    if (effectName == potentialAuto.first && parameterName == potentialAuto.second) {
+                        alreadyAutomated = true;
+                        break;
+                    }
+                }
+                
+                if (!alreadyAutomated) {
+                    std::string potentialLaneId = track->getName() + "_potential_automation_scrollable_row";
+                    expectedLaneIds.insert(potentialLaneId);
+                }
+            }
+            const auto& elements = timelineElement->getElements();
+            std::set<std::string> existingLaneIds;
+            std::set<std::string> existingAutomationRows;
+            for (auto* element : elements) {
+                // Look for automation rows with exact track name matching
+                if (element->m_name.find("_automation_row") != std::string::npos) {
+                    // Extract the track name from the element name
+                    // Format should be: trackName_effectName_parameterName_automation_row
+                    //             or: trackName_potential_automation_row
+                    
+                    std::string elementName = element->m_name;
+                    std::string trackName = track->getName();
+                    
+                    // Check if this element belongs to the current track
+                    bool belongsToThisTrack = false;
+                    
+                    if (elementName.find("_potential_automation_row") != std::string::npos) {
+                        // For potential automation: trackName_potential_automation_row
+                        std::string expectedPotentialName = trackName + "_potential_automation_row";
+                        if (elementName == expectedPotentialName) {
+                            belongsToThisTrack = true;
+                        }
+                    } else {
+                        // For regular automation: trackName_effectName_parameterName_automation_row
+                        // Check if it starts with trackName_ and the next part is NOT another track name
+                        std::string expectedPrefix = trackName + "_";
+                        if (elementName.find(expectedPrefix) == 0) {
+                            // Get the part after trackName_
+                            std::string afterTrackName = elementName.substr(expectedPrefix.length());
+                            // Make sure this isn't another track (like drums_1 when track is drums)
+                            // Check if the character after track name is a digit (indicating it's another track)
+                            if (!afterTrackName.empty() && !std::isdigit(afterTrackName[0])) {
+                                belongsToThisTrack = true;
+                            }
+                        }
+                    }
+                    
+                    if (belongsToThisTrack) {
+                        existingAutomationRows.insert(element->m_name);
+                    }
+                }
+            }
+            
+            // Convert automation row names to expected scrollable row names for comparison
+            for (const auto& rowId : existingAutomationRows) {
+                if (rowId.find("_potential_automation_row") != std::string::npos) {
+                    std::string converted = track->getName() + "_potential_automation_scrollable_row";
+                    existingLaneIds.insert(converted);
+                } else if (rowId.find("_automation_row") != std::string::npos) {
+                    // Convert from "_automation_row" suffix to "_automation_scrollable_row"
+                    std::string scrollableId = rowId;
+                    // Replace "_automation_row" with "_automation_scrollable_row"
+                    size_t pos = scrollableId.find("_automation_row");
+                    if (pos != std::string::npos) {
+                        scrollableId.replace(pos, 15, "_automation_scrollable_row");
+                        existingLaneIds.insert(scrollableId);
+                    }
+                }
+            }
+            
+            if (expectedLaneIds != existingLaneIds) {
+                // Find track row position for insertion
+                std::string trackRowId = track->getName() + "_track_row";
+                int insertIndex = -1;
+                const auto& currentElements = timelineElement->getElements();
+                for (int i = 0; i < static_cast<int>(currentElements.size()); ++i) {
+                    if (currentElements[i]->m_name == trackRowId) {
+                        insertIndex = i + 1;
+                        break;
+                    }
+                }
+                
+                // Remove lanes that shouldn't exist anymore
+                for (const auto& existingScrollableId : existingLaneIds) {
+                    if (expectedLaneIds.find(existingScrollableId) == expectedLaneIds.end()) {
+                        // Convert scrollable_row ID back to automation_row ID to find the actual element
+                        std::string automationRowId;
+                        if (existingScrollableId.find("_potential_automation_scrollable_row") != std::string::npos) {
+                            automationRowId = track->getName() + "_potential_automation_row";
+                        } else if (existingScrollableId.find("_automation_scrollable_row") != std::string::npos) {
+                            // Convert from automation_scrollable_row to automation_row
+                            automationRowId = existingScrollableId;
+                            size_t pos = automationRowId.find("_automation_scrollable_row");
+                            if (pos != std::string::npos) {
+                                automationRowId.replace(pos, 26, "_automation_row");
+                            }
+                        }
+                        
+                        // Find and remove the automation row element and its preceding spacer
+                        const auto& elements = timelineElement->getElements();
+                        for (int i = 0; i < static_cast<int>(elements.size()); ++i) {
+                            if (elements[i]->m_name == automationRowId) {
+                                // Remove the automation lane
+                                timelineElement->removeElement(elements[i]);
+
+                                if (i > 0) {
+                                    auto* prevElement = elements[i-1];
+                                    // Check if the previous element is a named automation spacer or generic spacer
+                                    if (prevElement->m_name.empty() || 
+                                        prevElement->m_name.find("spacer") != std::string::npos ||
+                                        prevElement->m_name.find("_automation_spacer") != std::string::npos ||
+                                        prevElement->m_name.find("_potential_automation_spacer") != std::string::npos) {
+                                        timelineElement->removeElement(prevElement);
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                        
+                        containers.erase(existingScrollableId);
+                    }
+                }
+                
+                // Clean up any orphaned spacers that belong to this track
+                const auto& cleanupElements = timelineElement->getElements();
+                std::vector<Element*> spacersToRemove;
+                for (auto* element : cleanupElements) {
+                    if (element->m_name == track->getName() + "_automation_spacer" ||
+                        element->m_name == track->getName() + "_potential_automation_spacer") {
+                        spacersToRemove.push_back(element);
+                    }
+                }
+                for (auto* spacer : spacersToRemove) {
+                    timelineElement->removeElement(spacer);
+                }
+                
+                // Add new lanes that should exist but don't
+                if (insertIndex >= 0) {
+                    for (const auto& [effectName, parameterName] : automatedParams) {
+                        std::string laneScrollableId = track->getName() + "_" + effectName + "_" + parameterName + "_automation_scrollable_row";
+                        if (existingLaneIds.find(laneScrollableId) == existingLaneIds.end()) {
+                            float currentValue = track->getCurrentParameterValue(effectName, parameterName);
+                            auto* automationRowElem = automationLane(
+                                track->getName(), 
+                                effectName,
+                                parameterName,
+                                Align::TOP | Align::LEFT, 
+                                currentValue,
+                                false
+                            );
+                            
+                            timelineElement->insertElementAt(automationRowElem, insertIndex);
+                            insertIndex += 1;
+
+                        }
+                    }
+                    
+                    // Add potential automation lane if needed
+                    if (hasPotentialAutomation) {
+                        bool alreadyAutomated = false;
+                        for (const auto& [effectName, parameterName] : automatedParams) {
+                            if (effectName == potentialAuto.first && parameterName == potentialAuto.second) {
+                                alreadyAutomated = true;
+                                break;
+                            }
+                        }
+                        
+                        if (!alreadyAutomated) {
+                            std::string potentialScrollableId = track->getName() + "_potential_automation_scrollable_row";
+                            if (existingLaneIds.find(potentialScrollableId) == existingLaneIds.end()) {
+                                float currentValue = track->getCurrentParameterValue(potentialAuto.first, potentialAuto.second);
+                                auto* potentialRowElem = automationLane(
+                                    track->getName(), 
+                                    potentialAuto.first,
+                                    potentialAuto.second,
+                                    Align::TOP | Align::LEFT, 
+                                    currentValue,
+                                    true
+                                );
+                            
+                                timelineElement->insertElementAt(potentialRowElem, insertIndex);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Automation lane geometry
+        for (const auto& track : allTracks) {
+            if (track->getName() == "Master") continue;
+            
+            const double beatWidth = 100.f * app->uiState.timelineZoomLevel;
+            auto [timeSigNum, timeSigDen] = app->getTimeSignature();
+            
+            const auto& automatedParams = track->getAutomatedParameters();
+            for (const auto& [effectName, parameterName] : automatedParams) {
+                std::string laneId = track->getName() + "_" + effectName + "_" + parameterName + "_scrollable_row";
+                auto laneIt = containers.find(laneId);
+                if (laneIt != containers.end() && laneIt->second) {
+                    auto* automationRow = static_cast<uilo::ScrollableRow*>(laneIt->second);
+                    auto lines = generateTimelineMeasures(beatWidth, clampedOffset, automationRow->getSize(), timeSigNum, timeSigDen, &app->resources);
+                    float currentValue = track->getCurrentParameterValue(effectName, parameterName);
+                    
+                    // Generate automation line visualization
+                    auto automationLineDrawables = generateAutomationLine(
+                        track->getName(),
+                        effectName,
+                        parameterName,
+                        app->getBpm(),
+                        static_cast<float>(beatWidth),
+                        static_cast<float>(clampedOffset),
+                        automationRow->getSize(),
+                        currentValue,
+                        &app->resources,
+                        &app->uiState,
+                        app
+                    );
+                    
+                    std::vector<std::shared_ptr<sf::Drawable>> automationGeometry;
+                    automationGeometry.reserve(lines.size() + automationLineDrawables.size());                    
+                    automationGeometry.insert(automationGeometry.end(), std::make_move_iterator(lines.begin()), std::make_move_iterator(lines.end()));
+                    automationGeometry.insert(automationGeometry.end(), std::make_move_iterator(automationLineDrawables.begin()), std::make_move_iterator(automationLineDrawables.end()));
+                    automationRow->setCustomGeometry(automationGeometry);
+                }
+            }
+            
+            // Populate potential automation lane
+            if (track->hasPotentialAutomation()) {
+                std::string potentialLaneId = track->getName() + "_potential_scrollable_row";
+                auto potentialIt = containers.find(potentialLaneId);
+                if (potentialIt != containers.end() && potentialIt->second) {
+                    auto* automationRow = static_cast<uilo::ScrollableRow*>(potentialIt->second);
+                    auto lines = generateTimelineMeasures(beatWidth, clampedOffset, automationRow->getSize(), timeSigNum, timeSigDen, &app->resources);
+                    const auto& potentialAuto = track->getPotentialAutomation();
+                    float currentValue = track->getCurrentParameterValue(potentialAuto.first, potentialAuto.second);
+                    
+                    auto automationLineDrawables = generateAutomationLine(
+                        track->getName(),
+                        potentialAuto.first,
+                        potentialAuto.second,
+                        app->getBpm(),
+                        static_cast<float>(beatWidth),
+                        static_cast<float>(clampedOffset),
+                        automationRow->getSize(),
+                        currentValue,
+                        &app->resources,
+                        &app->uiState,
+                        app
+                    );
+                    
+                    std::vector<std::shared_ptr<sf::Drawable>> automationGeometry;
+                    automationGeometry.reserve(lines.size() + automationLineDrawables.size());                    
+                    automationGeometry.insert(automationGeometry.end(), std::make_move_iterator(lines.begin()), std::make_move_iterator(lines.end()));
+                    automationGeometry.insert(automationGeometry.end(), std::make_move_iterator(automationLineDrawables.begin()), std::make_move_iterator(automationLineDrawables.end()));
+                    automationRow->setCustomGeometry(automationGeometry);
+                }
+            }
+        }
+    } else {
+        // Remove all automation lanes when automation view is disabled
+        const auto& allTracks = app->getAllTracks();
+        for (const auto& track : allTracks) {
+            if (track->getName() == "Master") continue;
+            
+            const auto& elements = timelineElement->getElements();
+            
+            std::vector<uilo::Element*> toRemove;
+            for (auto* element : elements) {
+                if (element->m_name.find(track->getName() + "_") != std::string::npos &&
+                    element->m_name.find("_automation_row") != std::string::npos) {
+                    toRemove.push_back(element);
+                }
+            }
+            
+            for (auto* element : toRemove) {
+                timelineElement->removeElement(element);
+            }
+        }
+    }
+
     prevCtrlPressed = ctrlPressed;
 
     if (timelineState.showVirtualCursor && !app->isPlaying()) {
@@ -1061,11 +2065,13 @@ void TimelineComponent::handleCustomUIElements() {
                 std::pow(currentMousePos.y - dragState.dragStartMousePos.y, 2)
             );
             
-            if (dragDistance > dragState.DRAG_THRESHOLD) {
+            if (dragDistance > dragState.DRAG_THRESHOLD && !clipEndDrag && !clipStartDrag && !midiClipEndDrag && !midiClipStartDrag) {
                 dragState.isDraggingClip = true;
                 dragState.isDraggingAudioClip = (dragState.draggedAudioClip != nullptr);
                 dragState.isDraggingMIDIClip = (dragState.draggedMIDIClip != nullptr);
                 dragState.clipSelectedForDrag = false;
+            } else if (clipEndDrag || clipStartDrag || midiClipEndDrag || midiClipStartDrag) {
+                // Preventing normal drag because resize mode is active
             }
         } else {
             dragState.clipSelectedForDrag = false;
@@ -1094,9 +2100,17 @@ void TimelineComponent::handleCustomUIElements() {
             }
             
             if (dragState.isDraggingAudioClip && dragState.draggedAudioClip) {
-                dragState.draggedAudioClip->startTime = newStartTime;
+                if (clipEndDrag || clipStartDrag) {
+                    // Skipping audio clip position update because resize is active
+                } else {
+                    dragState.draggedAudioClip->startTime = newStartTime;
+                }
             } else if (dragState.isDraggingMIDIClip && dragState.draggedMIDIClip) {
-                dragState.draggedMIDIClip->startTime = newStartTime;
+                if (clipEndDrag || clipStartDrag) {
+                    // Skipping MIDI clip position update because resize is active
+                } else {
+                    dragState.draggedMIDIClip->startTime = newStartTime;
+                }
             }
         } else {
             dragState.isDraggingClip = false;
@@ -1152,8 +2166,6 @@ void TimelineComponent::rebuildUI() {
 void TimelineComponent::rebuildUIFromEngine() {
     if (!initialized) return;
     
-    DEBUG_PRINT("Rebuilding UI from engine state");
-    
     // Clear existing UI elements
     if (auto timelineIt = containers.find("timeline"); timelineIt != containers.end() && timelineIt->second) {
         timelineIt->second->clear();
@@ -1184,10 +2196,88 @@ void TimelineComponent::rebuildUIFromEngine() {
     syncSlidersToEngine();
 }
 
+void TimelineComponent::repositionAutomationLanes() {    
+    // Find the timeline scrollable column
+    uilo::ScrollableColumn* timelineScrollable = nullptr;
+    
+    auto timelineScrollableIt = containers.find("timeline_scrollable");
+    if (timelineScrollableIt != containers.end()) {
+        timelineScrollable = static_cast<uilo::ScrollableColumn*>(timelineScrollableIt->second);
+    } else {
+        auto timelineIt = containers.find("timeline");
+        if (timelineIt != containers.end()) {
+            timelineScrollable = static_cast<uilo::ScrollableColumn*>(timelineIt->second);
+        }
+    }
+    
+    if (!timelineScrollable) {
+        return;
+    }
+    
+    // Get all automation lanes and their track names
+    std::vector<std::pair<std::string, uilo::Element*>> automationLanes;
+    
+    const auto& elements = timelineScrollable->getElements();
+    for (auto* element : elements) {
+        std::string elementName = element->m_name;
+        if (elementName.find("_automation_row") != std::string::npos) {
+            size_t firstUnderscore = elementName.find('_');
+            if (firstUnderscore != std::string::npos) {
+                std::string trackName = elementName.substr(0, firstUnderscore);
+                automationLanes.push_back({trackName, element});
+            }
+        }
+    }
+    
+    // For each automation lane, move it to the correct position after its track
+    for (auto& [trackName, lane] : automationLanes) {        
+        // Find the track element directly in the timeline by name
+        int trackIndex = -1;
+        const auto& currentElements = timelineScrollable->getElements();
+        for (int i = 0; i < static_cast<int>(currentElements.size()); ++i) {
+            std::string elementName = currentElements[i]->m_name;
+            if (elementName == trackName + "_scrollable_row") {
+                trackIndex = i;
+                break;
+            }
+        }
+        
+        if (trackIndex >= 0) {
+            // Find the correct position after this track's automation lanes
+            int targetIndex = trackIndex + 1;
+            
+            // Count existing automation lanes for this track that are already positioned correctly
+            for (int i = trackIndex + 1; i < static_cast<int>(currentElements.size()); ++i) {
+                if (currentElements[i] == lane) break; // Don't count the lane we're moving
+                
+                std::string elementName = currentElements[i]->m_name;
+                if (elementName.find(trackName + "_") == 0 && 
+                    elementName.find("_automation_row") != std::string::npos) {
+                    targetIndex = i + 1;
+                } else if (elementName.find("_scrollable_row") != std::string::npos && 
+                    elementName.find("_automation_row") == std::string::npos) {
+                    break;
+                }
+            }
+            
+            // Move the automation lane to the correct position
+            int currentIndex = timelineScrollable->getElementIndex(lane);
+            
+            if (currentIndex != targetIndex) {
+                timelineScrollable->insertElementAt(lane, targetIndex);
+            }
+        }
+    }
+}
+
 void TimelineComponent::syncSlidersToEngine() {
+    if (app->ui->isMouseDragging()) {
+        return;
+    }
+    
     if (app->getMasterTrack() && uiElements.masterVolumeSlider) {
-        float engineVol = app->getMasterTrack()->getVolume();
-        float sliderValue = decibelsToFloat(engineVol);
+        float currentValue = app->getMasterTrack()->getCurrentParameterValue("Track", "Volume");
+        float sliderValue = automationToVolumeSlider(currentValue);
         uiElements.masterVolumeSlider->setValue(sliderValue);
     }
     
@@ -1196,8 +2286,8 @@ void TimelineComponent::syncSlidersToEngine() {
         
         if (auto volumeSlider = uiElements.trackVolumeSliders.find(track->getName());
             volumeSlider != uiElements.trackVolumeSliders.end() && volumeSlider->second) {
-            float engineVol = track->getVolume();
-            float sliderValue = decibelsToFloat(engineVol);
+            float currentValue = track->getCurrentParameterValue("Track", "Volume");
+            float sliderValue = automationToVolumeSlider(currentValue);
             volumeSlider->second->setValue(sliderValue);
         }
     }
@@ -1210,7 +2300,7 @@ inline std::unordered_map<std::string, std::vector<float>>& getWaveformCache() {
 
 inline void clearWaveformCache() {
     auto& cache = getWaveformCache();
-    DEBUG_PRINT("DEBUG: Clearing waveform cache (" << cache.size() << " entries)");
+    // Clear waveform cache
     cache.clear();
 }
 
@@ -1271,6 +2361,35 @@ inline void ensureWaveformIsCached(const AudioClip& clip) {
     }
 
     cache.emplace(filePath, std::move(peaks));
+}
+
+inline double getSourceFileDuration(const AudioClip& clip) {
+    if (!clip.sourceFile.existsAsFile()) return 0.0;
+    
+    static thread_local juce::AudioFormatManager formatManager;
+    static thread_local bool initialized = false;
+    if (!initialized) {
+        formatManager.registerBasicFormats();
+        initialized = true;
+    }
+    
+    std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(clip.sourceFile));
+    if (!reader) return 0.0;
+    
+    return reader->lengthInSamples / reader->sampleRate;
+}
+
+inline void invalidateClipWaveform(const AudioClip& clip) {
+    if (!clip.sourceFile.existsAsFile()) return;
+    
+    auto& cache = getWaveformCache();
+    const std::string filePath = clip.sourceFile.getFullPathName().toStdString();
+    
+    auto it = cache.find(filePath);
+    if (it != cache.end()) {
+        cache.erase(it);
+        // Invalidated cache for file
+    }
 }
 
 inline std::vector<std::shared_ptr<sf::Drawable>> generateTimelineMeasures(
@@ -1427,6 +2546,223 @@ inline std::vector<std::shared_ptr<sf::Drawable>> generateClipRects(
     return clipRects;
 }
 
+inline std::vector<std::shared_ptr<sf::Drawable>> generateAutomationLine(
+    const std::string& trackName,
+    const std::string& effectName,
+    const std::string& parameter,
+    double bpm,
+    float beatWidth,
+    float scrollOffset,
+    const sf::Vector2f& rowSize,
+    float defaultValue,
+    UIResources* resources,
+    UIState* uiState,
+    Application* app
+) {
+    std::vector<std::shared_ptr<sf::Drawable>> drawables;
+    
+    Track* track = app->getTrack(trackName);
+    if (!track) {
+        return drawables;
+    }
+    
+    const auto* automationPoints = track->getAutomationPoints(effectName, parameter);
+    
+    const float padding = 4.0f;
+    const float usableHeight = rowSize.y - 2 * padding;
+    
+    auto valueToY = [&](float value) -> float {
+        float normalizedValue = std::max(0.0f, std::min(value, 1.0f));
+        return padding + (1.0f - normalizedValue) * usableHeight; // Invert Y axis
+    };
+    
+    auto timeToX = [&](double time) -> float {
+        return secondsToXPosition(bpm, beatWidth, time) + scrollOffset;
+    };
+    
+    if (automationPoints && !automationPoints->empty()) {
+        constexpr float pointRadius = 8.0f;
+        sf::Color pointColor = app->resources.activeTheme->clip_color;
+        sf::Color lineColor = pointColor;
+        constexpr float lineHeight = 4.0f;
+        
+        // Sort points by time
+        std::vector<Track::AutomationPoint> sortedPoints;
+        for (const auto& point : *automationPoints) {
+            if (point.time >= 0.0) { // Ignore default automation points at -1.0 seconds
+                sortedPoints.push_back(point);
+            }
+        }
+        std::sort(sortedPoints.begin(), sortedPoints.end(), 
+                [](const Track::AutomationPoint& a, const Track::AutomationPoint& b) {
+            return a.time < b.time;
+        });
+        
+        if (sortedPoints.empty()) {
+            const float timelineWidth = rowSize.x + std::abs(scrollOffset) + 2000.0f;
+            const float startX = scrollOffset - 1000.0f;
+            
+            float yPosition = valueToY(defaultValue);
+            
+            auto line = std::make_shared<sf::RectangleShape>();
+            line->setSize({timelineWidth, lineHeight});
+            line->setPosition({startX, yPosition});
+            line->setFillColor(lineColor);
+            drawables.push_back(line);
+        } else if (sortedPoints.size() == 1) {
+            const auto& point = sortedPoints[0];
+            float yPosition = valueToY(point.value);
+            const float timelineWidth = rowSize.x + std::abs(scrollOffset) + 2000.0f;
+            const float startX = scrollOffset - 1000.0f;
+            
+            auto line = std::make_shared<sf::RectangleShape>();
+            line->setSize({timelineWidth, lineHeight});
+            line->setPosition({startX, yPosition - lineHeight / 2.0f});
+            line->setFillColor(lineColor);
+            drawables.push_back(line);
+            
+            float x = timeToX(point.time);
+            if (x >= -pointRadius && x <= rowSize.x + pointRadius) {
+                auto circle = std::make_shared<sf::CircleShape>(pointRadius);
+                circle->setPosition({x - pointRadius, yPosition - pointRadius});
+                circle->setFillColor(pointColor);
+                circle->setOutlineThickness(1.0f);
+                circle->setOutlineColor(sf::Color::Black);
+                drawables.push_back(circle);
+            }
+        } else {
+            for (size_t i = 0; i < sortedPoints.size() - 1; ++i) {
+                const auto& point1 = sortedPoints[i];
+                const auto& point2 = sortedPoints[i + 1];
+                
+                float x1 = timeToX(point1.time);
+                float y1 = valueToY(point1.value);
+                float x2 = timeToX(point2.time);
+                float y2 = valueToY(point2.value);
+                
+                if ((x1 >= -pointRadius && x1 <= rowSize.x + pointRadius) ||
+                    (x2 >= -pointRadius && x2 <= rowSize.x + pointRadius)) {
+                    
+                    if (std::abs(point1.curve - 0.5f) < 0.001f) {
+                        float lineLength = std::sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1));
+                        float angleRadians = std::atan2(y2 - y1, x2 - x1);
+                        
+                        auto line = std::make_shared<sf::RectangleShape>();
+                        line->setSize({lineLength, lineHeight});
+                        line->setPosition({x1, y1 - lineHeight / 2.0f});
+                        line->setRotation(sf::radians(angleRadians));
+                        line->setFillColor(lineColor);
+                        drawables.push_back(line);
+                    } else {
+                        const int segments = 20;
+                        for (int j = 0; j < segments; ++j) {
+                            float t1 = static_cast<float>(j) / segments;
+                            float t2 = static_cast<float>(j + 1) / segments;
+                            
+                            auto curvePoint = [&](float t) -> sf::Vector2f {
+                                float curve = point1.curve;
+                                float adjustedT;
+                                
+                                if (curve < 0.5f) {
+                                    float factor = 50.0f * (0.5f - curve);
+                                    adjustedT = std::pow(t, 1.0f + factor);
+                                } else {
+                                    float factor = 50.0f * (curve - 0.5f);
+                                    adjustedT = 1.0f - std::pow(1.0f - t, 1.0f + factor);
+                                }
+                                
+                                float x = x1 + t * (x2 - x1);
+                                float y = y1 + adjustedT * (y2 - y1);
+                                
+                                return sf::Vector2f(x, y);
+                            };
+                            
+                            sf::Vector2f p1 = curvePoint(t1);
+                            sf::Vector2f p2 = curvePoint(t2);
+                            
+                            float lineLength = std::sqrt((p2.x - p1.x) * (p2.x - p1.x) + (p2.y - p1.y) * (p2.y - p1.y));
+                            float angleRadians = std::atan2(p2.y - p1.y, p2.x - p1.x);
+                            
+                            auto line = std::make_shared<sf::RectangleShape>();
+                            line->setSize({lineLength, lineHeight});
+                            line->setPosition({p1.x, p1.y - lineHeight / 2.0f});
+                            line->setRotation(sf::radians(angleRadians));
+                            line->setFillColor(lineColor);
+                            drawables.push_back(line);
+                        }
+                    }
+                }
+            }
+            
+            // Draw extended automation lines
+            if (!sortedPoints.empty()) {
+                const float timelineExtension = 2000.0f;
+                
+                const auto& firstPoint = sortedPoints[0];
+                float firstPointX = timeToX(firstPoint.time);
+                float firstPointY = valueToY(firstPoint.value);
+                
+                float startX = scrollOffset - timelineExtension;
+                float extendedWidth = firstPointX - startX;
+                
+                if (extendedWidth > 0 && firstPointX >= -pointRadius) {
+                    auto preFirstLine = std::make_shared<sf::RectangleShape>();
+                    preFirstLine->setSize({extendedWidth, lineHeight});
+                    preFirstLine->setPosition({startX, firstPointY - lineHeight / 2.0f});
+                    preFirstLine->setFillColor(lineColor);
+                    drawables.push_back(preFirstLine);
+                }
+                
+                const auto& lastPoint = sortedPoints.back();
+                float lastPointX = timeToX(lastPoint.time);
+                float lastPointY = valueToY(lastPoint.value);
+                
+                float endX = rowSize.x + std::abs(scrollOffset) + timelineExtension;
+                float postExtendedWidth = endX - lastPointX;
+                
+                if (postExtendedWidth > 0 && lastPointX <= rowSize.x + pointRadius) {
+                    auto postLastLine = std::make_shared<sf::RectangleShape>();
+                    postLastLine->setSize({postExtendedWidth, lineHeight});
+                    postLastLine->setPosition({lastPointX, lastPointY - lineHeight / 2.0f});
+                    postLastLine->setFillColor(lineColor);
+                    drawables.push_back(postLastLine);
+                }
+            }
+            
+            // Draw automation points
+            for (const auto& point : sortedPoints) {
+                float x = timeToX(point.time);
+                float y = valueToY(point.value);
+                
+                if (x >= -pointRadius && x <= rowSize.x + pointRadius) {
+                    auto circle = std::make_shared<sf::CircleShape>(pointRadius);
+                    circle->setPosition({x - pointRadius, y - pointRadius});
+                    circle->setFillColor(pointColor);
+                    circle->setOutlineThickness(1.0f);
+                    circle->setOutlineColor(sf::Color::Black);
+                    drawables.push_back(circle);
+                }
+            }
+        }
+    } else {
+        // No automation points
+        const float timelineWidth = rowSize.x + std::abs(scrollOffset) + 2000.0f;
+        const float startX = scrollOffset - 1000.0f;
+        constexpr float lineHeight = 4.0f;
+        
+        // Use current parameter value
+        float yPosition = valueToY(defaultValue);
+        
+        auto line = std::make_shared<sf::RectangleShape>();
+        line->setSize({timelineWidth, lineHeight});
+        line->setPosition({startX, yPosition});
+        line->setFillColor(app->resources.activeTheme->clip_color);
+        drawables.push_back(line);
+    }
+        
+    return drawables;
+}
+
 inline std::shared_ptr<sf::Drawable> getPlayHead(double bpm, float beatWidth, float scrollOffset, float seconds, const sf::Vector2f& rowSize) {
     auto playHeadRect = std::make_shared<sf::RectangleShape>();
 
@@ -1445,19 +2781,22 @@ inline std::shared_ptr<sf::Drawable> getPlayHead(double bpm, float beatWidth, fl
 inline float getNearestMeasureX(const sf::Vector2f& pos, const std::vector<std::shared_ptr<sf::Drawable>>& lines) {
     if (lines.empty()) return pos.x;
     
-    float closestLeftX = 0.0f; // Always round down - find the measure line to the left
+    float nearestX = pos.x;
+    float minDistance = std::numeric_limits<float>::max();
     
     for (const auto& line : lines) {
         if (const auto rect = std::dynamic_pointer_cast<const sf::RectangleShape>(line)) {
             const float lineX = rect->getPosition().x;
-            // Only consider lines that are to the left of or at the click position
-            if (lineX <= pos.x && lineX > closestLeftX) {
-                closestLeftX = lineX;
+            const float distance = std::abs(lineX - pos.x);
+            
+            if (distance < minDistance) {
+                minDistance = distance;
+                nearestX = lineX;
             }
         }
     }
     
-    return closestLeftX;
+    return nearestX;
 }
 
 inline float secondsToXPosition(double bpm, float beatWidth, float seconds) noexcept {
@@ -1490,37 +2829,46 @@ inline std::vector<std::shared_ptr<sf::Drawable>> generateWaveformData(
     const auto& peaks = cacheIt->second;
     if (peaks.empty() || clipSize.x <= 0) return {};
 
-    constexpr int upsample = 5;
+    constexpr float linesPerSecond = 100.0f;
     constexpr float waveformScale = 0.9f;
     constexpr float peakThreshold = 0.001f;
     
     const int numPeaks = static_cast<int>(peaks.size());
-    const int numSamples = numPeaks * upsample;
+    const double sourceFileDuration = getSourceFileDuration(clip);
+    
+    if (sourceFileDuration <= 0) return {};
+    
+    const int numLines = static_cast<int>(clip.duration * linesPerSecond);
+    if (numLines <= 0) return {};
     
     sf::Color waveformColorWithAlpha = resources->activeTheme->wave_form_color;
     waveformColorWithAlpha.a = 180;
 
-    const float invNumSamples = 1.0f / numSamples;
     const float lineHeightScale = clipSize.y * waveformScale;
     const float baseLineY = clipPosition.y + clipSize.y * 0.5f + verticalOffset;
+    const float lineSpacing = clipSize.x / static_cast<float>(numLines);
 
     auto vertexArray = std::make_shared<sf::VertexArray>(sf::PrimitiveType::Lines);
-    vertexArray->resize(numSamples * 2);
+    vertexArray->resize(numLines * 2);
 
     size_t vertexIndex = 0;
-    for (int i = 0; i < numSamples; ++i) {
-        const float t = i * invNumSamples * (numPeaks - 1);
-        const int idx = static_cast<int>(t);
-        const float frac = t - idx;
+    for (int i = 0; i < numLines; ++i) {
+        const double timeInClip = (static_cast<double>(i) / static_cast<double>(numLines)) * clip.duration;
+        const double timeInSource = clip.offset + timeInClip;
+        const double peakIndexFloat = (timeInSource / sourceFileDuration) * (numPeaks - 1);
+        const int peakIndex = static_cast<int>(peakIndexFloat);
+        const float frac = static_cast<float>(peakIndexFloat - peakIndex);
         
-        float peakValue = peaks[idx];
-        if (idx + 1 < numPeaks) {
-            peakValue = std::fma(peaks[idx + 1] - peaks[idx], frac, peaks[idx]);
+        if (peakIndex >= numPeaks) break;
+        
+        float peakValue = peaks[peakIndex];
+        if (peakIndex + 1 < numPeaks) {
+            peakValue = std::fma(peaks[peakIndex + 1] - peaks[peakIndex], frac, peaks[peakIndex]);
         }
         
         if (peakValue > peakThreshold) {
             const float lineHeight = peakValue * lineHeightScale;
-            const float lineX = std::fma(i * invNumSamples, clipSize.x, clipPosition.x);
+            const float lineX = clipPosition.x + i * lineSpacing;
             const float lineYTop = baseLineY - lineHeight * 0.5f;
             const float lineYBottom = baseLineY + lineHeight * 0.5f;
             
@@ -1713,6 +3061,7 @@ void TimelineComponent::handleClipSelection() {
 }
 
 void TimelineComponent::handleAllUserInput() {
+    if (app->ui->isInputBlocked()) return;
     if (!features.enableKeyboardInput && !features.enableMouseInput) return;
     
     if (features.enableKeyboardInput) {
@@ -1721,6 +3070,7 @@ void TimelineComponent::handleAllUserInput() {
     
     if (features.enableMouseInput) {
         handleMouseInput();
+        updateMouseCursor(); // Update cursor based on mouse position
     }
 }
 
@@ -1778,27 +3128,6 @@ void TimelineComponent::handleKeyboardInput() {
         }
     }
 
-    // Handle zoom controls
-    constexpr float zoomSpeed = 0.2f;
-    constexpr float maxZoom = 5.0f;
-    constexpr float minZoom = 0.1f;
-    
-    float newZoom = app->uiState.timelineZoomLevel;
-
-    if (ctrl && plus && !prevPlus) {
-        newZoom = std::min(maxZoom, app->uiState.timelineZoomLevel + zoomSpeed);
-    }
-    if (ctrl && minus && !prevMinus) {
-        newZoom = std::max(minZoom, app->uiState.timelineZoomLevel - zoomSpeed);
-    }
-
-    // Removed scroll-based zoom - using only +/- keys for zoom
-    // This allows UILO to handle all scroll events for scrolling
-    
-    if (newZoom != app->uiState.timelineZoomLevel) {
-        handleZoomChange(newZoom);
-    }
-
     prevCtrl = ctrl;
     prevPlus = plus;
     prevMinus = minus;
@@ -1817,20 +3146,36 @@ void TimelineComponent::handleMouseInput() {
     const bool ctrlPressed = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) || sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RControl);
     
     // Handle scroll-based zoom (only when Ctrl is held)
-    // This allows UILO to handle shift+scroll and regular scroll for scrolling
     if (ctrlPressed) {
         const float verticalDelta = app->ui->getVerticalScrollDelta();
         if (verticalDelta != 0.f) {
-            constexpr float zoomSpeed = 0.2f;
             constexpr float maxZoom = 5.0f;
             constexpr float minZoom = 0.1f;
             
-            float newZoom = app->uiState.timelineZoomLevel + (verticalDelta > 0 ? zoomSpeed : -zoomSpeed);
+            float currentZoom = app->uiState.timelineZoomLevel;
+            float normalizedZoom = (currentZoom - minZoom) / (maxZoom - minZoom);
+            
+            float baseSpeed = 0.08f;
+            float speedMultiplier = 1.0f;
+            
+            if (normalizedZoom < 0.25f) {
+                float nearMinFactor = normalizedZoom / 0.25f;
+                speedMultiplier = 0.2f + (nearMinFactor * 0.8f);
+            }
+            else if (normalizedZoom > 0.88f) {
+                float nearMaxFactor = (normalizedZoom - 0.88f) / 0.12f;
+                speedMultiplier = 1.0f - (nearMaxFactor * 0.5f);
+            }
+            
+            float adaptiveZoomSpeed = baseSpeed * speedMultiplier;
+            adaptiveZoomSpeed = std::max(0.015f, adaptiveZoomSpeed);
+            
+            float newZoom = currentZoom + (verticalDelta > 0 ? adaptiveZoomSpeed : -adaptiveZoomSpeed);
             newZoom = std::clamp(newZoom, minZoom, maxZoom);
             
             if (newZoom != app->uiState.timelineZoomLevel) {
                 handleZoomChange(newZoom);
-                app->ui->resetScrollDeltas(); // Consume the scroll event so UILO doesn't process it
+                app->ui->resetScrollDeltas();
             }
         }
     }
@@ -1883,7 +3228,7 @@ void TimelineComponent::syncUIToEngine() {
 
 void TimelineComponent::handleMasterTrackControls() {
     // Handle master mute button
-    if (uiElements.muteMasterButton && uiElements.muteMasterButton->isClicked() && app->getWindow().hasFocus()) {
+    if (uiElements.muteMasterButton && uiElements.muteMasterButton->isClicked() && app->getWindow().hasFocus() && !automationDragState.isDragging) {
         auto* masterTrack = app->getMasterTrack();
         masterTrack->toggleMute();
         uiElements.muteMasterButton->m_modifier.setColor(
@@ -1892,13 +3237,17 @@ void TimelineComponent::handleMasterTrackControls() {
         uiElements.muteMasterButton->setClicked(false);
     }
     
-    // Handle master volume slider
-    if (this->isVisible() && uiElements.masterVolumeSlider) {
-        const float newMasterVolDb = floatToDecibels(uiElements.masterVolumeSlider->getValue());
+    if (this->isVisible() && uiElements.masterVolumeSlider && !automationDragState.isDragging) {
+        const float sliderValue = uiElements.masterVolumeSlider->getValue();
+        const float newMasterVolDb = floatToDecibels(sliderValue);
         auto* masterTrack = app->getMasterTrack();
         constexpr float volumeTolerance = 0.001f;
         
-        if (std::abs(masterTrack->getVolume() - newMasterVolDb) > volumeTolerance) {
+        float currentAutomationValue = masterTrack->getCurrentParameterValue("Track", "Volume");
+        float expectedSliderValue = automationToVolumeSlider(currentAutomationValue);
+        
+        if (std::abs(sliderValue - expectedSliderValue) > 0.01f && 
+            std::abs(masterTrack->getVolume() - newMasterVolDb) > volumeTolerance) {
             masterTrack->setVolume(newMasterVolDb);
         }
     }
@@ -1939,6 +3288,7 @@ void TimelineComponent::handleTrackControls() {
         uiElements.trackVolumeSliders.clear();
         uiElements.trackSoloButtons.clear();
         uiElements.trackRemoveButtons.clear();
+        uiElements.automationClearButtons.clear();
     }
     
     // Handle individual track controls
@@ -1968,7 +3318,7 @@ void TimelineComponent::handleIndividualTrackControls(Track* track, const std::s
     
     // Handle mute button
     if (auto muteBtnIt = uiElements.trackMuteButtons.find(name); 
-        muteBtnIt != uiElements.trackMuteButtons.end() && muteBtnIt->second && muteBtnIt->second->isClicked() && app->getWindow().hasFocus()) {
+        muteBtnIt != uiElements.trackMuteButtons.end() && muteBtnIt->second && muteBtnIt->second->isClicked() && app->getWindow().hasFocus() && !automationDragState.isDragging) {
         track->toggleMute();
         muteBtnIt->second->m_modifier.setColor(
             track->isMuted() ? app->resources.activeTheme->mute_color : app->resources.activeTheme->not_muted_color
@@ -1978,7 +3328,7 @@ void TimelineComponent::handleIndividualTrackControls(Track* track, const std::s
     
     // Handle solo button
     if (auto soloBtnIt = uiElements.trackSoloButtons.find(name); 
-        soloBtnIt != uiElements.trackSoloButtons.end() && soloBtnIt->second && soloBtnIt->second->isClicked() && app->getWindow().hasFocus()) {
+        soloBtnIt != uiElements.trackSoloButtons.end() && soloBtnIt->second && soloBtnIt->second->isClicked() && app->getWindow().hasFocus() && !automationDragState.isDragging) {
         track->setSolo(!track->isSolo());
         soloBtnIt->second->m_modifier.setColor(
             track->isSolo() ? app->resources.activeTheme->mute_color : app->resources.activeTheme->not_muted_color
@@ -1986,13 +3336,18 @@ void TimelineComponent::handleIndividualTrackControls(Track* track, const std::s
         soloBtnIt->second->setClicked(false);
     }
     
-    // Handle volume slider
-    if (this->isVisible()) {
+    if (this->isVisible() && !automationDragState.isDragging) {
         if (auto sliderIt = uiElements.trackVolumeSliders.find(name); 
             sliderIt != uiElements.trackVolumeSliders.end() && sliderIt->second) {
-            const float sliderDb = floatToDecibels(sliderIt->second->getValue());
+            const float sliderValue = sliderIt->second->getValue();
+            const float sliderDb = floatToDecibels(sliderValue);
             constexpr float volumeTolerance = 0.001f;
-            if (std::abs(track->getVolume() - sliderDb) > volumeTolerance) {
+            
+            float currentAutomationValue = track->getCurrentParameterValue("Track", "Volume");
+            float expectedSliderValue = automationToVolumeSlider(currentAutomationValue);
+            
+            if (std::abs(sliderValue - expectedSliderValue) > 0.01f && 
+                std::abs(track->getVolume() - sliderDb) > volumeTolerance) {
                 track->setVolume(sliderDb);
             }
         }
@@ -2040,10 +3395,18 @@ void TimelineComponent::processDragOperations() {
     if (features.enableClipDeletion) {
         handleDeletionDragOperations();
     }
+    handleAutomationDragOperations();
 }
 
 void TimelineComponent::handleClipDragOperations() {
     if (!features.enableClipDragging) return;
+    
+    if (automationDragState.isInteracting && !automationDragState.isDragging && 
+        automationDragState.interactionClock.getElapsedTime().asMilliseconds() > 500) {
+        automationDragState.isInteracting = false;
+    }
+    
+    if (automationDragState.isInteracting) return;
     
     bool isRightPressed = sf::Mouse::isButtonPressed(sf::Mouse::Button::Right);
     bool isLeftPressed = sf::Mouse::isButtonPressed(sf::Mouse::Button::Left);
@@ -2067,6 +3430,8 @@ void TimelineComponent::handleClipDragOperations() {
 
 void TimelineComponent::handlePlacementDragOperations() {
     if (!features.enableClipPlacement) return;
+    
+    if (automationDragState.isInteracting) return;
     
     bool isLeftPressed = sf::Mouse::isButtonPressed(sf::Mouse::Button::Left);
     bool ctrlPressed = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) || sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RControl);
@@ -2102,6 +3467,8 @@ void TimelineComponent::handlePlacementDragOperations() {
 void TimelineComponent::handleDeletionDragOperations() {
     if (!features.enableClipDeletion) return;
     
+    if (automationDragState.isInteracting) return;
+    
     bool isRightPressed = sf::Mouse::isButtonPressed(sf::Mouse::Button::Right);
     bool ctrlPressed = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) || sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RControl);
     
@@ -2133,10 +3500,323 @@ void TimelineComponent::handleDeletionDragOperations() {
     }
 }
 
+void TimelineComponent::handleAutomationDragOperations() {
+    if (!automationDragState.isDragging) return;
+    
+    if (!app->ui->isMouseDragging()) {
+        automationDragState.isDragging = false;
+        automationDragState.isInteracting = false;
+        automationDragState.originalTime = -1.0f;
+        automationDragState.originalValue = -1.0f;
+        return;
+    }
+    
+    sf::Vector2f currentMousePos = app->ui->getMousePosition();
+    auto* automationRow = containers[automationDragState.laneId + "_scrollable_row"];
+    
+    if (automationRow) {
+        sf::Vector2f localMousePos = currentMousePos - automationRow->getPosition();
+        sf::Vector2f rowSize = automationRow->getSize();
+        
+        if (automationDragState.isCurveEditing) {
+            float deltaY = currentMousePos.y - automationDragState.startMousePos.y;
+            bool isAscending = automationDragState.endValue > automationDragState.startValue;
+            float curveMultiplier = isAscending ? -1.0f : 1.0f;
+            float newCurve = automationDragState.startCurve + (deltaY / 200.0f) * curveMultiplier;
+            newCurve = std::max(0.0f, std::min(1.0f, newCurve));
+            
+            Track* track = app->getTrack(automationDragState.trackName);
+            if (track) {
+                track->updateAutomationPointCurvePrecise(
+                    automationDragState.effectName,
+                    automationDragState.parameterName,
+                    automationDragState.originalTime,
+                    automationDragState.originalValue,
+                    newCurve
+                );
+            }
+        } else {
+            float newTime = xPosToSeconds(app->getBpm(), 100.f * app->uiState.timelineZoomLevel, localMousePos.x - timelineState.timelineOffset, timelineState.timelineOffset);
+            float newValue = 1.0f - (localMousePos.y / rowSize.y);
+            newValue = std::max(0.0f, std::min(1.0f, newValue));
+            
+            bool ctrlHeld = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) || sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RControl);
+            if (ctrlHeld) {
+                newValue = std::round(newValue / 0.05f) * 0.05f;
+                newValue = std::max(0.0f, std::min(1.0f, newValue));
+            }
+            
+            bool shiftHeld = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LShift) || sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RShift);
+            if (!shiftHeld) {
+                auto [timeSigNum, timeSigDen] = app->getTimeSignature();
+                auto measureLines = generateTimelineMeasures(100.f * app->uiState.timelineZoomLevel, timelineState.timelineOffset, rowSize, timeSigNum, timeSigDen, &app->resources);
+                sf::Vector2f snapPos(localMousePos.x, localMousePos.y);
+                float snapX = getNearestMeasureX(snapPos, measureLines);
+                newTime = xPosToSeconds(app->getBpm(), 100.f * app->uiState.timelineZoomLevel, snapX - timelineState.timelineOffset, timelineState.timelineOffset);
+            }
+            
+            if (newTime >= 0.0f) {
+                Track* track = app->getTrack(automationDragState.trackName);
+                if (track) {
+                    const auto* points = track->getAutomationPoints(automationDragState.effectName, automationDragState.parameterName);
+                    if (points) {
+                        float minTime = 0.0f;
+                        float maxTime = std::numeric_limits<float>::max();
+                        
+                        for (const auto& point : *points) {
+                            if (point.time < automationDragState.originalTime && point.time > minTime) {
+                                minTime = point.time;
+                            }
+                            if (point.time > automationDragState.originalTime && point.time < maxTime) {
+                                maxTime = point.time;
+                            }
+                        }
+                        
+                        constexpr float minGap = 0.00001f;
+                        
+                        bool wouldCreateDuplicate = false;
+                        for (const auto& point : *points) {
+                            if (std::abs(point.time - automationDragState.originalTime) < 0.0001f && 
+                                std::abs(point.value - automationDragState.originalValue) < 0.001f) {
+                                continue;
+                            }
+                            
+                            if (std::abs(point.time - newTime) < minGap &&
+                                std::abs(point.value - newValue) < 0.001f) {
+                                wouldCreateDuplicate = true;
+                                break;
+                            }
+                        }
+                        
+                        if (!wouldCreateDuplicate) {
+                            newTime = std::max(minTime + minGap, std::min(newTime, maxTime - minGap));
+                        } else {
+                            newTime = std::max(minTime + 0.001f, std::min(newTime, maxTime - 0.001f));
+                        }
+                    }
+                    
+                    bool moveSuccess = track->moveAutomationPointPrecise(
+                        automationDragState.effectName, 
+                        automationDragState.parameterName, 
+                        automationDragState.originalTime, 
+                        automationDragState.originalValue,
+                        newTime, 
+                        newValue
+                    );
+                    
+                    if (moveSuccess) {
+                        automationDragState.originalTime = newTime;
+                        automationDragState.originalValue = newValue;
+                        automationDragState.startTime = newTime;
+                    } else {
+                        automationDragState.isDragging = false;
+                    }
+                }
+            }
+        }
+    }
+}
+
 void TimelineComponent::updateDragState() {
     if (!features.enableClipDragging) return;
     
     sf::Vector2f currentMousePos = app->ui->getMousePosition();
+    
+    if (isResizing && (clipEndDrag || clipStartDrag) && selectedClip && sf::Mouse::isButtonPressed(sf::Mouse::Button::Left)) {
+        sf::Vector2f trackRowPos;
+        bool foundTrackRow = false;
+        
+        for (const auto& track : app->getAllTracks()) {
+            const std::string rowKey = track->getName() + "_scrollable_row";
+            if (auto rowIt = containers.find(rowKey); rowIt != containers.end() && rowIt->second) {
+                // Check if this track contains our selected clip
+                const auto& clips = track->getClips();
+                for (const auto& clip : clips) {
+                    if (&clip == selectedClip) {
+                        trackRowPos = rowIt->second->getPosition();
+                        foundTrackRow = true;
+                        break;
+                    }
+                }
+                if (foundTrackRow) break;
+            }
+        }
+        
+        if (foundTrackRow) {
+            sf::Vector2f localMousePos = currentMousePos - trackRowPos;
+            const float beatWidth = 100.f * app->uiState.timelineZoomLevel;
+            const float pixelsPerSecond = (beatWidth * app->getBpm()) / 60.0f;
+            float mouseTimeInTrack = (localMousePos.x - timelineState.timelineOffset) / pixelsPerSecond;
+            
+            if (clipEndDrag) {
+                // Resize from end - only change duration, keep start time fixed
+                // Calculate delta from where drag started
+                double mouseDelta = mouseTimeInTrack - resizeDragStartMouseTime;
+                double snappedDelta = snapToGrid(mouseDelta) - mouseDelta; // Get snap adjustment
+                double totalDelta = mouseDelta + snappedDelta;
+                
+                double newDuration = originalClipDuration + totalDelta;
+                
+                // Get source file duration for bounds checking
+                double sourceFileDuration = getSourceFileDuration(*selectedClip);
+                double maxAllowedDuration = sourceFileDuration - selectedClip->offset;
+                
+                newDuration = std::max(0.1, std::min(newDuration, maxAllowedDuration));
+                
+                if (std::abs(newDuration - selectedClip->duration) > 0.001) {
+                    selectedClip->duration = newDuration;
+                    selectedClipEnd = selectedClip->startTime + selectedClip->duration;
+                    invalidateClipWaveform(*selectedClip);
+                    
+                    timelineState.virtualCursorTime = selectedClip->startTime + selectedClip->duration;
+                    timelineState.showVirtualCursor = true;
+                    timelineState.virtualCursorVisible = true;
+                }
+            } else if (clipStartDrag) {
+                // Resize from start - keep end time fixed, change start time, duration, and offset
+                // Calculate delta from where drag started
+                double mouseDelta = mouseTimeInTrack - resizeDragStartMouseTime;
+                double snappedDelta = snapToGrid(mouseDelta) - mouseDelta; // Get snap adjustment
+                double totalDelta = mouseDelta + snappedDelta;
+                
+                double fixedEndTime = originalClipStartTime + originalClipDuration; // Use original values
+                double newStartTime = originalClipStartTime + totalDelta;
+                
+                // Allow slight negative values for smoother interaction at timeline start
+                newStartTime = std::max(-0.1, newStartTime);
+                
+                // Clamp to zero if very close to prevent actual negative start times
+                if (newStartTime < 0.05 && newStartTime > -0.05) {
+                    newStartTime = 0.0;
+                }
+                
+                double newDuration = fixedEndTime - newStartTime;
+                
+                // Calculate how much we're shifting the start time from original
+                double startTimeShift = newStartTime - originalClipStartTime;
+                double newOffset = originalClipOffset + startTimeShift; // Offset moves with start time
+                
+                // Get source file duration for bounds checking
+                double sourceFileDuration = getSourceFileDuration(*selectedClip);
+                
+                // Validate bounds: offset must be >= 0 and offset + duration <= sourceFileDuration
+                if (newOffset < 0.0) {
+                    // If offset would be negative, limit start time so offset = 0
+                    // When offset = 0: newOffset = originalClipOffset + startTimeShift = 0
+                    // So: startTimeShift = -originalClipOffset
+                    // And: newStartTime = originalClipStartTime + startTimeShift
+                    newOffset = 0.0;
+                    double maxLeftShift = -originalClipOffset;
+                    newStartTime = originalClipStartTime + maxLeftShift;
+                    newStartTime = std::max(0.0, newStartTime); // Can't go negative on timeline
+                    newDuration = fixedEndTime - newStartTime;
+                }
+                
+                if (newOffset + newDuration > sourceFileDuration) {
+                    newDuration = sourceFileDuration - newOffset;
+                    newStartTime = fixedEndTime - newDuration;
+                }
+                
+                if (newDuration > 0.1 && newStartTime >= 0.0 && newOffset >= 0.0) {
+                    newStartTime = std::max(0.0, newStartTime);
+                    newDuration = fixedEndTime - newStartTime;
+                    if (newDuration > 0.1) {
+                        selectedClip->startTime = newStartTime;
+                        selectedClip->duration = newDuration;
+                        selectedClip->offset = newOffset;
+                        selectedClipEnd = selectedClip->startTime + selectedClip->duration;
+                        invalidateClipWaveform(*selectedClip);
+                    
+                        timelineState.virtualCursorTime = selectedClip->startTime;
+                        timelineState.showVirtualCursor = true;
+                        timelineState.virtualCursorVisible = true;
+                    }
+                }
+            }
+        }
+        return;
+    }
+    
+    // Handle MIDI clip resizing
+    if (isMIDIResizing && (midiClipEndDrag || midiClipStartDrag) && selectedMIDIClipInfo.hasSelection && sf::Mouse::isButtonPressed(sf::Mouse::Button::Left)) {
+        auto* selectedMIDIClip = getSelectedMIDIClip();
+        if (selectedMIDIClip) {
+            sf::Vector2f trackRowPos;
+            bool foundTrackRow = false;
+            
+            for (const auto& track : app->getAllTracks()) {
+                const std::string rowKey = track->getName() + "_scrollable_row";
+                if (auto rowIt = containers.find(rowKey); rowIt != containers.end() && rowIt->second) {
+                    if (track->getName() == selectedMIDIClipInfo.trackName) {
+                        trackRowPos = rowIt->second->getPosition();
+                        foundTrackRow = true;
+                        break;
+                    }
+                }
+            }
+            
+            if (foundTrackRow) {
+                sf::Vector2f currentMousePos = app->ui->getMousePosition();
+                sf::Vector2f localMousePos = currentMousePos - trackRowPos;
+                const float beatWidth = 100.f * app->uiState.timelineZoomLevel;
+                const float pixelsPerSecond = (beatWidth * app->getBpm()) / 60.0f;
+                float mouseTimeInTrack = (localMousePos.x - timelineState.timelineOffset) / pixelsPerSecond;
+                
+                if (midiClipEndDrag) {
+                    double mouseDelta = mouseTimeInTrack - resizeDragStartMouseTime;
+                    double snappedDelta = snapToGrid(mouseDelta) - mouseDelta;
+                    double totalDelta = mouseDelta + snappedDelta;
+                    
+                    double newDuration = originalMIDIClipDuration + totalDelta;
+                    newDuration = std::max(0.1, newDuration); // Minimum duration
+                    
+                    if (std::abs(newDuration - selectedMIDIClip->duration) > 0.001) {
+                        selectedMIDIClip->duration = newDuration;
+                        selectedMIDIClipInfo.duration = newDuration;
+                        
+                        timelineState.virtualCursorTime = selectedMIDIClip->startTime + selectedMIDIClip->duration;
+                        timelineState.showVirtualCursor = true;
+                        timelineState.virtualCursorVisible = true;
+                    }
+                } else if (midiClipStartDrag) {
+                    double mouseDelta = mouseTimeInTrack - resizeDragStartMouseTime;
+                    double snappedDelta = snapToGrid(mouseDelta) - mouseDelta;
+                    double totalDelta = mouseDelta + snappedDelta;
+                    
+                    double fixedEndTime = originalMIDIClipStartTime + originalMIDIClipDuration;
+                    double newStartTime = originalMIDIClipStartTime + totalDelta;
+                    newStartTime = std::max(0.0, newStartTime); // Can't go negative
+                    
+                    double newDuration = fixedEndTime - newStartTime;
+                    
+                    if (newDuration > 0.1 && newStartTime >= 0.0) {
+                        selectedMIDIClip->startTime = newStartTime;
+                        selectedMIDIClip->duration = newDuration;
+                        selectedMIDIClipInfo.startTime = newStartTime;
+                        selectedMIDIClipInfo.duration = newDuration;
+                        
+                        timelineState.virtualCursorTime = selectedMIDIClip->startTime;
+                        timelineState.showVirtualCursor = true;
+                        timelineState.virtualCursorVisible = true;
+                    }
+                }
+            }
+        }
+        return;
+    }
+    
+    if (!sf::Mouse::isButtonPressed(sf::Mouse::Button::Left)) {
+        clipEndDrag = false;
+        clipStartDrag = false;
+        isResizing = false;
+        midiClipEndDrag = false;
+        midiClipStartDrag = false;
+        isMIDIResizing = false;
+    }
+    
+    if (isResizing || isMIDIResizing) {
+        return;
+    }
     
     // Update drag positions if currently dragging
     if (dragState.isDraggingClip || dragState.isDraggingAudioClip || dragState.isDraggingMIDIClip) {
@@ -2177,17 +3857,14 @@ void TimelineComponent::updateScrolling() {
     // Let UILO handle scrolling - read from scrollableRows instead of forcing offsets
     const auto& allTracks = app->getAllTracks();
     if (!allTracks.empty()) {
-        // Use first track as the master offset source
         const std::string rowKey = allTracks[0]->getName() + "_scrollable_row";
         if (auto rowIt = containers.find(rowKey); rowIt != containers.end() && rowIt->second) {
             auto* firstScrollableRow = static_cast<ScrollableRow*>(rowIt->second);
             float newMasterOffset = firstScrollableRow->getOffset();
             
-            // Only update if there's been a significant change
             if (std::abs(newMasterOffset - timelineState.timelineOffset) > 0.1f) {
                 timelineState.timelineOffset = newMasterOffset;
                 
-                // Synchronize all other rows to match the first row
                 for (size_t i = 1; i < allTracks.size(); ++i) {
                     const std::string otherRowKey = allTracks[i]->getName() + "_scrollable_row";
                     if (auto otherRowIt = containers.find(otherRowKey); otherRowIt != containers.end() && otherRowIt->second) {
@@ -2226,7 +3903,7 @@ void TimelineComponent::updatePlayheadFollowing() {
         if (currentPlayheadScreenPos > visibleWidth - followMargin) {
             timelineState.timelineOffset = visibleWidth - followMargin - playheadXPos;
             updateScrolling(); // Apply the new offset
-            DEBUG_PRINT("Auto-following playhead - New offset: " << timelineState.timelineOffset);
+            // Auto-following playhead
         }
     }
 }
@@ -2259,6 +3936,11 @@ void TimelineComponent::renderTrackContent() {
 void TimelineComponent::updateVirtualCursor() {
     if (!features.enableVirtualCursor) {
         timelineState.showVirtualCursor = false;
+        return;
+    }
+    
+    // Don't update virtual cursor during resize - it should stay locked to clip edge
+    if (isResizing) {
         return;
     }
     
@@ -2309,15 +3991,11 @@ void TimelineComponent::updateVirtualCursor() {
     wasLeftPressed = isLeftPressed;
 }
 
-// ==============================================
-// STATE MANAGEMENT SUBSYSTEM IMPLEMENTATION (ADDITIONAL)
-// ==============================================
-
 void TimelineComponent::resetDragState() {
     dragState.isDraggingClip = false;
     dragState.isDraggingAudioClip = false;
     dragState.isDraggingMIDIClip = false;
-    dragState.clipSelectedForDrag = false; // Clear the ready-to-drag state
+    dragState.clipSelectedForDrag = false;
     dragState.draggedAudioClip = nullptr;
     dragState.draggedMIDIClip = nullptr;
     dragState.dragStartMousePos = sf::Vector2f(0, 0);
@@ -2348,7 +4026,6 @@ void TimelineComponent::copySelectedClips() {
     if (selectedClip) {
         clipboardState.copiedAudioClips.push_back(*selectedClip);
         clipboardState.hasClipboard = true;
-        DEBUG_PRINT("Copied AudioClip at time " + std::to_string(selectedClip->startTime));
     }
     
     // Copy selected MIDIClip
@@ -2356,17 +4033,16 @@ void TimelineComponent::copySelectedClips() {
     if (selectedMIDIClip) {
         clipboardState.copiedMIDIClips.push_back(*selectedMIDIClip);
         clipboardState.hasClipboard = true;
-        DEBUG_PRINT("Copied MIDIClip at time " + std::to_string(selectedMIDIClip->startTime));
     }
     
     if (!clipboardState.hasClipboard) {
-        DEBUG_PRINT("No clips selected to copy");
+        // No clips selected to copy
     }
 }
 
 void TimelineComponent::pasteClips() {
     if (!clipboardState.hasClipboard) {
-        DEBUG_PRINT("No clips in clipboard to paste");
+        // No clips in clipboard to paste
         return;
     }
     
@@ -2374,7 +4050,7 @@ void TimelineComponent::pasteClips() {
     std::string currentTrack = app->getSelectedTrack();
     
     if (currentTrack.empty()) {
-        DEBUG_PRINT("No track selected for pasting");
+        // No track selected for pasting
         return;
     }
     
@@ -2438,8 +4114,326 @@ void TimelineComponent::clearClipboard() {
     clipboardState.hasClipboard = false;
 }
 
+void TimelineComponent::updateAutomationLaneLabels() {
+    // Update automation lane labels and values
+    const auto& allTracks = app->getAllTracks();
+    for (const auto& trackPtr : allTracks) {
+        auto* track = trackPtr.get();
+        
+        // Update potential automation lane label
+        if (track->hasPotentialAutomation()) {
+            auto potentialAuto = track->getPotentialAutomation();
+            std::string effectName = potentialAuto.first;
+            std::string parameterName = potentialAuto.second;            
+            std::string key = track->getName() + "_potential"; // Key for potential automation lane
+            
+            // Update label if it exists
+            auto labelIt = uiElements.automationLaneLabels.find(key);
+            if (labelIt != uiElements.automationLaneLabels.end()) {
+                std::string labelText = "[+] " + effectName + " - " + parameterName;
+                labelIt->second->setString(labelText);
+                
+                auto [currentEffectName, currentParameterName, currentValue] = getCurrentAutomationParameter(track);
+                std::string valueText = std::to_string(static_cast<int>(currentValue * 100)) + "%";
+                
+                // Find the value text element (assuming it's the second text in the row)
+                auto rowIt = uiElements.automationLaneRows.find(key);
+                if (rowIt != uiElements.automationLaneRows.end()) {
+                    // Update the automation line position based on the current value
+                }
+            }
+        }
+        
+        // Update regular automation lane labels (remove [+] prefix)
+        const auto& automatedParams = track->getAutomatedParameters();
+        for (const auto& [effectName, parameterName] : automatedParams) {
+            std::string key = track->getName() + "_" + effectName + "_" + parameterName; // Key for regular automation lane
+            
+            auto labelIt = uiElements.automationLaneLabels.find(key);
+            if (labelIt != uiElements.automationLaneLabels.end()) {
+                std::string labelText = effectName + " - " + parameterName; // No [+] prefix for regular automation
+                labelIt->second->setString(labelText);
+            }
+        }
+    }
+}
+
+// Cursor management implementation
+void TimelineComponent::initializeCursors() {
+    try {
+        resizeCursorH = std::make_unique<sf::Cursor>(sf::Cursor::Type::SizeHorizontal);
+        textCursor = std::make_unique<sf::Cursor>(sf::Cursor::Type::Text);
+        handCursor = std::make_unique<sf::Cursor>(sf::Cursor::Type::Hand);
+        cursorsEnabled = true;
+    } catch (const std::exception& e) {
+        DEBUG_PRINT("[CURSOR] Failed to initialize cursors, disabling cursor management: " << e.what());
+        cursorsEnabled = false;
+    }
+}
+
+void TimelineComponent::setCursor(sf::Cursor::Type cursorType) {
+    if (!cursorsEnabled || currentCursorType == cursorType) return;
+    
+    try {
+        sf::Cursor* cursor = nullptr;
+        switch (cursorType) {
+            case sf::Cursor::Type::SizeHorizontal:
+                cursor = resizeCursorH.get();
+                break;
+            case sf::Cursor::Type::Text:
+                cursor = textCursor.get();
+                break;
+            case sf::Cursor::Type::Hand:
+                cursor = handCursor.get();
+                break;
+            default:
+                // Use system default arrow cursor - create it safely
+                try {
+                    sf::Cursor defaultCursor(sf::Cursor::Type::Arrow);
+                    const_cast<sf::RenderWindow&>(app->getWindow()).setMouseCursor(defaultCursor);
+                    currentCursorType = cursorType;
+                } catch (const std::exception& e) {
+                    DEBUG_PRINT("[CURSOR] Failed to set default cursor: " << e.what());
+                }
+                return;
+        }
+        
+        if (cursor) {
+            const_cast<sf::RenderWindow&>(app->getWindow()).setMouseCursor(*cursor);
+            currentCursorType = cursorType;
+        }
+    } catch (const std::exception& e) {
+        DEBUG_PRINT("[CURSOR] Failed to set cursor: " << e.what());
+        // Fallback: don't change cursor if it fails
+    }
+}
+
+void TimelineComponent::updateMouseCursor() {
+    if (!cursorsEnabled) return; // Skip if cursors are disabled
+    
+    sf::Vector2f mousePos = app->ui->getMousePosition();
+    sf::Cursor::Type newCursorType = sf::Cursor::Type::Arrow;
+    
+    // Check if mouse is over any clip resize zones
+    for (const auto& track : app->getAllTracks()) {
+        const std::string rowKey = track->getName() + "_scrollable_row";
+        if (auto rowIt = containers.find(rowKey); rowIt != containers.end() && rowIt->second) {
+            sf::Vector2f trackRowPos = rowIt->second->getPosition();
+            sf::Vector2f localMousePos = mousePos - trackRowPos;
+            
+            const auto& clips = track->getClips();
+            for (const auto& clip : clips) {
+                const float beatWidth = 100.f * app->uiState.timelineZoomLevel;
+                const float pixelsPerSecond = (beatWidth * app->getBpm()) / 60.0f;
+                const float clipWidthPixels = clip.duration * pixelsPerSecond;
+                const float clipXPosition = (clip.startTime * pixelsPerSecond) + timelineState.timelineOffset;
+                const sf::FloatRect clipRect({clipXPosition, 0.f}, {clipWidthPixels, rowIt->second->getSize().y});
+                
+                if (clipRect.contains(localMousePos)) {
+                    float mouseTimeInTrack = (localMousePos.x - timelineState.timelineOffset) / pixelsPerSecond;
+                    ResizeZone zone = getResizeZone(clip, mouseTimeInTrack, pixelsPerSecond);
+                    
+                    if (zone != ResizeZone::None) {
+                        newCursorType = sf::Cursor::Type::SizeHorizontal;
+                        goto cursor_found;
+                    }
+                }
+            }
+            
+            // Check MIDI clips for resize zones
+            if (track->getType() == Track::TrackType::MIDI) {
+                MIDITrack* midiTrack = static_cast<MIDITrack*>(track.get());
+                const auto& midiClips = midiTrack->getMIDIClips();
+                for (const auto& midiClip : midiClips) {
+                    const float beatWidth = 100.f * app->uiState.timelineZoomLevel;
+                    const float pixelsPerSecond = (beatWidth * app->getBpm()) / 60.0f;
+                    const float clipWidthPixels = midiClip.duration * pixelsPerSecond;
+                    const float clipXPosition = (midiClip.startTime * pixelsPerSecond) + timelineState.timelineOffset;
+                    const sf::FloatRect clipRect({clipXPosition, 0.f}, {clipWidthPixels, rowIt->second->getSize().y});
+                    
+                    if (clipRect.contains(localMousePos)) {
+                        float mouseTimeInTrack = (localMousePos.x - timelineState.timelineOffset) / pixelsPerSecond;
+                        ResizeZone zone = getResizeZone(midiClip, mouseTimeInTrack, pixelsPerSecond);
+                        
+                        if (zone != ResizeZone::None) {
+                            newCursorType = sf::Cursor::Type::SizeHorizontal;
+                            goto cursor_found;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    cursor_found:
+    setCursor(newCursorType);
+}
+
+bool TimelineComponent::isMouseOverResizeZone(const AudioClip& clip, float mouseTimeInTrack) const {
+    const float beatWidth = 100.f * app->uiState.timelineZoomLevel;
+    const float pixelsPerSecond = (beatWidth * app->getBpm()) / 60.0f;
+    return getResizeZone(clip, mouseTimeInTrack, pixelsPerSecond) != ResizeZone::None;
+}
+
+TimelineComponent::ResizeZone TimelineComponent::getResizeZone(const AudioClip& clip, float mouseTimeInTrack, float pixelsPerSecond) const {
+    const float resizeThresholdPixels = 10.0f; // 10 pixels
+    const double resizeThresholdTime = resizeThresholdPixels / pixelsPerSecond;
+    
+    const double clipStart = clip.startTime;
+    const double clipEnd = clip.startTime + clip.duration;
+    
+    bool isNearStart = std::abs(mouseTimeInTrack - clipStart) <= resizeThresholdTime;
+    bool isNearEnd = std::abs(mouseTimeInTrack - clipEnd) <= resizeThresholdTime;
+    
+    // Special handling for very small clips (less than 20 pixels wide)
+    const double clipWidthPixels = clip.duration * pixelsPerSecond;
+    if (clipWidthPixels < 20.0f) {
+        // For small clips, expand the threshold and prefer the edge closest to mouse
+        const double smallClipThresholdTime = std::max(resizeThresholdTime, clip.duration * 0.4);
+        isNearStart = std::abs(mouseTimeInTrack - clipStart) <= smallClipThresholdTime;
+        isNearEnd = std::abs(mouseTimeInTrack - clipEnd) <= smallClipThresholdTime;
+    }
+    
+    // If both are detected, choose the closest edge
+    if (isNearStart && isNearEnd) {
+        double distToStart = std::abs(mouseTimeInTrack - clipStart);
+        double distToEnd = std::abs(mouseTimeInTrack - clipEnd);
+        return (distToStart <= distToEnd) ? ResizeZone::Start : ResizeZone::End;
+    }
+    
+    // Priority for edge cases: if very close to start (within 2 pixels), prefer start resize
+    const double priorityThresholdTime = 2.0f / pixelsPerSecond;
+    if (std::abs(mouseTimeInTrack - clipStart) <= priorityThresholdTime) {
+        return ResizeZone::Start;
+    }
+    
+    // Priority for edge cases: if very close to end (within 2 pixels), prefer end resize  
+    if (std::abs(mouseTimeInTrack - clipEnd) <= priorityThresholdTime) {
+        return ResizeZone::End;
+    }
+    
+    if (isNearStart) return ResizeZone::Start;
+    if (isNearEnd) return ResizeZone::End;
+    return ResizeZone::None;
+}
+
+TimelineComponent::ResizeZone TimelineComponent::getResizeZone(const MIDIClip& clip, float mouseTimeInTrack, float pixelsPerSecond) const {
+    const float resizeThresholdPixels = 10.0f;
+    const double resizeThresholdTime = resizeThresholdPixels / pixelsPerSecond;
+    
+    const double clipStart = clip.startTime;
+    const double clipEnd = clip.startTime + clip.duration;
+    
+    bool isNearStart = std::abs(mouseTimeInTrack - clipStart) <= resizeThresholdTime;
+    bool isNearEnd = std::abs(mouseTimeInTrack - clipEnd) <= resizeThresholdTime;
+    
+    const double clipWidthPixels = clip.duration * pixelsPerSecond;
+    if (clipWidthPixels < 20.0f) {
+        const double smallClipThresholdTime = std::max(resizeThresholdTime, clip.duration * 0.4);
+        isNearStart = std::abs(mouseTimeInTrack - clipStart) <= smallClipThresholdTime;
+        isNearEnd = std::abs(mouseTimeInTrack - clipEnd) <= smallClipThresholdTime;
+    }
+    
+    if (isNearStart && isNearEnd) {
+        double distToStart = std::abs(mouseTimeInTrack - clipStart);
+        double distToEnd = std::abs(mouseTimeInTrack - clipEnd);
+        return (distToStart <= distToEnd) ? ResizeZone::Start : ResizeZone::End;
+    }
+    
+    const double priorityThresholdTime = 2.0f / pixelsPerSecond;
+    if (std::abs(mouseTimeInTrack - clipStart) <= priorityThresholdTime) {
+        return ResizeZone::Start;
+    }
+    
+    if (std::abs(mouseTimeInTrack - clipEnd) <= priorityThresholdTime) {
+        return ResizeZone::End;
+    }
+    
+    if (isNearStart) return ResizeZone::Start;
+    if (isNearEnd) return ResizeZone::End;
+    return ResizeZone::None;
+}
+
+// Grid snapping implementation
+double TimelineComponent::snapToGrid(double timeValue, bool forceSnap) const {
+    bool shouldSnap = forceSnap || !isShiftPressed();
+    if (!shouldSnap) return timeValue;
+    
+    const double bpm = app->getBpm();
+    const double beatDuration = 60.0 / bpm;
+    auto [timeSigNum, timeSigDen] = app->getTimeSignature();
+    
+    // Snap to beat subdivisions (16th notes by default)
+    const double snapResolution = beatDuration / 4.0; // 16th notes
+    
+    return std::round(timeValue / snapResolution) * snapResolution;
+}
+
+bool TimelineComponent::isShiftPressed() const {
+    return sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LShift) || 
+           sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RShift);
+}
+
+void TimelineComponent::handleTrackRenaming() {
+    // Find active textbox first to avoid iterator invalidation
+    std::string activeTrackName;
+    TextBox* activeTextBox = nullptr;
+    
+    for (auto& [trackName, textBox] : uiElements.trackNameTextBoxes) {
+        if (textBox && textBox->isActive()) {
+            activeTrackName = trackName;
+            activeTextBox = textBox;
+            break; // Only one can be active at a time
+        }
+    }
+    
+    if (!activeTextBox) return; // No active textbox
+    
+    // Skip Master track renaming (Master track should not be renameable)
+    if (activeTrackName == "Master") {
+        activeTextBox->setActive(false);
+        return;
+    }
+    
+    // Check if Enter was pressed to confirm rename
+    if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Enter)) {
+        std::string newName = activeTextBox->getText();
+        
+        // Validate new name
+        if (!newName.empty() && newName != activeTrackName) {
+            auto track = app->getTrack(activeTrackName);
+            if (track) {
+                // Deactivate first to prevent issues during track modification
+                activeTextBox->setActive(false);
+                
+                // Rename the track (this might trigger UI rebuilds)
+                track->setName(newName);
+                
+                // Remove old textbox reference and add new one
+                uiElements.trackNameTextBoxes.erase(activeTrackName);
+                uiElements.trackNameTextBoxes[newName] = activeTextBox;
+                
+                return; // Exit early after successful rename
+            }
+        }
+        
+        // If we get here, the rename was invalid - just deactivate
+        activeTextBox->setActive(false);
+    }
+    
+    // Check if Escape was pressed to cancel rename
+    else if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Escape)) {
+        // Reset to original name and deactivate
+        activeTextBox->setText(activeTrackName);
+        activeTextBox->setActive(false);
+    }
+}
+
 // Static member definition
 TimelineComponent* TimelineComponent::instance = nullptr;
+bool TimelineComponent::clipEndDrag = false;
+bool TimelineComponent::clipStartDrag = false;
+bool TimelineComponent::isResizing = false;
 
 // Plugin interface for TimelineComponent
 GET_INTERFACE

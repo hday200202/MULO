@@ -17,6 +17,8 @@ public:
 #include "Application.hpp"
 
 bool KBShortcuts::handleEvents() {
+    // if (!app->getWindow().hasFocus()) return false;
+
     bool forceUpdate = false;
 
     static bool prevSpace = false;

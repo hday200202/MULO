@@ -157,6 +157,7 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     set(FIREBASE_LIBS
         "${CMAKE_SOURCE_DIR}/external/linux/firebase/libfirebase_app.a"
         "${CMAKE_SOURCE_DIR}/external/linux/firebase/libfirebase_firestore.a"
+        "${CMAKE_SOURCE_DIR}/external/linux/firebase/libfirebase_database.a"
         "${CMAKE_SOURCE_DIR}/external/linux/firebase/libfirebase_auth.a"
     )
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
@@ -164,6 +165,7 @@ elseif (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
     set(FIREBASE_LIBS
         "${CMAKE_SOURCE_DIR}/external/mac/firebase/libfirebase_app.a"
         "${CMAKE_SOURCE_DIR}/external/mac/firebase/libfirebase_firestore.a"
+        "${CMAKE_SOURCE_DIR}/external/mac/firebase/libfirebase_database.a"
         "${CMAKE_SOURCE_DIR}/external/mac/firebase/libfirebase_auth.a"
     )
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Windows")

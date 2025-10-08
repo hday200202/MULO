@@ -19,10 +19,12 @@ private:
     Image* exportButton;
     Image* playButton;
     Image* metronomeButton;
+    Image* automationButton;
     Image* pianoRollButton;
-    Image* extStore;
     Image* mixerButton;
+    Image* extStore;
     Image* settingsButton;
+    Image* collaborationButton;
 
     bool wasPlaying = false;
 };
@@ -120,6 +122,21 @@ void AppControls::init() {
         "metronome_button"
     );
 
+    automationButton = image(
+        Modifier()
+            .align(Align::RIGHT | Align::CENTER_Y)
+            .setfixedHeight(48.f)
+            .setfixedWidth(48)
+            .setColor(app->resources.activeTheme->button_color)
+            .onLClick([&](){
+                app->writeConfig<bool>("show_automation", 
+                    !app->readConfig<bool>("show_automation", false));
+            }),
+        app->resources.automationIcon,
+        true,
+        "show_automation_button"
+    );
+
     pianoRollButton = image(
         Modifier()
             .align(Align::RIGHT | Align::CENTER_Y)
@@ -172,6 +189,22 @@ void AppControls::init() {
         true,
         "settings_button"
     );
+    
+    collaborationButton = image(
+        Modifier()
+            .align(Align::RIGHT | Align::CENTER_Y)
+            .setfixedHeight(48.f)
+            .setfixedWidth(48)
+            .setColor(app->resources.activeTheme->button_color)
+            .onLClick([&](){
+                bool currentState = app->readConfig<bool>("collabShowWindow", false);
+                app->writeConfig("collabShowWindow", !currentState);
+                DEBUG_PRINT((!currentState ? "Show Collaboration" : "Hide Collaboration"));
+            }),
+        app->resources.settingsIcon, // TODO: Create collaboration icon
+        true,
+        "collaboration_button"
+    );
 
     mixerButton = image(
         Modifier()
@@ -215,13 +248,17 @@ void AppControls::init() {
             spacer(Modifier().setfixedWidth(16).align(Align::CENTER_X)),
             metronomeButton,
             spacer(Modifier().setfixedWidth(16).align(Align::RIGHT)),
+            automationButton,
+            spacer(Modifier().setfixedWidth(16).align(Align::RIGHT)),
             pianoRollButton,
+            spacer(Modifier().setfixedWidth(16).align(Align::RIGHT)),
+            mixerButton,
             spacer(Modifier().setfixedWidth(16).align(Align::RIGHT)),
             extStore,
             spacer(Modifier().setfixedWidth(16).align(Align::RIGHT)),
-            settingsButton,
+            collaborationButton,
             spacer(Modifier().setfixedWidth(16).align(Align::RIGHT)),
-            mixerButton,
+            settingsButton,
             spacer(Modifier().setfixedWidth(16).align(Align::RIGHT)),
         }
     );
@@ -235,13 +272,14 @@ void AppControls::init() {
 bool AppControls::handleEvents() { 
     bool forceUpdate = false;
 
-    // Capture base colors at the start
     sf::Color baseButtonColor = app->resources.activeTheme->button_color;
     sf::Color baseMuteColor = app->resources.activeTheme->mute_color;
     
     sf::Color playButtonBaseColor = app->isPlaying() ? baseMuteColor : baseButtonColor;
     sf::Color metronomeButtonBaseColor = app->isMetronomeEnabled() ? baseMuteColor : baseButtonColor;
     sf::Color settingsButtonBaseColor = app->uiState.settingsShown ? baseMuteColor : baseButtonColor;
+    bool collaborationShown = app->readConfig<bool>("collabShowWindow", false);
+    sf::Color collaborationButtonBaseColor = collaborationShown ? baseMuteColor : baseButtonColor;
     sf::Color extStoreBaseColor = app->uiState.marketplaceShown ? baseMuteColor : baseButtonColor;
 
     bool currentlyPlaying = app->isPlaying();
@@ -279,6 +317,15 @@ bool AppControls::handleEvents() {
         settingsButton->m_modifier.setColor(baseButtonColor);
         settingsButton->setImage(app->resources.settingsIcon, true);
     }
+    
+    if (collaborationShown) {
+        collaborationButton->m_modifier.setColor(baseMuteColor);
+        collaborationButton->setImage(app->resources.settingsIcon, true); // TODO: Use collaboration icon
+    }
+    else {
+        collaborationButton->m_modifier.setColor(baseButtonColor);
+        collaborationButton->setImage(app->resources.settingsIcon, true); // TODO: Use collaboration icon
+    }
 
     if (app->uiState.marketplaceShown) {
         extStore->m_modifier.setColor(baseMuteColor);
@@ -287,6 +334,15 @@ bool AppControls::handleEvents() {
     else {
         extStore->m_modifier.setColor(baseButtonColor);
         extStore->setImage(app->resources.storeIcon, true);
+    }
+
+    if (app->readConfig("show_automation", false)) {
+        automationButton->m_modifier.setColor(baseMuteColor);
+        automationButton->setImage(app->resources.automationIcon, true);
+    }
+    else {
+        automationButton->m_modifier.setColor(baseButtonColor);
+        automationButton->setImage(app->resources.automationIcon, true);
     }
 
     // Apply hover effects using the captured base colors
@@ -356,6 +412,20 @@ bool AppControls::handleEvents() {
         metronomeButton->m_isHovered = false;
     }
 
+    // if (automationButton->isHovered()) {
+    //     automationButton->m_modifier.setColor(sf::Color(
+    //         std::min(255, (int)(baseButtonColor.r + 50)),
+    //         std::min(255, (int)(baseButtonColor.g + 50)),
+    //         std::min(255, (int)(baseButtonColor.b + 50))
+    //     ));
+    //     automationButton->setImage(app->resources.automationIcon, true);
+    //     automationButton->m_isHovered = false;
+    // }
+    // else {
+    //     automationButton->m_modifier.setColor(baseButtonColor);
+    //     automationButton->setImage(app->resources.automationIcon, true);
+    // }
+
     if (pianoRollButton->isHovered()) {
         pianoRollButton->m_modifier.setColor(sf::Color(
             std::min(255, (int)(baseButtonColor.r + 50)),
@@ -388,6 +458,16 @@ bool AppControls::handleEvents() {
         ));
         settingsButton->setImage(app->resources.settingsIcon, true);
         settingsButton->m_isHovered = false;
+    }
+    
+    if (collaborationButton->isHovered()) {
+        collaborationButton->m_modifier.setColor(sf::Color(
+            std::min(255, (int)(collaborationButtonBaseColor.r + 50)),
+            std::min(255, (int)(collaborationButtonBaseColor.g + 50)),
+            std::min(255, (int)(collaborationButtonBaseColor.b + 50))
+        ));
+        collaborationButton->setImage(app->resources.settingsIcon, true); // TODO: Use collaboration icon
+        collaborationButton->m_isHovered = false;
     }
 
     if (mixerButton->isHovered()) {

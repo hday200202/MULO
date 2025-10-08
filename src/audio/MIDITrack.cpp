@@ -100,6 +100,21 @@ void MIDITrack::process(double playheadSeconds, juce::AudioBuffer<float>& output
     processEffectsWithMidi(outputBuffer, midiBuffer);
     
     // Apply track volume and mute
+    // Apply track-level automation: volume and pan (use first automation point if present)
+    auto it = automationData.find(name);
+    if (it != automationData.end()) {
+        auto& paramMap = it->second;
+        auto vit = paramMap.find("volume");
+        if (vit != paramMap.end() && !vit->second.empty()) {
+            volumeDb = floatToDecibels(vit->second.front().value);
+        }
+        auto pit = paramMap.find("pan");
+        if (pit != paramMap.end() && !pit->second.empty()) {
+            float norm = pit->second.front().value; // 0..1
+            pan = juce::jlimit(-1.0f, 1.0f, norm * 2.0f - 1.0f);
+        }
+    }
+
     if (muted) {
         outputBuffer.clear();
     } else {
@@ -120,30 +135,16 @@ void MIDITrack::prepareToPlay(double sampleRate, int bufferSize) {
     }
 }
 
-// Audio clip management - minimal implementation for compatibility
-void MIDITrack::clearClips() {
-    // MIDI tracks don't use audio clips, but this is required for interface compatibility
-}
+void MIDITrack::clearClips() {}
 
-const std::vector<AudioClip>& MIDITrack::getClips() const {
-    // Return empty vector - MIDI tracks don't use audio clips
-    return emptyClips;
-}
+const std::vector<AudioClip>& MIDITrack::getClips() const { return emptyClips; }
 
-void MIDITrack::addClip(const AudioClip& clip) {
-    // MIDI tracks don't use audio clips - this is a no-op for interface compatibility
-}
+void MIDITrack::addClip(const AudioClip& clip) {}
 
-void MIDITrack::removeClip(size_t index) {
-    // MIDI tracks don't use audio clips - this is a no-op for interface compatibility  
-}
+void MIDITrack::removeClip(size_t index) {}
 
-AudioClip* MIDITrack::getReferenceClip() {
-    // MIDI tracks don't use audio clips
-    return nullptr;
-}
+AudioClip* MIDITrack::getReferenceClip() { return nullptr; }
 
-// MIDI clip management - the actual functionality for MIDI tracks
 void MIDITrack::clearMIDIClips() {
     midiClips.clear();
 }
@@ -174,13 +175,12 @@ size_t MIDITrack::getMIDIClipCount() const {
 }
 
 void MIDITrack::processEffectsWithMidi(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiBuffer) {
-    for (const auto& effect : effects) {
+    for (size_t i = 0; i < effects.size(); ++i) {
+        const auto& effect = effects[i];
         if (effect && effect->enabled()) {
             if (effect->isSynthesizer()) {
-                // Synthesizers need both audio buffer and MIDI data
                 effect->processAudio(buffer, midiBuffer);
             } else {
-                // Regular effects only process audio
                 effect->processAudio(buffer);
             }
         }
