@@ -127,13 +127,20 @@ private:
 
     struct AutomationDragState {
         bool isDragging = false;
+        bool isCurveEditing = false;
+        bool isInteracting = false;
+        sf::Clock interactionClock;
         sf::Vector2f startMousePos;
         float startTime = 0.0f;
         float startValue = 0.0f;
+        float startCurve = 0.5f;
+        float endValue = 0.0f;
         std::string trackName;
         std::string effectName;
         std::string parameterName;
         std::string laneId;
+        float originalTime = -1.0f;
+        float originalValue = -1.0f;
     } automationDragState;
 
     struct UIElements {
@@ -342,9 +349,9 @@ void TimelineComponent::update() {
     if (features.enableMouseInput || features.enableKeyboardInput) {
         handleAllUserInput();
     }
-    
-    updateTimelineVisuals();
-    
+
+    syncSlidersToEngine();
+    updateTimelineVisuals();    
     handleCustomUIElements();
     
     // Update automation lane labels if automation view is enabled
@@ -502,6 +509,7 @@ uilo::Row* TimelineComponent::masterTrack() {
         app->resources.activeTheme->slider_knob_color,
         app->resources.activeTheme->slider_bar_color,
         SliderOrientation::Vertical,
+        0.75f,
         "Master_volume_slider"
     );
 
@@ -609,6 +617,7 @@ uilo::Row* TimelineComponent::track(
         app->resources.activeTheme->slider_knob_color,
         app->resources.activeTheme->slider_bar_color,
         SliderOrientation::Vertical,
+        0.75f,
         trackName + "_volume_slider"
     );
 
@@ -619,7 +628,8 @@ uilo::Row* TimelineComponent::track(
     containers[trackName + "_scrollable_row"] = scrollableRowElement;
 
     auto handleTrackLeftClick = [this, trackName]() {
-        if (!app->getWindow().hasFocus()) return;
+        if (!app->getWindow().hasFocus()) return;        
+        if (automationDragState.isDragging) return;
         
         auto track = app->getTrack(trackName);
         if (!track) return;
@@ -647,7 +657,8 @@ uilo::Row* TimelineComponent::track(
     };
     
     auto handleTrackRightClick = [this, trackName]() {
-        if (!app->getWindow().hasFocus()) return;
+        if (!app->getWindow().hasFocus()) return;        
+        if (automationDragState.isDragging) return;
         
         auto track = app->getTrack(trackName);
         if (!track) return;
@@ -846,8 +857,11 @@ uilo::Row* TimelineComponent::automationLane(
     );
     containers[laneId + "_scrollable_row"] = scrollableRowElement;
 
-    auto handleAutomationClick = [this, trackName, laneId]() {
+    auto handleAutomationClick = [this, trackName, laneId, effectName, parameterName]() {
         if (!app->getWindow().hasFocus()) return;
+        
+        automationDragState.isInteracting = true;
+        automationDragState.interactionClock.restart();
         
         sf::Vector2f globalMousePos = app->ui->getMousePosition();
         auto* automationRow = containers[laneId + "_scrollable_row"];
@@ -874,100 +888,166 @@ uilo::Row* TimelineComponent::automationLane(
                         currentEffectName = potentialAuto.first;
                         currentParameterName = potentialAuto.second;
                     } else {
-                        // Extract from laneId format: trackName_effectName_parameterName
-                        std::string prefix = trackName + "_";
-                        if (laneId.size() > prefix.size()) {
-                            std::string paramPart = laneId.substr(prefix.size());
-                            size_t lastUnderscore = paramPart.find_last_of('_');
-                            if (lastUnderscore != std::string::npos) {
-                                currentEffectName = paramPart.substr(0, lastUnderscore);
-                                currentParameterName = paramPart.substr(lastUnderscore + 1);
-                            } else {
-                                currentEffectName = "";
-                                currentParameterName = paramPart;
-                            }
-                        }
+                        currentEffectName = effectName;
+                        currentParameterName = parameterName;
                     }
                     
                     if (!currentParameterName.empty()) {
-                        // Check if clicking near existing automation point (for dragging)
+                        // Check for automation interaction (point dragging or curve editing)
                         const auto* points = track->getAutomationPoints(currentEffectName, currentParameterName);
                         bool startedDrag = false;
                         
                         if (points) {
-                            constexpr float clickTolerance = 10.0f; // pixels
+                            constexpr float clickTolerance = 20.0f;
                             auto valueToY = [rowSize](float value) { return rowSize.y * (1.0f - value); };
                             auto timeToX = [this](float time) { 
-                                return time * 100.f * app->uiState.timelineZoomLevel + timelineState.timelineOffset; 
+                                return secondsToXPosition(app->getBpm(), 100.f * app->uiState.timelineZoomLevel, time) + timelineState.timelineOffset;
                             };
                             
-                            for (const auto& point : *points) {
-                                float pointX = timeToX(point.time);
-                                float pointY = valueToY(point.value);
-                                
-                                float distance = std::sqrt(std::pow(localMousePos.x - pointX, 2) + std::pow(localMousePos.y - pointY, 2));
-                                
-                                if (distance <= clickTolerance) {
-                                    // Start dragging this point
-                                    automationDragState.isDragging = true;
-                                    automationDragState.startMousePos = globalMousePos;
-                                    automationDragState.startTime = point.time;
-                                    automationDragState.startValue = point.value;
-                                    automationDragState.trackName = trackName;
-                                    automationDragState.effectName = currentEffectName;
-                                    automationDragState.parameterName = currentParameterName;
-                                    automationDragState.laneId = laneId;
-                                    startedDrag = true;
-                                    break;
+                            // Check for curve editing first when Ctrl is held (takes priority over point selection)
+                            bool ctrlHeld = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) || sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RControl);
+                            if (ctrlHeld && points->size() > 1) {
+                                // Use the exact same sorting logic as the drawing code
+                                std::vector<Track::AutomationPoint> sortedPoints;
+                                for (const auto& point : *points) {
+                                    if (point.time >= 0.0) {
+                                        sortedPoints.push_back(point);
+                                    }
                                 }
-                            }
-                        }
-                        
-                        // If not dragging, add new automation point
-                        if (!startedDrag) {
-                            // Check if Shift is held to bypass snapping
-                            bool shiftHeld = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LShift) || sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RShift);
-                            
-                            if (!shiftHeld) {
-                                auto [timeSigNum, timeSigDen] = app->getTimeSignature();
-                                auto measureLines = generateTimelineMeasures(100.f * app->uiState.timelineZoomLevel, timelineState.timelineOffset, rowSize, timeSigNum, timeSigDen, &app->resources);
-                                sf::Vector2f snapPos(localMousePos.x, localMousePos.y);
-                                float snapX = getNearestMeasureX(snapPos, measureLines);
-                                timePosition = xPosToSeconds(app->getBpm(), 100.f * app->uiState.timelineZoomLevel, snapX - timelineState.timelineOffset, timelineState.timelineOffset);
-                            }
-                            
-                            Track::AutomationPoint point;
-                            point.time = timePosition;
-                            point.value = automationValue;
-                            point.curve = 0.0f;
-                            
-                            // Check if there are already 2 points at this time position (allow small tolerance)
-                            const auto* existingPoints = track->getAutomationPoints(currentEffectName, currentParameterName);
-                            int pointsAtThisTime = 0;
-                            constexpr float timeTolerance = 0.001f;
-                            
-                            if (existingPoints) {
-                                for (const auto& existingPoint : *existingPoints) {
-                                    if (std::abs(existingPoint.time - timePosition) < timeTolerance) {
-                                        pointsAtThisTime++;
+                                std::sort(sortedPoints.begin(), sortedPoints.end(), 
+                                    [](const Track::AutomationPoint& a, const Track::AutomationPoint& b) { 
+                                        return a.time < b.time; 
+                                    });
+                                
+                                float mouseTime = xPosToSeconds(app->getBpm(), 100.f * app->uiState.timelineZoomLevel, localMousePos.x - timelineState.timelineOffset, timelineState.timelineOffset);
+                                
+                                const Track::AutomationPoint* startPoint = nullptr;
+                                const Track::AutomationPoint* endPoint = nullptr;
+                                
+                                for (size_t i = 0; i < sortedPoints.size() - 1; ++i) {
+                                    const auto& point1 = sortedPoints[i];
+                                    const auto& point2 = sortedPoints[i + 1];
+                                    
+                                    if (mouseTime >= point1.time && mouseTime <= point2.time) {
+                                        startPoint = &point1;
+                                        endPoint = &point2;
+                                        break;
+                                    }
+                                }
+                                
+                                if (startPoint && endPoint) {
+                                    // Check for double-click to reset curve to 0.5
+                                    static sf::Clock lastCurveClickTime;
+                                    static float lastClickedPointTime = -999.0f;
+                                    
+                                    float timeSinceLastClick = lastCurveClickTime.getElapsedTime().asMilliseconds();
+                                    
+                                    if (std::abs(lastClickedPointTime - startPoint->time) < 0.001f && timeSinceLastClick < 300) {
+                                        track->updateAutomationPointCurve(currentEffectName, currentParameterName, startPoint->time, 0.5f);
+                                        lastClickedPointTime = -999.0f;
+                                        lastCurveClickTime.restart();
+                                    } else {
+                                        automationDragState.isDragging = true;
+                                        automationDragState.startMousePos = globalMousePos;
+                                        automationDragState.startTime = startPoint->time;
+                                        automationDragState.startValue = startPoint->value;
+                                        automationDragState.startCurve = startPoint->curve;
+                                        automationDragState.endValue = endPoint->value;
+                                        automationDragState.originalTime = startPoint->time;
+                                        automationDragState.originalValue = startPoint->value;
+                                        automationDragState.trackName = trackName;
+                                        automationDragState.effectName = currentEffectName;
+                                        automationDragState.parameterName = currentParameterName;
+                                        automationDragState.laneId = laneId;
+                                        automationDragState.isCurveEditing = true;
+                                        startedDrag = true;
+                                        
+                                        lastClickedPointTime = startPoint->time;
+                                        lastCurveClickTime.restart();
                                     }
                                 }
                             }
                             
-                            // Only add point if there are fewer than 2 points at this time
-                            if (pointsAtThisTime < 2) {
-                                track->addAutomationPoint(currentEffectName, currentParameterName, point);
+                            if (!startedDrag) {
+                                float closestDistance = std::numeric_limits<float>::max();
+                                const Track::AutomationPoint* closestPoint = nullptr;
+                                                                    
+                                for (const auto& point : *points) {
+                                    float pointX = timeToX(point.time);
+                                    float pointY = valueToY(point.value);
+                                    
+                                    float deltaX = localMousePos.x - pointX;
+                                    float deltaY = localMousePos.y - pointY;
+                                    
+                                    float distance;
+                                    if (std::abs(deltaX) < 2.0f) {
+                                        distance = std::abs(deltaY) + std::abs(deltaX) * 0.1f;
+                                    } else {
+                                        distance = std::sqrt(deltaX * deltaX + deltaY * deltaY);
+                                    }
+                                    
+                                    if (distance <= clickTolerance && distance < closestDistance) {
+                                        closestDistance = distance;
+                                        closestPoint = &point;
+                                    }
+                                }                                
+                                
+                                if (closestPoint) {
+                                    automationDragState.isDragging = true;
+                                    automationDragState.startMousePos = globalMousePos;
+                                    automationDragState.startTime = closestPoint->time;
+                                    automationDragState.startValue = closestPoint->value;
+                                    automationDragState.startCurve = closestPoint->curve;
+                                    automationDragState.originalTime = closestPoint->time;
+                                    automationDragState.originalValue = closestPoint->value;
+                                    automationDragState.trackName = trackName;
+                                    automationDragState.effectName = currentEffectName;
+                                    automationDragState.parameterName = currentParameterName;
+                                    automationDragState.laneId = laneId;
+                                    automationDragState.isCurveEditing = false;
+                                    startedDrag = true;
+                                }
                             }
-                            // If there are already 2 points, silently ignore the add request
+                            
+                            if (!startedDrag && !sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) {
+                                Track::AutomationPoint point;
+                                point.time = timePosition;
+                                point.value = automationValue;
+                                point.curve = 0.5f;
+                                
+                                track->addAutomationPoint(currentEffectName, currentParameterName, point);
+                                
+                                automationDragState.isDragging = true;
+                                automationDragState.startMousePos = globalMousePos;
+                                automationDragState.startTime = point.time;
+                                automationDragState.startValue = point.value;
+                                automationDragState.startCurve = point.curve;
+                                automationDragState.originalTime = point.time;
+                                automationDragState.originalValue = point.value;
+                                automationDragState.trackName = trackName;
+                                automationDragState.effectName = currentEffectName;
+                                automationDragState.parameterName = currentParameterName;
+                                automationDragState.laneId = laneId;
+                                automationDragState.isCurveEditing = false;
+                            }
                         }
                     }
                 }
             }
         }
+        
+        // Clear interaction flag if we're not dragging
+        if (!automationDragState.isDragging) {
+            automationDragState.isInteracting = false;
+        }
     };
 
-    auto handleAutomationRightClick = [this, trackName, laneId]() {
+    auto handleAutomationRightClick = [this, trackName, laneId, effectName, parameterName]() {
         if (!app->getWindow().hasFocus()) return;
+        
+        // Set automation interaction flag to prevent other timeline events
+        automationDragState.isInteracting = true;
+        automationDragState.interactionClock.restart();
         
         sf::Vector2f globalMousePos = app->ui->getMousePosition();
         auto* automationRow = containers[laneId + "_scrollable_row"];
@@ -988,29 +1068,17 @@ uilo::Row* TimelineComponent::automationLane(
                     currentEffectName = potentialAuto.first;
                     currentParameterName = potentialAuto.second;
                 } else {
-                    // Extract from laneId format: trackName_effectName_parameterName
-                    std::string prefix = trackName + "_";
-                    if (laneId.size() > prefix.size()) {
-                        std::string paramPart = laneId.substr(prefix.size());
-                        size_t lastUnderscore = paramPart.find_last_of('_');
-                        if (lastUnderscore != std::string::npos) {
-                            currentEffectName = paramPart.substr(0, lastUnderscore);
-                            currentParameterName = paramPart.substr(lastUnderscore + 1);
-                        } else {
-                            currentEffectName = "";
-                            currentParameterName = paramPart;
-                        }
-                    }
+                    currentEffectName = effectName;
+                    currentParameterName = parameterName;
                 }
                 
                 if (!currentParameterName.empty()) {
-                    // Find the closest automation point to the click position (both X and Y)
+                    // Find the closest automation point to the click position
                     const auto* points = track->getAutomationPoints(currentEffectName, currentParameterName);
                     if (points) {
-                        constexpr float xTolerance = 30.0f; // pixels in X direction
-                        constexpr float yTolerance = 20.0f; // pixels in Y direction
+                        constexpr float xTolerance = 30.0f;
+                        constexpr float yTolerance = 20.0f;
                         
-                        // Use the same coordinate calculations as the rendering system
                         auto valueToY = [rowSize](float value) { 
                             const float padding = 4.0f;
                             const float usableHeight = rowSize.y - 2 * padding;
@@ -1023,6 +1091,7 @@ uilo::Row* TimelineComponent::automationLane(
                         
                         float closestDistance = std::numeric_limits<float>::max();
                         float targetTime = -1.0f;
+                        float targetValue = -1.0f;
                         
                         for (const auto& point : *points) {
                             float pointX = timeToX(point.time);
@@ -1031,25 +1100,26 @@ uilo::Row* TimelineComponent::automationLane(
                             float xDiff = std::abs(localMousePos.x - pointX);
                             float yDiff = std::abs(localMousePos.y - pointY);
                             
-                            // Check if within tolerances
                             if (xDiff <= xTolerance && yDiff <= yTolerance) {
-                                // Use combined distance for closest point selection
                                 float distance = std::sqrt(xDiff * xDiff + yDiff * yDiff);
                                 if (distance < closestDistance) {
                                     closestDistance = distance;
                                     targetTime = point.time;
+                                    targetValue = point.value;
                                 }
                             }
                         }
                         
                         // Remove the closest point if found
-                        if (targetTime >= 0.0f) {
-                            track->removeAutomationPoint(currentEffectName, currentParameterName, targetTime, 0.001f);
+                        if (targetTime >= 0.0f && targetValue >= 0.0f) {
+                            track->removeAutomationPointPrecise(currentEffectName, currentParameterName, targetTime, targetValue);
                         }
                     }
                 }
             }
         }
+        
+        automationDragState.isInteracting = false;
     };
     
     scrollableRowElement->m_modifier.onLClick([=]() { handleAutomationClick(); });
@@ -1100,7 +1170,6 @@ uilo::Row* TimelineComponent::automationLane(
                                     Track* track = app->getTrack(trackName);
                                     if (track) {
                                         track->clearAutomationParameter(effectName, parameterName);
-                                        std::cout << "[AUTOMATION] Cleared automation for " << effectName << " - " << parameterName << std::endl;
                                     }
                                 }),
                             ButtonStyle::Pill,
@@ -1535,11 +1604,19 @@ void TimelineComponent::handleCustomUIElements() {
             
             // Add ID for potential automation lane (scrollable_row format)
             if (hasPotentialAutomation) {
-                std::string potentialLaneId = track->getName() + "_potential_automation_scrollable_row";
-                expectedLaneIds.insert(potentialLaneId);
+                bool alreadyAutomated = false;
+                for (const auto& [effectName, parameterName] : automatedParams) {
+                    if (effectName == potentialAuto.first && parameterName == potentialAuto.second) {
+                        alreadyAutomated = true;
+                        break;
+                    }
+                }
+                
+                if (!alreadyAutomated) {
+                    std::string potentialLaneId = track->getName() + "_potential_automation_scrollable_row";
+                    expectedLaneIds.insert(potentialLaneId);
+                }
             }
-            
-            // Find existing automation lanes for this track  
             const auto& elements = timelineElement->getElements();
             std::set<std::string> existingLaneIds;
             std::set<std::string> existingAutomationRows;
@@ -1689,19 +1766,29 @@ void TimelineComponent::handleCustomUIElements() {
                     
                     // Add potential automation lane if needed
                     if (hasPotentialAutomation) {
-                        std::string potentialScrollableId = track->getName() + "_potential_automation_scrollable_row";
-                        if (existingLaneIds.find(potentialScrollableId) == existingLaneIds.end()) {
-                            float currentValue = track->getCurrentParameterValue(potentialAuto.first, potentialAuto.second);
-                            auto* potentialRowElem = automationLane(
-                                track->getName(), 
-                                potentialAuto.first,
-                                potentialAuto.second,
-                                Align::TOP | Align::LEFT, 
-                                currentValue,
-                                true
-                            );
+                        bool alreadyAutomated = false;
+                        for (const auto& [effectName, parameterName] : automatedParams) {
+                            if (effectName == potentialAuto.first && parameterName == potentialAuto.second) {
+                                alreadyAutomated = true;
+                                break;
+                            }
+                        }
+                        
+                        if (!alreadyAutomated) {
+                            std::string potentialScrollableId = track->getName() + "_potential_automation_scrollable_row";
+                            if (existingLaneIds.find(potentialScrollableId) == existingLaneIds.end()) {
+                                float currentValue = track->getCurrentParameterValue(potentialAuto.first, potentialAuto.second);
+                                auto* potentialRowElem = automationLane(
+                                    track->getName(), 
+                                    potentialAuto.first,
+                                    potentialAuto.second,
+                                    Align::TOP | Align::LEFT, 
+                                    currentValue,
+                                    true
+                                );
                             
-                            timelineElement->insertElementAt(potentialRowElem, insertIndex);
+                                timelineElement->insertElementAt(potentialRowElem, insertIndex);
+                            }
                         }
                     }
                 }
@@ -2031,9 +2118,13 @@ void TimelineComponent::repositionAutomationLanes() {
 }
 
 void TimelineComponent::syncSlidersToEngine() {
+    if (app->ui->isMouseDragging()) {
+        return;
+    }
+    
     if (app->getMasterTrack() && uiElements.masterVolumeSlider) {
-        float engineVol = app->getMasterTrack()->getVolume();
-        float sliderValue = decibelsToFloat(engineVol);
+        float currentValue = app->getMasterTrack()->getCurrentParameterValue("Track", "Volume");
+        float sliderValue = automationToVolumeSlider(currentValue);
         uiElements.masterVolumeSlider->setValue(sliderValue);
     }
     
@@ -2042,8 +2133,8 @@ void TimelineComponent::syncSlidersToEngine() {
         
         if (auto volumeSlider = uiElements.trackVolumeSliders.find(track->getName());
             volumeSlider != uiElements.trackVolumeSliders.end() && volumeSlider->second) {
-            float engineVol = track->getVolume();
-            float sliderValue = decibelsToFloat(engineVol);
+            float currentValue = track->getCurrentParameterValue("Track", "Volume");
+            float sliderValue = automationToVolumeSlider(currentValue);
             volumeSlider->second->setValue(sliderValue);
         }
     }
@@ -2321,9 +2412,9 @@ inline std::vector<std::shared_ptr<sf::Drawable>> generateAutomationLine(
             }
         }
         std::sort(sortedPoints.begin(), sortedPoints.end(), 
-                  [](const Track::AutomationPoint& a, const Track::AutomationPoint& b) {
-                      return a.time < b.time;
-                  });
+                [](const Track::AutomationPoint& a, const Track::AutomationPoint& b) {
+            return a.time < b.time;
+        });
         
         if (sortedPoints.empty()) {
             const float timelineWidth = rowSize.x + std::abs(scrollOffset) + 2000.0f;
@@ -2358,7 +2449,6 @@ inline std::vector<std::shared_ptr<sf::Drawable>> generateAutomationLine(
                 drawables.push_back(circle);
             }
         } else {
-            // Draw connecting lines between points
             for (size_t i = 0; i < sortedPoints.size() - 1; ++i) {
                 const auto& point1 = sortedPoints[i];
                 const auto& point2 = sortedPoints[i + 1];
@@ -2371,15 +2461,54 @@ inline std::vector<std::shared_ptr<sf::Drawable>> generateAutomationLine(
                 if ((x1 >= -pointRadius && x1 <= rowSize.x + pointRadius) ||
                     (x2 >= -pointRadius && x2 <= rowSize.x + pointRadius)) {
                     
-                    float lineLength = std::sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1));
-                    float angleRadians = std::atan2(y2 - y1, x2 - x1);
-                    
-                    auto line = std::make_shared<sf::RectangleShape>();
-                    line->setSize({lineLength, lineHeight});
-                    line->setPosition({x1, y1 - lineHeight / 2.0f});
-                    line->setRotation(sf::radians(angleRadians));
-                    line->setFillColor(lineColor);
-                    drawables.push_back(line);
+                    if (std::abs(point1.curve - 0.5f) < 0.001f) {
+                        float lineLength = std::sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1));
+                        float angleRadians = std::atan2(y2 - y1, x2 - x1);
+                        
+                        auto line = std::make_shared<sf::RectangleShape>();
+                        line->setSize({lineLength, lineHeight});
+                        line->setPosition({x1, y1 - lineHeight / 2.0f});
+                        line->setRotation(sf::radians(angleRadians));
+                        line->setFillColor(lineColor);
+                        drawables.push_back(line);
+                    } else {
+                        const int segments = 20;
+                        for (int j = 0; j < segments; ++j) {
+                            float t1 = static_cast<float>(j) / segments;
+                            float t2 = static_cast<float>(j + 1) / segments;
+                            
+                            auto curvePoint = [&](float t) -> sf::Vector2f {
+                                float curve = point1.curve;
+                                float adjustedT;
+                                
+                                if (curve < 0.5f) {
+                                    float factor = 50.0f * (0.5f - curve);
+                                    adjustedT = std::pow(t, 1.0f + factor);
+                                } else {
+                                    float factor = 50.0f * (curve - 0.5f);
+                                    adjustedT = 1.0f - std::pow(1.0f - t, 1.0f + factor);
+                                }
+                                
+                                float x = x1 + t * (x2 - x1);
+                                float y = y1 + adjustedT * (y2 - y1);
+                                
+                                return sf::Vector2f(x, y);
+                            };
+                            
+                            sf::Vector2f p1 = curvePoint(t1);
+                            sf::Vector2f p2 = curvePoint(t2);
+                            
+                            float lineLength = std::sqrt((p2.x - p1.x) * (p2.x - p1.x) + (p2.y - p1.y) * (p2.y - p1.y));
+                            float angleRadians = std::atan2(p2.y - p1.y, p2.x - p1.x);
+                            
+                            auto line = std::make_shared<sf::RectangleShape>();
+                            line->setSize({lineLength, lineHeight});
+                            line->setPosition({p1.x, p1.y - lineHeight / 2.0f});
+                            line->setRotation(sf::radians(angleRadians));
+                            line->setFillColor(lineColor);
+                            drawables.push_back(line);
+                        }
+                    }
                 }
             }
             
@@ -2470,19 +2599,22 @@ inline std::shared_ptr<sf::Drawable> getPlayHead(double bpm, float beatWidth, fl
 inline float getNearestMeasureX(const sf::Vector2f& pos, const std::vector<std::shared_ptr<sf::Drawable>>& lines) {
     if (lines.empty()) return pos.x;
     
-    float closestLeftX = 0.0f; // Always round down - find the measure line to the left
+    float nearestX = pos.x;
+    float minDistance = std::numeric_limits<float>::max();
     
     for (const auto& line : lines) {
         if (const auto rect = std::dynamic_pointer_cast<const sf::RectangleShape>(line)) {
             const float lineX = rect->getPosition().x;
-            // Only consider lines that are to the left of or at the click position
-            if (lineX <= pos.x && lineX > closestLeftX) {
-                closestLeftX = lineX;
+            const float distance = std::abs(lineX - pos.x);
+            
+            if (distance < minDistance) {
+                minDistance = distance;
+                nearestX = lineX;
             }
         }
     }
     
-    return closestLeftX;
+    return nearestX;
 }
 
 inline float secondsToXPosition(double bpm, float beatWidth, float seconds) noexcept {
@@ -2904,7 +3036,7 @@ void TimelineComponent::syncUIToEngine() {
 
 void TimelineComponent::handleMasterTrackControls() {
     // Handle master mute button
-    if (uiElements.muteMasterButton && uiElements.muteMasterButton->isClicked() && app->getWindow().hasFocus()) {
+    if (uiElements.muteMasterButton && uiElements.muteMasterButton->isClicked() && app->getWindow().hasFocus() && !automationDragState.isDragging) {
         auto* masterTrack = app->getMasterTrack();
         masterTrack->toggleMute();
         uiElements.muteMasterButton->m_modifier.setColor(
@@ -2913,13 +3045,17 @@ void TimelineComponent::handleMasterTrackControls() {
         uiElements.muteMasterButton->setClicked(false);
     }
     
-    // Handle master volume slider
-    if (this->isVisible() && uiElements.masterVolumeSlider) {
-        const float newMasterVolDb = floatToDecibels(uiElements.masterVolumeSlider->getValue());
+    if (this->isVisible() && uiElements.masterVolumeSlider && !automationDragState.isDragging) {
+        const float sliderValue = uiElements.masterVolumeSlider->getValue();
+        const float newMasterVolDb = floatToDecibels(sliderValue);
         auto* masterTrack = app->getMasterTrack();
         constexpr float volumeTolerance = 0.001f;
         
-        if (std::abs(masterTrack->getVolume() - newMasterVolDb) > volumeTolerance) {
+        float currentAutomationValue = masterTrack->getCurrentParameterValue("Track", "Volume");
+        float expectedSliderValue = automationToVolumeSlider(currentAutomationValue);
+        
+        if (std::abs(sliderValue - expectedSliderValue) > 0.01f && 
+            std::abs(masterTrack->getVolume() - newMasterVolDb) > volumeTolerance) {
             masterTrack->setVolume(newMasterVolDb);
         }
     }
@@ -2990,7 +3126,7 @@ void TimelineComponent::handleIndividualTrackControls(Track* track, const std::s
     
     // Handle mute button
     if (auto muteBtnIt = uiElements.trackMuteButtons.find(name); 
-        muteBtnIt != uiElements.trackMuteButtons.end() && muteBtnIt->second && muteBtnIt->second->isClicked() && app->getWindow().hasFocus()) {
+        muteBtnIt != uiElements.trackMuteButtons.end() && muteBtnIt->second && muteBtnIt->second->isClicked() && app->getWindow().hasFocus() && !automationDragState.isDragging) {
         track->toggleMute();
         muteBtnIt->second->m_modifier.setColor(
             track->isMuted() ? app->resources.activeTheme->mute_color : app->resources.activeTheme->not_muted_color
@@ -3000,7 +3136,7 @@ void TimelineComponent::handleIndividualTrackControls(Track* track, const std::s
     
     // Handle solo button
     if (auto soloBtnIt = uiElements.trackSoloButtons.find(name); 
-        soloBtnIt != uiElements.trackSoloButtons.end() && soloBtnIt->second && soloBtnIt->second->isClicked() && app->getWindow().hasFocus()) {
+        soloBtnIt != uiElements.trackSoloButtons.end() && soloBtnIt->second && soloBtnIt->second->isClicked() && app->getWindow().hasFocus() && !automationDragState.isDragging) {
         track->setSolo(!track->isSolo());
         soloBtnIt->second->m_modifier.setColor(
             track->isSolo() ? app->resources.activeTheme->mute_color : app->resources.activeTheme->not_muted_color
@@ -3008,13 +3144,18 @@ void TimelineComponent::handleIndividualTrackControls(Track* track, const std::s
         soloBtnIt->second->setClicked(false);
     }
     
-    // Handle volume slider
-    if (this->isVisible()) {
+    if (this->isVisible() && !automationDragState.isDragging) {
         if (auto sliderIt = uiElements.trackVolumeSliders.find(name); 
             sliderIt != uiElements.trackVolumeSliders.end() && sliderIt->second) {
-            const float sliderDb = floatToDecibels(sliderIt->second->getValue());
+            const float sliderValue = sliderIt->second->getValue();
+            const float sliderDb = floatToDecibels(sliderValue);
             constexpr float volumeTolerance = 0.001f;
-            if (std::abs(track->getVolume() - sliderDb) > volumeTolerance) {
+            
+            float currentAutomationValue = track->getCurrentParameterValue("Track", "Volume");
+            float expectedSliderValue = automationToVolumeSlider(currentAutomationValue);
+            
+            if (std::abs(sliderValue - expectedSliderValue) > 0.01f && 
+                std::abs(track->getVolume() - sliderDb) > volumeTolerance) {
                 track->setVolume(sliderDb);
             }
         }
@@ -3068,6 +3209,13 @@ void TimelineComponent::processDragOperations() {
 void TimelineComponent::handleClipDragOperations() {
     if (!features.enableClipDragging) return;
     
+    if (automationDragState.isInteracting && !automationDragState.isDragging && 
+        automationDragState.interactionClock.getElapsedTime().asMilliseconds() > 500) {
+        automationDragState.isInteracting = false;
+    }
+    
+    if (automationDragState.isInteracting) return;
+    
     bool isRightPressed = sf::Mouse::isButtonPressed(sf::Mouse::Button::Right);
     bool isLeftPressed = sf::Mouse::isButtonPressed(sf::Mouse::Button::Left);
     bool ctrlPressed = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) || sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RControl);
@@ -3090,6 +3238,8 @@ void TimelineComponent::handleClipDragOperations() {
 
 void TimelineComponent::handlePlacementDragOperations() {
     if (!features.enableClipPlacement) return;
+    
+    if (automationDragState.isInteracting) return;
     
     bool isLeftPressed = sf::Mouse::isButtonPressed(sf::Mouse::Button::Left);
     bool ctrlPressed = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) || sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RControl);
@@ -3125,6 +3275,8 @@ void TimelineComponent::handlePlacementDragOperations() {
 void TimelineComponent::handleDeletionDragOperations() {
     if (!features.enableClipDeletion) return;
     
+    if (automationDragState.isInteracting) return;
+    
     bool isRightPressed = sf::Mouse::isButtonPressed(sf::Mouse::Button::Right);
     bool ctrlPressed = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) || sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RControl);
     
@@ -3159,23 +3311,49 @@ void TimelineComponent::handleDeletionDragOperations() {
 void TimelineComponent::handleAutomationDragOperations() {
     if (!automationDragState.isDragging) return;
     
-    bool isLeftPressed = sf::Mouse::isButtonPressed(sf::Mouse::Button::Left);
+    if (!app->ui->isMouseDragging()) {
+        automationDragState.isDragging = false;
+        automationDragState.isInteracting = false;
+        automationDragState.originalTime = -1.0f;
+        automationDragState.originalValue = -1.0f;
+        return;
+    }
     
-    if (isLeftPressed) {
-        // Continue dragging
-        sf::Vector2f currentMousePos = app->ui->getMousePosition();
-        auto* automationRow = containers[automationDragState.laneId + "_scrollable_row"];
+    sf::Vector2f currentMousePos = app->ui->getMousePosition();
+    auto* automationRow = containers[automationDragState.laneId + "_scrollable_row"];
+    
+    if (automationRow) {
+        sf::Vector2f localMousePos = currentMousePos - automationRow->getPosition();
+        sf::Vector2f rowSize = automationRow->getSize();
         
-        if (automationRow) {
-            sf::Vector2f localMousePos = currentMousePos - automationRow->getPosition();
-            sf::Vector2f rowSize = automationRow->getSize();
+        if (automationDragState.isCurveEditing) {
+            float deltaY = currentMousePos.y - automationDragState.startMousePos.y;
+            bool isAscending = automationDragState.endValue > automationDragState.startValue;
+            float curveMultiplier = isAscending ? -1.0f : 1.0f;
+            float newCurve = automationDragState.startCurve + (deltaY / 200.0f) * curveMultiplier;
+            newCurve = std::max(0.0f, std::min(1.0f, newCurve));
             
-            // Calculate new time and value
+            Track* track = app->getTrack(automationDragState.trackName);
+            if (track) {
+                track->updateAutomationPointCurvePrecise(
+                    automationDragState.effectName,
+                    automationDragState.parameterName,
+                    automationDragState.originalTime,
+                    automationDragState.originalValue,
+                    newCurve
+                );
+            }
+        } else {
             float newTime = xPosToSeconds(app->getBpm(), 100.f * app->uiState.timelineZoomLevel, localMousePos.x - timelineState.timelineOffset, timelineState.timelineOffset);
             float newValue = 1.0f - (localMousePos.y / rowSize.y);
             newValue = std::max(0.0f, std::min(1.0f, newValue));
             
-            // Snap to grid unless Shift is held
+            bool ctrlHeld = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) || sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RControl);
+            if (ctrlHeld) {
+                newValue = std::round(newValue / 0.05f) * 0.05f;
+                newValue = std::max(0.0f, std::min(1.0f, newValue));
+            }
+            
             bool shiftHeld = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LShift) || sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RShift);
             if (!shiftHeld) {
                 auto [timeSigNum, timeSigDen] = app->getTimeSignature();
@@ -3188,20 +3366,62 @@ void TimelineComponent::handleAutomationDragOperations() {
             if (newTime >= 0.0f) {
                 Track* track = app->getTrack(automationDragState.trackName);
                 if (track) {
-                    track->moveAutomationPoint(
+                    const auto* points = track->getAutomationPoints(automationDragState.effectName, automationDragState.parameterName);
+                    if (points) {
+                        float minTime = 0.0f;
+                        float maxTime = std::numeric_limits<float>::max();
+                        
+                        for (const auto& point : *points) {
+                            if (point.time < automationDragState.originalTime && point.time > minTime) {
+                                minTime = point.time;
+                            }
+                            if (point.time > automationDragState.originalTime && point.time < maxTime) {
+                                maxTime = point.time;
+                            }
+                        }
+                        
+                        constexpr float minGap = 0.00001f;
+                        
+                        bool wouldCreateDuplicate = false;
+                        for (const auto& point : *points) {
+                            if (std::abs(point.time - automationDragState.originalTime) < 0.0001f && 
+                                std::abs(point.value - automationDragState.originalValue) < 0.001f) {
+                                continue;
+                            }
+                            
+                            if (std::abs(point.time - newTime) < minGap &&
+                                std::abs(point.value - newValue) < 0.001f) {
+                                wouldCreateDuplicate = true;
+                                break;
+                            }
+                        }
+                        
+                        if (!wouldCreateDuplicate) {
+                            newTime = std::max(minTime + minGap, std::min(newTime, maxTime - minGap));
+                        } else {
+                            newTime = std::max(minTime + 0.001f, std::min(newTime, maxTime - 0.001f));
+                        }
+                    }
+                    
+                    bool moveSuccess = track->moveAutomationPointPrecise(
                         automationDragState.effectName, 
                         automationDragState.parameterName, 
-                        automationDragState.startTime, 
+                        automationDragState.originalTime, 
+                        automationDragState.originalValue,
                         newTime, 
                         newValue
                     );
-                    automationDragState.startTime = newTime; // Update for next move event
+                    
+                    if (moveSuccess) {
+                        automationDragState.originalTime = newTime;
+                        automationDragState.originalValue = newValue;
+                        automationDragState.startTime = newTime;
+                    } else {
+                        automationDragState.isDragging = false;
+                    }
                 }
             }
         }
-    } else {
-        // End dragging when mouse button released
-        automationDragState.isDragging = false;
     }
 }
 
@@ -3249,17 +3469,14 @@ void TimelineComponent::updateScrolling() {
     // Let UILO handle scrolling - read from scrollableRows instead of forcing offsets
     const auto& allTracks = app->getAllTracks();
     if (!allTracks.empty()) {
-        // Use first track as the master offset source
         const std::string rowKey = allTracks[0]->getName() + "_scrollable_row";
         if (auto rowIt = containers.find(rowKey); rowIt != containers.end() && rowIt->second) {
             auto* firstScrollableRow = static_cast<ScrollableRow*>(rowIt->second);
             float newMasterOffset = firstScrollableRow->getOffset();
             
-            // Only update if there's been a significant change
             if (std::abs(newMasterOffset - timelineState.timelineOffset) > 0.1f) {
                 timelineState.timelineOffset = newMasterOffset;
                 
-                // Synchronize all other rows to match the first row
                 for (size_t i = 1; i < allTracks.size(); ++i) {
                     const std::string otherRowKey = allTracks[i]->getName() + "_scrollable_row";
                     if (auto otherRowIt = containers.find(otherRowKey); otherRowIt != containers.end() && otherRowIt->second) {

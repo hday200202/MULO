@@ -32,6 +32,7 @@ public:
 
     void setParameter(int index, float value);
     float getParameter(int index) const;
+    std::string getParameterName(int index) const;
     const juce::Array<juce::AudioProcessorParameter *>& getAllParameters() const;
     int getNumParameters() const;
     

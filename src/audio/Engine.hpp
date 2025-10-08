@@ -7,6 +7,9 @@
 #include <stack>
 #include <fstream>
 #include <iomanip>
+#include <chrono>
+#include <atomic>
+#include <nlohmann/json.hpp>
 
 #include "Composition.hpp"
 #include "../DebugConfig.hpp"
@@ -118,10 +121,9 @@ public:
     juce::File findVSTFile(const std::string& vstName) const;
     
     // State management
-    void saveState();
     void save(const std::string& path = "untitled.mpf") const;
     std::string getStateString() const;
-    void loadState(const std::string& state);
+    void load(const std::string& state);
     
     // Audio device callbacks
     void audioDeviceIOCallbackWithContext(const float* const* inputChannelData, int numInputChannels, float* const* outputChannelData, int numOutputChannels, int numSamples, const juce::AudioIODeviceCallbackContext& context) override;
@@ -143,8 +145,6 @@ public:
     bool configureAudioDevice(double sampleRate, int bufferSize = 256);
 
     std::vector<float> generateWaveformPeaks(const juce::File& audioFile, float duration, float peakResolution = 0.05f);
-    void undo();
-    void redo();
 
     void playSound(const std::string& filePath, float volume);
     void playSound(const juce::File& file, float volume);
@@ -158,6 +158,7 @@ public:
 private:
     juce::AudioDeviceManager deviceManager;
     std::unique_ptr<Composition> currentComposition;
+    
     std::unique_ptr<EnginePlayHead> playHead;
 
     std::unique_ptr<juce::AudioFormatReaderSource> previewSource;
@@ -184,11 +185,21 @@ private:
     juce::MidiBuffer incomingMidiBuffer;
     juce::CriticalSection midiInputLock;
     
+    // Thread safety for engine state changes
+    juce::CriticalSection engineStateLock;
+    
     int synthSilenceCountdown = 0;
     static const int SYNTH_SILENCE_CYCLES = 10;
     
     std::string vstDirectory;
     std::string sampleDirectory;
-    std::string currentState;
     std::vector<PendingEffect> pendingEffects;
+    
+    // State change tracking
+    mutable std::chrono::seconds lastStateChangeTimestamp;
+    mutable std::string lastStateHash;
+    void markStateChanged();
+
+public:
+    std::string getStateHash() const;
 };

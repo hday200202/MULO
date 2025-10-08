@@ -150,6 +150,8 @@ void MixerComponent::update() {
             }
         }
     }
+    
+    syncSlidersToEngine();
 }
 
 bool MixerComponent::handleEvents() {
@@ -229,20 +231,28 @@ bool MixerComponent::handleEvents() {
             lastMuteState = currentMuteState;
         }
 
-        // Handle volume slider changes
         if (volumeIt != volumeSliders.end() && volumeIt->second) {
-            const float sliderDb = floatToDecibels(volumeIt->second->getValue());
-            if (std::abs(track->getVolume() - sliderDb) > tolerance) {
+            const float sliderValue = volumeIt->second->getValue();
+            const float sliderDb = floatToDecibels(sliderValue);
+            
+            float currentAutomationValue = track->getCurrentParameterValue("Track", "Volume");
+            float expectedSliderValue = automationToVolumeSlider(currentAutomationValue);
+            
+            if (std::abs(sliderValue - expectedSliderValue) > 0.01f && 
+                std::abs(track->getVolume() - sliderDb) > tolerance) {
                 track->setVolume(sliderDb);
                 forceUpdate = true;
             }
         }
 
-        // Handle pan slider changes
         if (panIt != panSliders.end() && panIt->second) {
-            float sliderValue = panIt->second->getValue(); // 0.0 to 1.0
-            float enginePanValue = sliderPanToEngine(sliderValue); // Convert to -1.0 to +1.0
-            if (std::abs(track->getPan() - enginePanValue) > tolerance) {
+            float sliderValue = panIt->second->getValue();
+            float enginePanValue = sliderPanToEngine(sliderValue);
+            
+            float currentAutomationValue = track->getCurrentParameterValue("Track", "Pan");
+            
+            if (std::abs(sliderValue - currentAutomationValue) > 0.01f && 
+                std::abs(track->getPan() - enginePanValue) > tolerance) {
                 track->setPan(enginePanValue);
                 forceUpdate = true;
             }
@@ -274,6 +284,7 @@ Column* MixerComponent::createMixerTrack(const std::string& trackName, float vol
         app->resources.activeTheme->slider_knob_color,
         app->resources.activeTheme->slider_bar_color,
         SliderOrientation::Vertical,
+        0.75f,
         trackName + "_mixer_volume_slider"
     );
 
@@ -282,6 +293,7 @@ Column* MixerComponent::createMixerTrack(const std::string& trackName, float vol
         app->resources.activeTheme->slider_knob_color,
         app->resources.activeTheme->slider_bar_color,
         SliderOrientation::Horizontal,
+        0.5f,
         trackName + "_mixer_pan_slider"
     );
 
@@ -346,6 +358,7 @@ Column* MixerComponent::createMasterMixerTrack() {
         app->resources.activeTheme->slider_knob_color,
         app->resources.activeTheme->slider_bar_color,
         SliderOrientation::Vertical,
+        0.75f,
         "Master_mixer_volume_slider"
     );
 
@@ -354,6 +367,7 @@ Column* MixerComponent::createMasterMixerTrack() {
         app->resources.activeTheme->slider_knob_color,
         app->resources.activeTheme->slider_bar_color,
         SliderOrientation::Horizontal,
+        0.5f,
         "Master_mixer_pan_slider"
     );
 
@@ -464,7 +478,10 @@ void MixerComponent::clearTrackElements() {
 }
 
 void MixerComponent::syncSlidersToEngine() {
-    // Process all tracks with unified logic (including master track)
+    if (app->ui->isMouseDragging()) {
+        return;
+    }
+    
     std::vector<Track*> allTracksToSync;
     
     // Add master track
@@ -488,14 +505,14 @@ void MixerComponent::syncSlidersToEngine() {
         auto panSlider = panSliders.find(trackName);
         
         if (volumeSlider != volumeSliders.end() && volumeSlider->second) {
-            float engineVol = track->getVolume();
-            float sliderValue = decibelsToFloat(engineVol);
+            float currentValue = track->getCurrentParameterValue("Track", "Volume");
+            float sliderValue = automationToVolumeSlider(currentValue);
             volumeSlider->second->setValue(sliderValue);
         }
         
         if (panSlider != panSliders.end() && panSlider->second) {
-            float enginePan = track->getPan(); // -1 to +1
-            float sliderValue = enginePanToSlider(enginePan); // Convert to 0 to 1
+            float currentValue = track->getCurrentParameterValue("Track", "Pan");
+            float sliderValue = currentValue;
             panSlider->second->setValue(sliderValue);
         }
     }

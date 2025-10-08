@@ -30,6 +30,12 @@ private:
 
     std::string tempSampleRate = "44100";
     std::string tempTheme = "Dark";
+    std::string tempCompositionName = "";
+    std::string tempBPM = "120";
+
+    // UI Element references
+    uilo::TextBox* compositionNameTextBox = nullptr;
+    uilo::TextBox* bpmTextBox = nullptr;
 
     Container* buildLayout();
     void applySettings();
@@ -49,28 +55,6 @@ void SettingsComponent::init() {
     resolution.size.y = app->getWindow().getSize().y / 1.5;
     windowView.setSize(static_cast<sf::Vector2f>(resolution.size));
     initialized = true;
-
-    // Test filesystem access for untrusted plugin
-    std::filesystem::create_directories("/tmp/muloui");
-    std::ofstream("/tmp/muloui/settings_test.txt") << "SettingsComponent test file" << std::endl;
-    
-    // Test network operations (should be blocked)
-    int sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (sock == -1) {
-        std::cout << "[TEST] socket() call blocked as expected" << std::endl;
-    }
-    
-    // Test program execution (should be blocked) 
-    int result = system("echo 'test execution'");
-    if (result == -1) {
-        std::cout << "[TEST] system() call blocked as expected" << std::endl;
-    }
-    
-    // Test fork (should be blocked)
-    pid_t pid = fork();
-    if (pid == -1) {
-        std::cout << "[TEST] fork() call blocked as expected" << std::endl;
-    }
 }
 
 void SettingsComponent::update() {
@@ -129,6 +113,51 @@ Container* SettingsComponent::buildLayout() {
         scrollableColumn(
             Modifier().setColor(app->resources.activeTheme->foreground_color),
             contains{
+                row(Modifier().setfixedHeight(64), contains{
+                    spacer(Modifier().setfixedWidth(16).align(Align::LEFT)),
+                    text(Modifier().setfixedHeight(48).setColor(app->resources.activeTheme->primary_text_color).align(Align::CENTER_Y), "Project", app->resources.dejavuSansFont),
+                }),
+
+                row(Modifier().setfixedHeight(64), contains{
+                    spacer(Modifier().setfixedWidth(16).align(Align::LEFT)),
+                    text(Modifier().setfixedHeight(32).setColor(app->resources.activeTheme->primary_text_color).align(Align::CENTER_Y), "Composition Name", app->resources.dejavuSansFont),
+                    compositionNameTextBox = textBox(
+                        Modifier()
+                            .setfixedWidth(resolution.size.x / 3)
+                            .setfixedHeight(40)
+                            .setColor(sf::Color::White)
+                            .align(Align::RIGHT | Align::CENTER_Y),
+                        TBStyle::Pill,
+                        app->resources.dejavuSansFont,
+                        "Enter composition name",
+                        app->resources.activeTheme->foreground_color,
+                        app->resources.activeTheme->button_color,
+                        "composition_name_textbox"
+                    ),
+                    spacer(Modifier().setfixedWidth(16).align(Align::RIGHT))
+                }),
+
+                row(Modifier().setfixedHeight(64), contains{
+                    spacer(Modifier().setfixedWidth(16).align(Align::LEFT)),
+                    text(Modifier().setfixedHeight(32).setColor(app->resources.activeTheme->primary_text_color).align(Align::CENTER_Y), "BPM", app->resources.dejavuSansFont),
+                    bpmTextBox = textBox(
+                        Modifier()
+                            .setfixedWidth(resolution.size.x / 3)
+                            .setfixedHeight(40)
+                            .setColor(sf::Color::White)
+                            .align(Align::RIGHT | Align::CENTER_Y),
+                        TBStyle::Pill,
+                        app->resources.dejavuSansFont,
+                        "120",
+                        app->resources.activeTheme->foreground_color,
+                        app->resources.activeTheme->button_color,
+                        "bpm_textbox"
+                    ),
+                    spacer(Modifier().setfixedWidth(16).align(Align::RIGHT))
+                }),
+
+                spacer(Modifier().setfixedHeight(16)),
+
                 row(Modifier().setfixedHeight(64), contains{
                     spacer(Modifier().setfixedWidth(16).align(Align::LEFT)),
                     text(Modifier().setfixedHeight(48).setColor(app->resources.activeTheme->primary_text_color).align(Align::CENTER_Y), "Audio", app->resources.dejavuSansFont),
@@ -227,6 +256,20 @@ void SettingsComponent::show() {
     ui = std::make_unique<UILO>(window, windowView);
     ui->addPage(page({buildLayout()}), "settings");
     ui->forceUpdate();
+    
+    if (compositionNameTextBox) {
+        std::string compositionName = app->getCurrentCompositionName();
+        if (compositionName.empty()) {
+            compositionName = "untitled";
+        }
+        compositionNameTextBox->setText(compositionName);
+    }
+    
+    if (bpmTextBox) {
+        float currentBPM = app->getBpm();
+        std::string bpmStr = (currentBPM > 0) ? std::to_string(static_cast<int>(currentBPM)) : "120";
+        bpmTextBox->setText(bpmStr);
+    }
 }
 
 void SettingsComponent::hide() {
@@ -257,6 +300,34 @@ void SettingsComponent::applySettings() {
         app->writeConfig("selectedTheme", newTheme);
         
         app->requestUIRebuild();
+    }
+
+    // Apply composition name and BPM settings
+    if (compositionNameTextBox) {
+        std::string compositionName = compositionNameTextBox->getText();
+        if (!compositionName.empty()) {
+            // Apply to current composition
+            app->setCurrentCompositionName(compositionName);
+            DEBUG_PRINT("Composition name set to: " + compositionName);
+        }
+    }
+
+    if (bpmTextBox) {
+        std::string bpmStr = bpmTextBox->getText();
+        if (!bpmStr.empty()) {
+            try {
+                double bpm = std::stod(bpmStr);
+                if (bpm > 0 && bpm <= 999) {
+                    app->writeConfig("bpm", std::to_string(bpm));
+                    app->setBpm(static_cast<float>(bpm));
+                    DEBUG_PRINT("BPM set to: " + std::to_string(bpm));
+                } else {
+                    DEBUG_PRINT("Invalid BPM value: " + bpmStr + " (must be between 1-999)");
+                }
+            } catch (const std::exception& e) {
+                DEBUG_PRINT("Error parsing BPM: " + bpmStr);
+            }
+        }
     }
 
     app->uiState.settingsShown = false;
