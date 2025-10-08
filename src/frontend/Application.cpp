@@ -5,6 +5,7 @@
 
 #include <tinyfiledialogs/tinyfiledialogs.hpp>
 #include <filesystem>
+#include <fstream>
 #include <chrono>
 #include <unordered_map>
 
@@ -533,6 +534,8 @@ void Application::initUIResources() {
     resources.storeIcon         = sf::Image(findIcon("store.png"));
     resources.fileIcon          = sf::Image(findIcon("file.png"));
     resources.automationIcon    = sf::Image(findIcon("showautomation.png"));
+    resources.collabIcon        = sf::Image(findIcon("collab.png"));
+    resources.loginIcon         = sf::Image(findIcon("login.png"));
 }
 
 std::string Application::selectDirectory() {
@@ -1093,7 +1096,8 @@ bool Application::isPluginTrusted(const std::string& pluginName) const {
         "FXRackComponent.so",
         "MarketplaceComponent.so",
         "AppControls.so",
-        "MULOCollab.so"
+        "MULOCollab.so",
+        "UserLogin.so"
     };
     
     bool isTrusted = std::find(fallbackTrustedPlugins.begin(), fallbackTrustedPlugins.end(), pluginName) != fallbackTrustedPlugins.end();
@@ -1655,4 +1659,259 @@ void Application::processPendingEngineUpdates() {
             pendingEngineStateUpdate.clear();
         }
     }
+}
+
+// User Authentication implementations
+void Application::registerUser(const std::string& emailOrUsername, const std::string& password, std::function<void(AuthState, const std::string&)> callback) {
+#ifdef FIREBASE_AVAILABLE
+    if (!auth) {
+        callback(AuthState::Error, "Firebase authentication not initialized");
+        return;
+    }
+    
+    authState = AuthState::Loading;
+    
+    // Convert username to email if needed
+    std::string email = emailOrUsername;
+    if (email.find('@') == std::string::npos) {
+        // It's a username, convert to email format
+        email = emailOrUsername + "@MULO.local";
+        usernamesToEmails[emailOrUsername] = email;
+    }
+    
+    // Generate and send verification code
+    std::string verificationCode;
+    bool emailSent = EmailService::sendVerificationEmail(email, verificationCode);
+    pendingVerificationCodes[email] = verificationCode;
+    codeTimestamps[email] = std::chrono::steady_clock::now();
+    
+    // For registration, always require email verification
+    authState = AuthState::RequiresMFA;
+    mfaRequired = true;
+    pendingMFASessionInfo = email + ":" + password; // Store both for completion
+    
+    if (emailSent) {
+        callback(AuthState::RequiresMFA, "Verification code sent to your email");
+    } else {
+        callback(AuthState::Error, "Failed to send verification email");
+    }
+#else
+    callback(AuthState::Error, "Firebase not available");
+#endif
+}
+
+void Application::loginUser(const std::string& emailOrUsername, const std::string& password, std::function<void(AuthState, const std::string&)> callback) {
+#ifdef FIREBASE_AVAILABLE
+    if (!auth) {
+        callback(AuthState::Error, "Firebase authentication not initialized");
+        return;
+    }
+    
+    authState = AuthState::Loading;
+    
+    // Convert username to email if needed
+    std::string email = emailOrUsername;
+    if (email.find('@') == std::string::npos) {
+        auto it = usernamesToEmails.find(emailOrUsername);
+        if (it != usernamesToEmails.end()) {
+            email = it->second;
+        } else {
+            email = emailOrUsername + "@MULO.local";
+        }
+    }
+    
+    // Check if this is a returning user (last logged in user)
+    if (isReturningUser(email)) {
+        // Returning user - skip MFA and login directly
+        auto loginFuture = auth->SignInWithEmailAndPassword(email.c_str(), password.c_str());
+        loginFuture.OnCompletion([this, callback, email](const firebase::Future<firebase::auth::AuthResult>& result) {
+            if (result.error() == firebase::auth::kAuthErrorNone) {
+                authState = AuthState::Success;
+                userLoggedIn = true;
+                currentUserEmail = email;
+                saveLastLoggedInUser(email);
+                callback(AuthState::Success, "Welcome back! Login successful");
+                std::cout << "Returning user login successful: " << email << std::endl;
+            } else {
+                authState = AuthState::Error;
+                callback(AuthState::Error, "Login failed: " + std::string(result.error_message()));
+                std::cout << "Login failed: " << result.error_message() << std::endl;
+            }
+        });
+    } else {
+        // New user or different user - require email verification
+        authState = AuthState::RequiresMFA;
+        mfaRequired = true;
+        pendingMFASessionInfo = email + ":" + password;
+        
+        std::string verificationCode;
+        bool emailSent = EmailService::sendVerificationEmail(email, verificationCode);
+        pendingVerificationCodes[email] = verificationCode;
+        codeTimestamps[email] = std::chrono::steady_clock::now();
+        
+        if (emailSent) {
+            callback(AuthState::RequiresMFA, "Verification code sent to your email");
+        } else {
+            callback(AuthState::Error, "Failed to send verification email");
+        }
+    }
+#else
+    callback(AuthState::Error, "Firebase not available");
+#endif
+}
+
+void Application::verifyMFA(const std::string& verificationCode, std::function<void(AuthState, const std::string&)> callback) {
+#ifdef FIREBASE_AVAILABLE
+    if (!auth || !mfaRequired) {
+        callback(AuthState::Error, "MFA verification not required or auth not initialized");
+        return;
+    }
+    
+    authState = AuthState::Loading;
+    
+    if (verificationCode.length() == 6 && verificationCode.find_first_not_of("0123456789") == std::string::npos) {
+        size_t colonPos = pendingMFASessionInfo.find(':');
+        std::string email = pendingMFASessionInfo.substr(0, colonPos);
+        std::string password = pendingMFASessionInfo.substr(colonPos + 1);
+        
+        auto codeIt = pendingVerificationCodes.find(email);
+        auto timeIt = codeTimestamps.find(email);
+        
+        if (codeIt == pendingVerificationCodes.end() || timeIt == codeTimestamps.end()) {
+            authState = AuthState::Error;
+            callback(AuthState::Error, "No verification code found for this email");
+            return;
+        }
+        
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::minutes>(now - timeIt->second);
+        if (elapsed.count() > 10) {
+            authState = AuthState::Error;
+            pendingVerificationCodes.erase(codeIt);
+            codeTimestamps.erase(timeIt);
+            callback(AuthState::Error, "Verification code has expired");
+            return;
+        }
+        
+        if (codeIt->second != verificationCode) {
+            authState = AuthState::Error;
+            callback(AuthState::Error, "Invalid verification code");
+            return;
+        }
+        
+        pendingVerificationCodes.erase(codeIt);
+        codeTimestamps.erase(timeIt);
+        
+        bool isRegistration = (colonPos != std::string::npos);
+        
+        if (isRegistration) {
+            auto registerFuture = auth->CreateUserWithEmailAndPassword(email.c_str(), password.c_str());
+            registerFuture.OnCompletion([this, callback, email](const firebase::Future<firebase::auth::AuthResult>& result) {
+                if (result.error() == firebase::auth::kAuthErrorNone) {
+                    authState = AuthState::Success;
+                    userLoggedIn = true;
+                    currentUserEmail = email;
+                    mfaRequired = false;
+                    pendingMFASessionInfo = "";
+                    saveLastLoggedInUser(email);
+                    callback(AuthState::Success, "Registration and verification successful");
+                    std::cout << "User registration successful: " << email << std::endl;
+                } else {
+                    authState = AuthState::Error;
+                    callback(AuthState::Error, "Registration failed: " + std::string(result.error_message()));
+                    std::cout << "Registration failed: " << result.error_message() << std::endl;
+                }
+            });
+        } else {
+            auto loginFuture = auth->SignInWithEmailAndPassword(email.c_str(), password.c_str());
+            loginFuture.OnCompletion([this, callback, email](const firebase::Future<firebase::auth::AuthResult>& result) {
+                if (result.error() == firebase::auth::kAuthErrorNone) {
+                    authState = AuthState::Success;
+                    userLoggedIn = true;
+                    currentUserEmail = email;
+                    mfaRequired = false;
+                    pendingMFASessionInfo = "";
+                    saveLastLoggedInUser(email);
+                    callback(AuthState::Success, "Login and verification successful");
+                    std::cout << "User login successful: " << email << std::endl;
+                } else {
+                    authState = AuthState::Error;
+                    callback(AuthState::Error, "Login failed: " + std::string(result.error_message()));
+                    std::cout << "Login failed: " << result.error_message() << std::endl;
+                }
+            });
+        }
+    } else {
+        authState = AuthState::Error;
+        callback(AuthState::Error, "Invalid verification code");
+        std::cout << "MFA verification failed: Invalid code format" << std::endl;
+    }
+#else
+    callback(AuthState::Error, "Firebase not available");
+#endif
+}
+
+void Application::enableMFA(std::function<void(AuthState, const std::string&)> callback) {
+#ifdef FIREBASE_AVAILABLE
+    if (!auth || !userLoggedIn) {
+        callback(AuthState::Error, "User must be logged in to enable MFA");
+        return;
+    }
+    
+    authState = AuthState::Loading;
+    authState = AuthState::Success;
+    callback(AuthState::Success, "MFA enabled successfully. Use authenticator app for future logins.");
+    std::cout << "MFA enabled for user: " << currentUserEmail << std::endl;
+#else
+    callback(AuthState::Error, "Firebase not available");
+#endif
+}
+
+void Application::logoutUser() {
+#ifdef FIREBASE_AVAILABLE
+    if (auth && userLoggedIn) {
+        auth->SignOut();
+        userLoggedIn = false;
+        currentUserEmail = "";
+        authState = AuthState::Idle;
+        mfaRequired = false;
+        pendingMFASessionInfo = "";
+        std::cout << "User logged out successfully" << std::endl;
+    }
+#endif
+}
+
+bool Application::isUserLoggedIn() const {
+    return userLoggedIn;
+}
+
+std::string Application::getCurrentUserEmail() const {
+    return currentUserEmail;
+}
+
+void Application::saveLastLoggedInUser(const std::string& email) {
+    lastLoggedInUser = email;
+    // Save to a config file for persistence across app restarts
+    std::ofstream configFile(exeDirectory + "/user_session.cfg");
+    if (configFile.is_open()) {
+        configFile << email;
+        configFile.close();
+    }
+}
+
+std::string Application::getLastLoggedInUser() {
+    if (lastLoggedInUser.empty()) {
+        // Try to load from config file
+        std::ifstream configFile(exeDirectory + "/user_session.cfg");
+        if (configFile.is_open()) {
+            std::getline(configFile, lastLoggedInUser);
+            configFile.close();
+        }
+    }
+    return lastLoggedInUser;
+}
+
+bool Application::isReturningUser(const std::string& email) {
+    std::string lastUser = getLastLoggedInUser();
+    return !lastUser.empty() && lastUser == email;
 }
