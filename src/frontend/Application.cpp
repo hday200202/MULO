@@ -1503,12 +1503,24 @@ void Application::checkRoomEngineState(const std::string& roomName) {
 #ifdef FIREBASE_AVAILABLE
     if (!realtimeDatabase) return;
     
-    // Prevent too many concurrent Firebase operations with more aggressive throttling
     static std::chrono::steady_clock::time_point lastFirebaseCall;
+    static int consecutiveCallCount = 0;
     auto now = std::chrono::steady_clock::now();
-    if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastFirebaseCall).count() < 500) {
-        return; // Skip if called too frequently (increased from 100ms to 500ms)
+    auto timeSinceLastCall = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastFirebaseCall).count();
+    
+    int minDelay = 1000 + (consecutiveCallCount * 200);
+    minDelay = std::min(minDelay, 5000);
+    
+    if (timeSinceLastCall < minDelay) {
+        return;
     }
+    
+    if (timeSinceLastCall > 10000) {
+        consecutiveCallCount = 0;
+    } else {
+        consecutiveCallCount++;
+    }
+    
     lastFirebaseCall = now;
     
     std::string engineStatePath = "rooms/" + roomName + "/engineState";
@@ -1542,13 +1554,16 @@ void Application::checkRoomEngineState(const std::string& roomName) {
                 if (remoteEngineState != lastKnownRemoteEngineState) {
                     std::string currentEngineState = engine.getStateString();
                     if (remoteEngineState != currentEngineState) {
-                        // Queue engine update instead of applying directly
                         {
                             std::lock_guard<std::mutex> updateLock(engineUpdateMutex);
-                            pendingEngineStateUpdate = remoteEngineState;
-                            hasPendingEngineUpdate = true;
+                            if (!hasPendingEngineUpdate) {
+                                pendingEngineStateUpdate = remoteEngineState;
+                                hasPendingEngineUpdate = true;
+                                std::cout << "Queued engine state update from Firebase" << std::endl;
+                            } else {
+                                std::cout << "Skipped queueing - engine update already pending" << std::endl;
+                            }
                         }
-                        std::cout << "Queued engine state update from Firebase" << std::endl;
                     }
                     lastKnownRemoteEngineState = remoteEngineState;
                 }
@@ -1599,19 +1614,45 @@ void Application::processPendingEngineUpdates() {
         try {
             // Validate the engine state before loading
             if (!pendingEngineStateUpdate.empty()) {
-                auto startTime = std::chrono::steady_clock::now();
-                engine.load(pendingEngineStateUpdate);
-                auto endTime = std::chrono::steady_clock::now();
-                auto loadTime = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
-                std::cout << "Applied pending engine state update safely (" << loadTime << "ms)" << std::endl;
+                // Check if this is the same state we already have to avoid unnecessary work
+                std::string currentStateHash = engine.getStateHash();
+                std::string pendingStateHash = std::to_string(std::hash<std::string>{}(pendingEngineStateUpdate));
+                
+                if (currentStateHash == pendingStateHash) {
+                    std::cout << "Skipping engine state load - state unchanged" << std::endl;
+                } else {
+                    static auto lastLoadTime = std::chrono::steady_clock::now();
+                    auto now = std::chrono::steady_clock::now();
+                    auto timeSinceLastLoad = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastLoadTime).count();
+                    
+                    if (timeSinceLastLoad > 16) {
+                        auto startTime = std::chrono::steady_clock::now();
+                        engine.load(pendingEngineStateUpdate);
+                        auto endTime = std::chrono::steady_clock::now();
+                        auto loadTime = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
+                        std::cout << "Applied pending engine state update safely (" << loadTime << "ms)" << std::endl;
+                        lastLoadTime = endTime;
+                        
+                        hasPendingEngineUpdate = false;
+                        pendingEngineStateUpdate.clear();
+                    } else {
+                        return;
+                    }
+                }
             }
         } catch (const std::exception& e) {
             std::cerr << "Error applying engine state update: " << e.what() << std::endl;
+            hasPendingEngineUpdate = false;
+            pendingEngineStateUpdate.clear();
         } catch (...) {
             std::cerr << "Unknown error applying engine state update" << std::endl;
+            hasPendingEngineUpdate = false;
+            pendingEngineStateUpdate.clear();
         }
         
-        hasPendingEngineUpdate = false;
-        pendingEngineStateUpdate.clear();
+        if (!hasPendingEngineUpdate) {
+            hasPendingEngineUpdate = false;
+            pendingEngineStateUpdate.clear();
+        }
     }
 }

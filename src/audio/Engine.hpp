@@ -69,8 +69,17 @@ public:
         std::vector<std::pair<int, float>> parameters;
     };
     
+    struct PendingAutomation {
+        std::string trackName;
+        std::string effectName;
+        std::string parameterName;
+        std::vector<Track::AutomationPoint> points;
+    };
+    
     const std::vector<PendingEffect>& getPendingEffects() const { return pendingEffects; }
     void clearPendingEffects() { pendingEffects.clear(); }
+    const std::vector<PendingAutomation>& getPendingAutomation() const { return pendingAutomation; }
+    void clearPendingAutomation() { pendingAutomation.clear(); }
 
     void exportMaster(const std::string& filePath);
     
@@ -194,6 +203,7 @@ private:
     std::string vstDirectory;
     std::string sampleDirectory;
     std::vector<PendingEffect> pendingEffects;
+    std::vector<PendingAutomation> pendingAutomation;
     
     // State change tracking
     mutable std::chrono::seconds lastStateChangeTimestamp;

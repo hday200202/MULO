@@ -1803,7 +1803,7 @@ void Engine::load(const std::string& stateData) {
                     }
                 }
                 
-                // Load master track automation data
+                // Store master track automation data
                 if (masterTrackData.contains("automation")) {
                     const auto& automationJson = masterTrackData["automation"];
                     for (const auto& [effectName, parameterMap] : automationJson.items()) {
@@ -1821,12 +1821,16 @@ void Engine::load(const std::string& stateData) {
                                     }
                                 }
                                 
-                                // Only add automation if it's not just a single default point at -1.0 seconds
                                 if (!points.empty() && 
                                     (points.size() > 1 || (points.size() == 1 && points[0].time >= 0.0))) {
-                                    for (const auto& point : points) {
-                                        masterTrack->addAutomationPoint(effectName, parameterName, point);
-                                    }
+                                    PendingAutomation pendingAuto;
+                                    pendingAuto.trackName = "Master";
+                                    pendingAuto.effectName = effectName;
+                                    pendingAuto.parameterName = parameterName;
+                                    pendingAuto.points = points;
+                                    pendingAutomation.push_back(pendingAuto);
+                                    DEBUG_PRINT("Stored pending automation for Master track, effect '" + effectName + 
+                                               "', parameter '" + parameterName + "' with " + std::to_string(points.size()) + " points");
                                 }
                             }
                         }
@@ -2103,7 +2107,7 @@ void Engine::load(const std::string& stateData) {
                         DEBUG_PRINT("No synthesizers array found for track: '" + trackName + "'");
                     }
                     
-                    // Load automation data
+                    // Store automation data for deferred loading after effects are processed
                     if (trackData.contains("automation")) {
                         const auto& automationJson = trackData["automation"];
                         for (const auto& [effectName, parameterMap] : automationJson.items()) {
@@ -2121,12 +2125,17 @@ void Engine::load(const std::string& stateData) {
                                         }
                                     }
                                     
-                                    // Only add automation if it's not just a single default point at -1.0 seconds
                                     if (!points.empty() && 
                                         (points.size() > 1 || (points.size() == 1 && points[0].time >= 0.0))) {
-                                        for (const auto& point : points) {
-                                            track->addAutomationPoint(effectName, parameterName, point);
-                                        }
+                                        PendingAutomation pendingAuto;
+                                        pendingAuto.trackName = trackName;
+                                        pendingAuto.effectName = effectName;
+                                        pendingAuto.parameterName = parameterName;
+                                        pendingAuto.points = points;
+                                        pendingAutomation.push_back(pendingAuto);
+                                        DEBUG_PRINT("Stored pending automation for track '" + trackName + 
+                                                   "', effect '" + effectName + "', parameter '" + parameterName + 
+                                                   "' with " + std::to_string(points.size()) + " points");
                                     }
                                 }
                             }
@@ -2252,6 +2261,39 @@ void Engine::load(const std::string& stateData) {
             }
         }
         pendingEffects.clear();
+        
+        // Process pending automation after all effects are loaded
+        DEBUG_PRINT("Processing " + std::to_string(pendingAutomation.size()) + " pending automation entries");
+        for (const auto& pendingAuto : pendingAutomation) {
+            Track* targetTrack = nullptr;
+            
+            if (pendingAuto.trackName == "Master") {
+                targetTrack = masterTrack.get();
+            } else {
+                // Find the track
+                if (currentComposition) {
+                    for (auto& track : currentComposition->tracks) {
+                        if (track && track->getName() == pendingAuto.trackName) {
+                            targetTrack = track.get();
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            if (targetTrack) {
+                DEBUG_PRINT("Applying automation to track '" + pendingAuto.trackName + 
+                           "', effect '" + pendingAuto.effectName + "', parameter '" + pendingAuto.parameterName + 
+                           "' with " + std::to_string(pendingAuto.points.size()) + " points");
+                
+                for (const auto& point : pendingAuto.points) {
+                    targetTrack->addAutomationPoint(pendingAuto.effectName, pendingAuto.parameterName, point);
+                }
+            } else {
+                DEBUG_PRINT("WARNING: Could not find track '" + pendingAuto.trackName + "' for automation");
+            }
+        }
+        pendingAutomation.clear();
         
         // Send BPM to all loaded synthesizers after project load
         sendBpmToSynthesizers();

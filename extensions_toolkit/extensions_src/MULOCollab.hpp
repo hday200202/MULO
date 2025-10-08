@@ -30,17 +30,21 @@ private:
     std::string lastRoomName = "";
     std::string lastEngineState = "";
     std::string lastStateHash = "";
-    std::chrono::steady_clock::time_point lastStateCheck;
+    std::string cachedStateString = "";
     std::vector<std::string> participantsList;
     
     // State change batching
     std::string pendingStateUpdate = "";
     std::chrono::steady_clock::time_point lastChangeTime;
     std::chrono::steady_clock::time_point joinTime;
+    std::chrono::steady_clock::time_point lastRemoteCheck;
     bool hasPendingUpdate = false;
     bool wasDragging = false;
     bool justJoinedRoom = false;
-    static constexpr int UPDATE_DEBOUNCE_MS = 1000;
+    bool automationDirty = false;
+    static constexpr int UPDATE_DEBOUNCE_MS = 300;
+    static constexpr int REMOTE_CHECK_INTERVAL_MS = 8000;
+    static constexpr int FAST_CHECK_INTERVAL_MS = 2000;
 
     void showWindow();
     void hideWindow();
@@ -61,7 +65,7 @@ void MULOCollab::init() {
     resolution.size.y = app->getWindow().getSize().y / 1.2;
     windowView.setSize(static_cast<sf::Vector2f>(resolution.size));
     
-    lastStateCheck = std::chrono::steady_clock::now();
+    lastRemoteCheck = std::chrono::steady_clock::now();
     lastChangeTime = std::chrono::steady_clock::now();
     hasPendingUpdate = false;
     wasDragging = false;
@@ -88,22 +92,47 @@ void MULOCollab::update() {
             joinTime = std::chrono::steady_clock::now();
             hasPendingUpdate = false;
             app->checkRoomEngineState(currentRoomName);
-            lastStateCheck = std::chrono::steady_clock::now();
+            lastRemoteCheck = std::chrono::steady_clock::now();
         }
     }
     
     if (!currentRoomName.empty()) {
         auto now = std::chrono::steady_clock::now();
-        bool isDragging = app->ui->isMouseDragging();
-        std::string currentEngineState = app->getEngineStateString();
         
-        bool stateChanged = (currentEngineState != lastEngineState);
+        std::string currentStateHash = app->getEngineStateHash();
+        bool stateChanged = (currentStateHash != lastStateHash);
         
+        std::string currentEngineState;
         if (stateChanged) {
+            if (cachedStateString.empty() || currentStateHash != lastStateHash) {
+                currentEngineState = app->getEngineStateString();
+                cachedStateString = currentEngineState;
+            } else {
+                currentEngineState = cachedStateString;
+            }
             pendingStateUpdate = currentEngineState;
             lastChangeTime = now;
             hasPendingUpdate = true;
             lastEngineState = currentEngineState;
+            lastStateHash = currentStateHash;
+        }
+        
+        static auto lastDragCheck = std::chrono::steady_clock::now();
+        auto timeSinceDragCheck = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastDragCheck).count();
+        bool isDragging = false;
+        
+        if (timeSinceDragCheck > 50) {
+            isDragging = app->ui->isMouseDragging() || app->readConfig<bool>("scrubber_dragging", false);
+            lastDragCheck = now;
+        }
+        
+        if (stateChanged) {
+            static auto lastAutomationCheck = std::chrono::steady_clock::now();
+            auto timeSinceAutomationCheck = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastAutomationCheck).count();
+            if (timeSinceAutomationCheck > 200) {
+                automationDirty = true;
+                lastAutomationCheck = now;
+            }
         }
         
         bool shouldSendUpdate = false;
@@ -112,9 +141,10 @@ void MULOCollab::update() {
             if (isDragging) {
                 wasDragging = true;
             } else {
-                if (wasDragging) {
+                if (wasDragging || automationDirty) {
                     shouldSendUpdate = true;
                     wasDragging = false;
+                    automationDirty = false;
                 } else {
                     auto timeSinceChange = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastChangeTime).count();
                     if (timeSinceChange >= UPDATE_DEBOUNCE_MS) {
@@ -136,10 +166,16 @@ void MULOCollab::update() {
             }
         }
         
-        auto timeSinceLastCheck = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastStateCheck).count();
-        if (timeSinceLastCheck > 2000) {
+        auto timeSinceLastCheck = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastRemoteCheck).count();
+        int checkInterval = REMOTE_CHECK_INTERVAL_MS;
+        
+        if (stateChanged) {
+            checkInterval = FAST_CHECK_INTERVAL_MS;
+        }
+        
+        if (timeSinceLastCheck > checkInterval) {
             app->checkRoomEngineState(currentRoomName);
-            lastStateCheck = now;
+            lastRemoteCheck = now;
         }
     }
 
