@@ -274,6 +274,7 @@ Column* MixerComponent::createMixerTrack(const std::string& trackName, float vol
         app->resources.activeTheme->slider_knob_color,
         app->resources.activeTheme->slider_bar_color,
         SliderOrientation::Vertical,
+        0.75f,
         trackName + "_mixer_volume_slider"
     );
 
@@ -282,6 +283,7 @@ Column* MixerComponent::createMixerTrack(const std::string& trackName, float vol
         app->resources.activeTheme->slider_knob_color,
         app->resources.activeTheme->slider_bar_color,
         SliderOrientation::Horizontal,
+        0.5f,
         trackName + "_mixer_pan_slider"
     );
 
@@ -346,6 +348,7 @@ Column* MixerComponent::createMasterMixerTrack() {
         app->resources.activeTheme->slider_knob_color,
         app->resources.activeTheme->slider_bar_color,
         SliderOrientation::Vertical,
+        0.75f,
         "Master_mixer_volume_slider"
     );
 
@@ -354,6 +357,7 @@ Column* MixerComponent::createMasterMixerTrack() {
         app->resources.activeTheme->slider_knob_color,
         app->resources.activeTheme->slider_bar_color,
         SliderOrientation::Horizontal,
+        0.5f,
         "Master_mixer_pan_slider"
     );
 
