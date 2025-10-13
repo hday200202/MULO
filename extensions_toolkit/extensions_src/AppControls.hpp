@@ -26,6 +26,7 @@ private:
     Image* extStore;
     Image* settingsButton;
     Image* collaborationButton;
+    Image* extensionUploaderButton;
 
     bool wasPlaying = false;
 };
@@ -222,6 +223,22 @@ void AppControls::init() {
         "collaboration_button"
     );
 
+    extensionUploaderButton = image(
+        Modifier()
+            .align(Align::LEFT | Align::CENTER_Y)
+            .setfixedHeight(48.f)
+            .setfixedWidth(48)
+            .setColor(app->resources.activeTheme->button_color)
+            .onLClick([&](){
+                bool currentState = app->readConfig<bool>("extupload_shown", false);
+                app->writeConfig("extupload_shown", !currentState);
+                DEBUG_PRINT((!currentState ? "Show Extension Uploader" : "Hide Extension Uploader"));
+            }),
+        app->resources.exportIcon,
+        true,
+        "extension_uploader_button"
+    );
+
     mixerButton = image(
         Modifier()
             .align(Align::RIGHT | Align::CENTER_Y)
@@ -264,6 +281,8 @@ void AppControls::init() {
             spacer(Modifier().setfixedWidth(16).align(Align::LEFT)),
             collaborationButton,
             spacer(Modifier().setfixedWidth(16).align(Align::LEFT)),
+            extensionUploaderButton,
+            spacer(Modifier().setfixedWidth(16).align(Align::LEFT)),
             playButton,
             spacer(Modifier().setfixedWidth(16).align(Align::CENTER_X)),
             metronomeButton,
@@ -298,6 +317,8 @@ bool AppControls::handleEvents() {
     sf::Color settingsButtonBaseColor = app->uiState.settingsShown ? baseMuteColor : baseButtonColor;
     bool collaborationShown = app->readConfig<bool>("collabShowWindow", false);
     sf::Color collaborationButtonBaseColor = collaborationShown ? baseMuteColor : baseButtonColor;
+    bool extensionUploaderShown = app->readConfig<bool>("extupload_shown", false);
+    sf::Color extensionUploaderButtonBaseColor = extensionUploaderShown ? baseMuteColor : baseButtonColor;
     sf::Color extStoreBaseColor = app->uiState.marketplaceShown ? baseMuteColor : baseButtonColor;
     bool loginShown = app->readConfig<bool>("show_user_login", false);
     sf::Color loginButtonBaseColor = loginShown ? baseMuteColor : baseButtonColor;
@@ -347,6 +368,15 @@ bool AppControls::handleEvents() {
     else {
         collaborationButton->m_modifier.setColor(baseButtonColor);
         collaborationButton->setImage(app->resources.collabIcon, true);
+    }
+
+    if (extensionUploaderShown) {
+        extensionUploaderButton->m_modifier.setColor(baseMuteColor);
+        extensionUploaderButton->setImage(app->resources.exportIcon, true);
+    }
+    else {
+        extensionUploaderButton->m_modifier.setColor(baseButtonColor);
+        extensionUploaderButton->setImage(app->resources.exportIcon, true);
     }
 
     if (app->uiState.marketplaceShown) {
@@ -516,6 +546,20 @@ bool AppControls::handleEvents() {
     else {
         collaborationButton->m_modifier.setColor(collaborationButtonBaseColor);
         collaborationButton->setImage(app->resources.collabIcon, true);
+    }
+
+    if (extensionUploaderButton->isHovered()) {
+        extensionUploaderButton->m_modifier.setColor(sf::Color(
+            std::min(255, (int)(extensionUploaderButtonBaseColor.r + 50)),
+            std::min(255, (int)(extensionUploaderButtonBaseColor.g + 50)),
+            std::min(255, (int)(extensionUploaderButtonBaseColor.b + 50))
+        ));
+        extensionUploaderButton->setImage(app->resources.exportIcon, true);
+        extensionUploaderButton->m_isHovered = false;
+    }
+    else {
+        extensionUploaderButton->m_modifier.setColor(extensionUploaderButtonBaseColor);
+        extensionUploaderButton->setImage(app->resources.exportIcon, true);
     }
 
     if (mixerButton->isHovered()) {

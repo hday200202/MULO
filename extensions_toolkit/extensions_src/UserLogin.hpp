@@ -69,7 +69,7 @@ inline void UserLogin::init() {
     app->writeConfig<bool>("show_user_login", false);
 
     resolution.size.x = app->getWindow().getSize().x / 3;
-    resolution.size.y = app->getWindow().getSize().y / 1.2;
+    resolution.size.y = app->getWindow().getSize().y / 2;
     windowView.setSize(static_cast<sf::Vector2f>(resolution.size));
     initialized = true;
 }
@@ -79,6 +79,10 @@ inline void UserLogin::update() {
         showRegisterPage = true;
         showMFAPage = false;
         pendingRegister = false;
+
+        hideWindow();
+        showWindow();
+
         if (ui) {
             ui->switchToPage("register_page");
         }
@@ -88,15 +92,31 @@ inline void UserLogin::update() {
         showRegisterPage = false;
         showMFAPage = false;
         pendingLogin = false;
+
+        hideWindow();
+        showWindow();
+
         if (ui) {
             ui->switchToPage("login_page");
+        }
+    }
+
+    if (showMFAPage) {
+        hideWindow();
+        showWindow();
+
+        if (ui) {
+            ui->switchToPage("mfa_page");
         }
     }
 
     if (window.isOpen() && ui) {
         // Handle MFA input logic for auto-advance
         handleMFAInput();
-        
+
+        if (ui->getScale() != app->ui->getScale())
+            ui->setScale(app->ui->getScale());
+            
         ui->forceUpdate(windowView);
 
         if (ui->windowShouldUpdate()) {
@@ -479,9 +499,6 @@ Container* UserLogin::buildRegisterLayout() {
                                     authStatusMessage = "Enter verification code";
                                     pendingMFAEmail = email;
                                     showMFAPage = true;
-                                    if (ui) {
-                                        ui->switchToPage("mfa_page");
-                                    }
                                 } else {
                                     lastRegisterError = message;
                                     authStatusMessage = "Registration failed";
@@ -674,6 +691,18 @@ Container* UserLogin::buildMFALayout() {
 
 void UserLogin::showWindow() {
     if (window.isOpen()) return;
+
+    if (showRegisterPage) {
+        resolution = sf::VideoMode::getDesktopMode();
+        resolution.size.x = app->getWindow().getSize().x / 3;
+        resolution.size.y = app->getWindow().getSize().y / 1.3;
+    }
+
+    else {
+        resolution = sf::VideoMode::getDesktopMode();
+        resolution.size.x = app->getWindow().getSize().x / 3;
+        resolution.size.y = app->getWindow().getSize().y / 2;
+    }
 
     auto mainPos = app->getWindow().getPosition();
     auto mainSize = app->getWindow().getSize();

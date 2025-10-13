@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <fstream>
 #include <chrono>
+#include <thread>
 #include <unordered_map>
 
 #ifdef __linux__
@@ -135,6 +136,16 @@ void Application::update() {
             component->update();
 
     updateParameterTracking();
+    
+    // Update window title
+    std::string compositionName = engine.getCurrentCompositionName();
+    std::string userInfo = userLoggedIn ? currentUserEmail : "logged out";
+    std::string newTitle = "MULO | " + compositionName + " | " + userInfo;
+    
+    if (newTitle != lastWindowTitle) {
+        window.setTitle(newTitle);
+        lastWindowTitle = newTitle;
+    }
 
     // Process Firebase requests
 #ifdef FIREBASE_AVAILABLE
@@ -1113,7 +1124,7 @@ void Application::initFirebase() {
         options.set_api_key("AIzaSyCz8-U53Iga6AbMXvB7XMjOSSkqVLGYpOA");
         options.set_app_id("1:1068093358007:web:bdc95a20f8e60375bf7232");
         options.set_project_id("mulo-marketplace");
-        options.set_storage_bucket("mulo-marketplace.appspot.com");
+        options.set_storage_bucket("mulo-marketplace.firebasestorage.app");
         options.set_database_url("https://mulo-marketplace-default-rtdb.firebaseio.com/");
 
         firebaseApp.reset(firebase::App::Create(options));
@@ -1128,7 +1139,8 @@ void Application::initFirebase() {
         
         auth = firebase::auth::Auth::GetAuth(firebaseApp.get());        
         realtimeDatabase = firebase::database::Database::GetInstance(firebaseApp.get());
-        realtimeDatabase->set_persistence_enabled(false);        
+        realtimeDatabase->set_persistence_enabled(false);
+        storage = firebase::storage::Storage::GetInstance(firebaseApp.get());        
         auto authFuture = auth->SignInAnonymously();
         authFuture.OnCompletion([this](const firebase::Future<firebase::auth::AuthResult>& result) {
             if (result.error() == firebase::auth::kAuthErrorNone) {
@@ -1186,6 +1198,114 @@ void Application::fetchExtensions(std::function<void(FirebaseState, const std::v
     extensions.clear();
     
     extFuture = firestore->Collection("extensions").Get();
+#endif
+}
+
+void Application::uploadExtension(const ExtensionData& extensionData, const std::vector<std::string>& filePaths, 
+                                std::function<void(FirebaseState, const std::string&)> callback) {
+#ifdef FIREBASE_AVAILABLE
+    if (!firestore || !storage || !auth) {
+        callback(FirebaseState::Error, "Firebase not initialized");
+        return;
+    }
+
+    if (filePaths.empty()) {
+        callback(FirebaseState::Error, "No files to upload");
+        return;
+    }
+    
+    std::thread([this, extensionData, filePaths, callback]() {
+        auto docRef = firestore->Collection("extensions").Document();
+        std::string documentId = docRef.id();
+        
+        std::string firstFilePath = filePaths[0];
+        std::string fileName = firstFilePath.substr(firstFilePath.find_last_of("/\\") + 1);
+        
+        std::string storagePath = "extensions/" + documentId + "/" + fileName;
+        auto storageRef = storage->GetReference(storagePath);
+        
+        firebase::storage::Metadata metadata;
+        metadata.set_content_type("application/octet-stream");
+        metadata.set_cache_control("no-cache");
+        std::ifstream file(firstFilePath, std::ios::binary | std::ios::ate);
+        if (!file.is_open()) {
+            callback(FirebaseState::Error, "Failed to read file");
+            return;
+        }
+        
+        std::streamsize size = file.tellg();
+        file.seekg(0, std::ios::beg);
+        
+        std::vector<uint8_t> buffer(size);
+        if (!file.read(reinterpret_cast<char*>(buffer.data()), size)) {
+            callback(FirebaseState::Error, "Failed to read file data");
+            return;
+        }
+        file.close();
+    
+        auto bucketRef = firebase::storage::Storage::GetInstance(firebaseApp.get(), "gs://mulo-marketplace.firebasestorage.app");
+        auto storageRef2 = bucketRef->GetReference(storagePath);
+        
+        auto uploadFuture = storageRef2.PutBytes(buffer.data(), size);
+        
+        while (uploadFuture.status() == firebase::kFutureStatusPending) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        
+        if (uploadFuture.error() != 0) {
+            std::string errorMsg = uploadFuture.error_message() ? uploadFuture.error_message() : "Unknown error";
+            std::string friendlyError;
+            switch(uploadFuture.error()) {
+                case 1: friendlyError = "Cancelled"; break;
+                case 2: friendlyError = "Permission denied - Firebase Storage rules need to be updated"; break;
+                case 3: friendlyError = "Invalid argument"; break;
+                case 4: friendlyError = "Deadline exceeded"; break;
+                case 5: friendlyError = "Not found"; break;
+                case 6: friendlyError = "Already exists"; break;
+                case 7: friendlyError = "Permission denied"; break;
+                case 16: friendlyError = "Unauthenticated"; break;
+                default: friendlyError = "Error " + std::to_string(uploadFuture.error());
+            }
+            callback(FirebaseState::Error, "Failed to upload file: " + friendlyError + " (" + errorMsg + ")");
+            return;
+        }
+        auto urlFuture = storageRef2.GetDownloadUrl();
+        
+        while (urlFuture.status() == firebase::kFutureStatusPending) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        
+        if (urlFuture.error() != 0) {
+            callback(FirebaseState::Error, "Failed to get download URL: " + std::string(urlFuture.error_message()));
+            return;
+        }
+        
+        std::string downloadURL = urlFuture.result()->c_str();
+        firebase::firestore::MapFieldValue data;
+        data["author"] = firebase::firestore::FieldValue::String(extensionData.author);
+        data["description"] = firebase::firestore::FieldValue::String(extensionData.description);
+        data["name"] = firebase::firestore::FieldValue::String(extensionData.name);
+        data["version"] = firebase::firestore::FieldValue::String(extensionData.version);
+        data["verified"] = firebase::firestore::FieldValue::Boolean(false);
+        data["downloadURL"] = firebase::firestore::FieldValue::String(downloadURL);
+        
+        auto setFuture = docRef.Set(data);
+        
+        while (setFuture.status() == firebase::kFutureStatusPending) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        
+        if (setFuture.error() != 0) {
+            callback(FirebaseState::Error, "Failed to create document: " + std::string(setFuture.error_message()));
+            return;
+        }
+        
+        callback(FirebaseState::Success, "Extension uploaded successfully");
+    
+    }).detach(); // Detach thread so it runs independently
+    
+#else
+    callback(FirebaseState::Error, "Firebase not available");
 #endif
 }
 

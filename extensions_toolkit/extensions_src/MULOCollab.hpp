@@ -197,6 +197,9 @@ void MULOCollab::update() {
             participantsListText->setString(participantsText);
         }
         
+        if (ui->getScale() != app->ui->getScale())
+            ui->setScale(app->ui->getScale());
+            
         ui->forceUpdate(windowView);
 
         if (ui->windowShouldUpdate()) {

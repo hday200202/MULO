@@ -68,6 +68,9 @@ void SettingsComponent::update() {
     }
 
     if (window.isOpen() && ui) {
+        if (ui->getScale() != app->ui->getScale())
+            ui->setScale(app->ui->getScale());
+            
         ui->forceUpdate(windowView);
 
         if (ui->windowShouldUpdate()) {

@@ -37,6 +37,7 @@
 #include <firebase/firestore.h>
 #include <firebase/database.h>
 #include <firebase/auth.h>
+#include <firebase/storage.h>
 #endif
 
 class Application;
@@ -258,6 +259,8 @@ public:
     
     void initFirebase();
     void fetchExtensions(std::function<void(FirebaseState, const std::vector<ExtensionData>&)> callback);
+    void uploadExtension(const ExtensionData& extensionData, const std::vector<std::string>& filePaths, 
+                        std::function<void(FirebaseState, const std::string&)> callback);
     FirebaseState getFirebaseState() const { return firebaseState; }
     const std::vector<ExtensionData>& getExtensions() const { return extensions; }
 
@@ -359,6 +362,7 @@ private:
     firebase::firestore::Firestore* firestore = nullptr;
     firebase::database::Database* realtimeDatabase = nullptr;
     firebase::auth::Auth* auth = nullptr;
+    firebase::storage::Storage* storage = nullptr;
     firebase::Future<firebase::firestore::QuerySnapshot> extFuture;
 #endif
     FirebaseState firebaseState = FirebaseState::Idle;
@@ -376,6 +380,9 @@ private:
     std::unordered_map<std::string, std::string> usernamesToEmails; // Map usernames to emails
     std::unordered_map<std::string, std::string> pendingVerificationCodes; // Map emails to verification codes
     std::unordered_map<std::string, std::chrono::steady_clock::time_point> codeTimestamps; // Code expiration
+    
+    // Window title tracking
+    std::string lastWindowTitle = "";
     
     // Thread safety for Firebase operations
 #ifdef FIREBASE_AVAILABLE
@@ -410,9 +417,6 @@ private:
     
     bool isPluginTrusted(const std::string& pluginName) const;
     
-    // Firebase resource cleanup
-    void cleanupFirebaseResources();
-    
-    // Thread-safe engine updates
+    void cleanupFirebaseResources();    
     void processPendingEngineUpdates();
 };
