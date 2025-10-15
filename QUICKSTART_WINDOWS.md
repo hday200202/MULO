@@ -70,20 +70,38 @@ Both the batch file and PowerShell script support parameters:
 
 ---
 
-## Building the Sandbox DLL
+## Building MULO (Complete Build)
 
-Before running the sandbox, you need to build it:
+MULO requires both the main application AND UI extensions to display properly.
 
-### Full Build:
+### Easy Way (Recommended):
 ```powershell
-# If build directory doesn't exist:
+.\build_all.bat
+```
+
+This automatically builds:
+- MULO executable
+- Sandbox DLL
+- All UI extension DLLs
+- Copies everything to the correct locations
+
+### Manual Build (Advanced):
+```powershell
+# Build main application
 mkdir build
 cd build
 cmake ..
+cmake --build . --config Release
 cd ..
 
-# Build everything
-cmake --build build --config Release
+# Build UI extensions
+cd extensions_toolkit\build
+cmake ..
+cmake --build . --config Release
+cd ..\..
+
+# Copy extensions to output
+Copy-Item "extensions_toolkit\build\Release\*.dll" "bin\Windows\Release\extensions\"
 ```
 
 ### Build Only the Sandbox:
@@ -159,14 +177,11 @@ MULO/
 
 **Recommended workflow:**
 
-1. **Build the project** (one time):
+1. **Build everything** (first time):
    ```powershell
-   mkdir build
-   cd build
-   cmake ..
-   cmake --build . --config Release
-   cd ..
+   .\build_all.bat
    ```
+   This builds MULO + sandbox + all UI extensions
 
 2. **Run with sandbox**:
    ```powershell
@@ -174,6 +189,8 @@ MULO/
    ```
 
 That's it! 🎉
+
+**Note:** Without the UI extensions, MULO will show a blank screen!
 
 ---
 
