@@ -2,6 +2,8 @@
 
 # Sandbox Test Script for MDAW
 # This script demonstrates how to run MULO with the plugin sandbox enabled
+# Supports: macOS, Linux
+# For Windows, use: run_with_sandbox.ps1
 
 # Get the directory where this script is located
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
@@ -18,8 +20,18 @@ elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
     SANDBOX_LIB="libsandbox_override.so"
     ENV_VAR="LD_PRELOAD"
     echo "🐧 Detected Linux platform"
+elif [[ "$OSTYPE" == "msys" ]] || [[ "$OSTYPE" == "cygwin" ]] || [[ "$OSTYPE" == "win32" ]]; then
+    echo "🪟 Detected Windows platform"
+    echo "❌ Please use the PowerShell script for Windows:"
+    echo "   .\run_with_sandbox.ps1"
+    exit 1
 else
     echo "❌ Unsupported platform: $OSTYPE"
+    echo ""
+    echo "Supported platforms:"
+    echo "  • macOS (darwin)   - use this script"
+    echo "  • Linux (linux-gnu) - use this script"
+    echo "  • Windows          - use run_with_sandbox.ps1"
     exit 1
 fi
 
