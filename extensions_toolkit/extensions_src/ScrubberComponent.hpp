@@ -25,6 +25,7 @@ private:
 };
 
 void ScrubberComp::init() {
+    return;
     MULOComponent* timeline = app->getComponent("timeline");
 
     if (!timeline) return;

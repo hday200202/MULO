@@ -1,0 +1,14 @@
+=== Timeline Component Profile ===
+Total accumulated time: 218.898 ms
+
+Function                                     Calls   Total(ms)     Avg(ms)     Min(ms)     Max(ms)  % Total
+----------------------------------------------------------------------------------------------------------
+TimelineComponent::update()                   1687     207.556       0.123       0.007       8.934   94.819%
+updateMeasureLines()                           476       4.539       0.010       0.006       0.131    2.074%
+generateClipShapes(drums)                     1352       3.223       0.002       0.000       0.053    1.472%
+generateClipShapes(drums_1)                    740       1.005       0.001       0.001       0.043    0.459%
+generateAutomationLine(drums_1)                784       0.959       0.001       0.000       0.010    0.438%
+generateAutomationLine(Vital)                  632       0.672       0.001       0.000       0.025    0.307%
+generateAutomationLine(drums)                 1033       0.506       0.000       0.000       0.020    0.231%
+generateClipShapes(Vital)                      501       0.417       0.001       0.000       0.073    0.190%
+generateClipShapes(Master)                    1365       0.021       0.000       0.000       0.009    0.010%

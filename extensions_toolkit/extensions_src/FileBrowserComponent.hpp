@@ -891,7 +891,7 @@ void FileBrowserComponent::startDrag(const std::string& path, const sf::Vector2f
         float scaledWidth = dragIconTexture.getSize().x * 0.125f/2.f;
         float scaledHeight = dragIconTexture.getSize().y * 0.125f/2.f;
 
-        dragIconSprite->setPosition(sf::Vector2f(mousePos.x + 360 - 32, mousePos.y));
+        dragIconSprite->setPosition(sf::Vector2f(mousePos.x - 32, mousePos.y - 32));
         isDragIconVisible = true;
         
         std::vector<std::shared_ptr<sf::Drawable>> dragGeometry;
@@ -909,7 +909,7 @@ void FileBrowserComponent::updateDrag(const sf::Vector2f& mousePos) {
         float scaledWidth = dragIconTexture.getSize().x * 0.125f/2.f;
         float scaledHeight = dragIconTexture.getSize().y * 0.125f/2.f;
         
-        dragIconSprite->setPosition(sf::Vector2f(mousePos.x + 360 - 32, mousePos.y));
+        dragIconSprite->setPosition(sf::Vector2f(mousePos.x - 32, mousePos.y - 32));
         
         std::vector<std::shared_ptr<sf::Drawable>> dragGeometry;
         dragGeometry.push_back(std::shared_ptr<sf::Drawable>(dragIconSprite.get(), [](sf::Drawable*){}));

@@ -108,6 +108,8 @@ struct UITheme {
     sf::Color line_color;
     sf::Color wave_form_color;
     sf::Color selected_track_color;
+    sf::Color automation_lane_color;
+    sf::Color automation_label_color;
     
     UITheme(
         sf::Color btn = sf::Color::Red,
@@ -128,12 +130,15 @@ struct UITheme {
         sf::Color clip = sf::Color(100, 150, 200),
         sf::Color line = sf::Color(80, 80, 80),
         sf::Color waveform = sf::Color(0, 150, 255),
-        sf::Color selectedTrack = sf::Color(100, 150, 200)
+        sf::Color selectedTrack = sf::Color(100, 150, 200),
+        sf::Color automationLane = sf::Color(100, 100, 100),
+        sf::Color automationLabel = sf::Color(140, 140, 140)
     ) : button_color(btn), track_color(track), track_row_color(trackRow), master_track_color(masterTrack),
         mute_color(mute), foreground_color(fg), primary_text_color(primaryText), secondary_text_color(secondaryText),
         not_muted_color(notMuted), middle_color(middle), alt_button_color(altBtn), white(w), black(b),
         slider_knob_color(sliderKnob), slider_bar_color(sliderBar), clip_color(clip), line_color(line), 
-        wave_form_color(waveform), selected_track_color(selectedTrack) {}
+        wave_form_color(waveform), selected_track_color(selectedTrack), automation_lane_color(automationLane),
+        automation_label_color(automationLabel) {}
 };
 
 namespace Themes {
@@ -155,7 +160,10 @@ namespace Themes {
         sf::Color::Black,             // sliderBarColor
         sf::Color::White,             // clipColor - Light Blue
         sf::Color(80, 80, 80),        // lineColor - Gray
-        sf::Color::Black              // waveformColor - Blue
+        sf::Color::Black,             // waveformColor - Blue
+        sf::Color(100, 150, 200),     // selectedTrackColor
+        sf::Color(100, 100, 100),     // automationLaneColor
+        sf::Color(140, 140, 140)      // automationLabelColor
     );
     
     // Dark Theme
@@ -178,7 +186,9 @@ namespace Themes {
         sf::Color(90, 120, 160),      // clipColor - Muted Blue
         sf::Color(100, 100, 100),     // lineColor - Medium Gray
         sf::Color::White,             // waveformColor - Soft Blue
-        sf::Color(90, 120, 160)       // selectedTrackColor - Muted Blue
+        sf::Color(90, 120, 160),      // selectedTrackColor - Muted Blue
+        sf::Color(35, 35, 35),        // automationLaneColor - Darker Gray
+        sf::Color(50, 50, 50)         // automationLabelColor - Dark Gray
     );
     
     // Light Theme
@@ -201,7 +211,9 @@ namespace Themes {
         sf::Color(120, 160, 200),     // clipColor - Light Blue
         sf::Color(120, 120, 120),     // lineColor - Medium Gray
         sf::Color(80, 140, 200),      // waveformColor - Blue
-        sf::Color(120, 160, 200)      // selectedTrackColor - Light Blue
+        sf::Color(120, 160, 200),     // selectedTrackColor - Light Blue
+        sf::Color(225, 225, 225),     // automationLaneColor - Very Light Gray
+        sf::Color(210, 210, 210)      // automationLabelColor - Light Gray
     );
     
     // Cyberpunk Theme
@@ -224,7 +236,9 @@ namespace Themes {
         sf::Color(120, 80, 140),      // clipColor - Muted Purple-Pink
         sf::Color(80, 120, 120),      // lineColor - Muted Teal
         sf::Color(140, 100, 160),     // waveformColor - Soft Purple
-        sf::Color(120, 80, 140)
+        sf::Color(120, 80, 140),      // selectedTrackColor
+        sf::Color(38, 35, 48),        // automationLaneColor - Dark Purple
+        sf::Color(55, 50, 65)         // automationLabelColor - Muted Purple
     );
     
     // Forest Theme
@@ -247,7 +261,9 @@ namespace Themes {
         sf::Color(100, 130, 90),      // clipColor - Sage Green
         sf::Color(110, 120, 100),     // lineColor - Olive Gray
         sf::Color(120, 150, 100),     // waveformColor - Light Green
-        sf::Color(100, 130, 90)
+        sf::Color(100, 130, 90),      // selectedTrackColor
+        sf::Color(85, 95, 75),        // automationLaneColor - Dark Olive
+        sf::Color(90, 100, 80)        // automationLabelColor - Muted Olive
     );
     
     // Ocean Theme
@@ -269,7 +285,10 @@ namespace Themes {
         sf::Color(30, 90, 120),       // sliderBarColor - Blue Gray
         sf::Color(80, 180, 220),      // clipColor - Light Aqua
         sf::Color(100, 160, 200),     // lineColor - Soft Blue
-        sf::Color(120, 200, 240)      // waveformColor - Bright Blue
+        sf::Color(120, 200, 240),     // waveformColor - Bright Blue
+        sf::Color(80, 180, 220),      // selectedTrackColor - Light Aqua
+        sf::Color(35, 70, 105),       // automationLaneColor - Dark Blue
+        sf::Color(40, 80, 120)        // automationLabelColor - Blue Gray
     );
     
     // Sunset Theme
@@ -291,7 +310,10 @@ namespace Themes {
         sf::Color(200, 120, 60),      // sliderBarColor - Orange Brown
         sf::Color(255, 160, 80),      // clipColor - Orange
         sf::Color(255, 200, 120),     // lineColor - Light Yellow
-        sf::Color(255, 180, 120)      // waveformColor - Peach
+        sf::Color(255, 180, 120),     // waveformColor - Peach
+        sf::Color(255, 160, 80),      // selectedTrackColor - Orange
+        sf::Color(220, 140, 90),      // automationLaneColor - Tan
+        sf::Color(200, 120, 80)       // automationLabelColor - Burnt Orange
     );
     
     // Monochrome Theme

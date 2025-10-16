@@ -292,13 +292,13 @@ void SettingsComponent::applySettings() {
     }
     applying = true;
     
-    double sampleRate = std::stod(getDropdown("sample_rate_dropdown")->getSelected());
+    double sampleRate = std::stod(ui->getDropdown("sample_rate_dropdown")->getSelected());
 
     if (app->getSampleRate() != sampleRate)
         app->setSampleRate(sampleRate);
 
-    if (getDropdown("ui_theme_dropdown")->getSelected() != app->uiState.selectedTheme) {
-        std::string newTheme = getDropdown("ui_theme_dropdown")->getSelected();
+    if (ui->getDropdown("ui_theme_dropdown")->getSelected() != app->uiState.selectedTheme) {
+        std::string newTheme = ui->getDropdown("ui_theme_dropdown")->getSelected();
         app->uiState.selectedTheme = newTheme;
         app->writeConfig("selectedTheme", newTheme);
         

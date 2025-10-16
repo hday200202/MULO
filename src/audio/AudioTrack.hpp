@@ -22,6 +22,7 @@ public:
     void addClip(const AudioClip& clip) override;
     void removeClip(size_t index) override;
     const std::vector<AudioClip>& getClips() const override;
+    AudioClip* getClip(size_t index); // Get mutable pointer to clip for in-place modification
     void clearClips() override;
     void setReferenceClip(const AudioClip& clip);
     AudioClip* getReferenceClip() override;

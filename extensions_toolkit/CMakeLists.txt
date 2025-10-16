@@ -185,14 +185,41 @@ function(add_extension EXTENSION_NAME)
     target_compile_definitions(${EXTENSION_NAME} PRIVATE ${COMMON_COMPILE_DEFINITIONS})
 endfunction()
 
-# Automatically discover and build all extensions from extensions_src
+# Check if we have a selective build list
+set(BUILD_LIST_FILE "${CMAKE_BINARY_DIR}/extensions_to_build.txt")
+set(EXTENSIONS_TO_BUILD_LIST "")
+
+if(EXISTS ${BUILD_LIST_FILE})
+    file(STRINGS ${BUILD_LIST_FILE} EXTENSIONS_TO_BUILD_LIST)
+    message(STATUS "Building only selected extensions from ${BUILD_LIST_FILE}")
+endif()
+
+# Automatically discover and build extensions from extensions_src
 file(GLOB EXTENSION_HEADERS "${CMAKE_SOURCE_DIR}/extensions_src/*.hpp")
 set(EXTENSION_TARGETS)
 
 foreach(HEADER_FILE ${EXTENSION_HEADERS})
     get_filename_component(EXTENSION_NAME ${HEADER_FILE} NAME_WE)
-    add_extension(${EXTENSION_NAME})
-    list(APPEND EXTENSION_TARGETS ${EXTENSION_NAME})
+    
+    # Check if we should build this extension
+    set(SHOULD_BUILD TRUE)
+    if(EXTENSIONS_TO_BUILD_LIST)
+        set(SHOULD_BUILD FALSE)
+        foreach(EXT_TO_BUILD ${EXTENSIONS_TO_BUILD_LIST})
+            if(EXTENSION_NAME STREQUAL EXT_TO_BUILD)
+                set(SHOULD_BUILD TRUE)
+                break()
+            endif()
+        endforeach()
+    endif()
+    
+    if(SHOULD_BUILD)
+        message(STATUS "Building extension: ${EXTENSION_NAME}")
+        add_extension(${EXTENSION_NAME})
+        list(APPEND EXTENSION_TARGETS ${EXTENSION_NAME})
+    else()
+        message(STATUS "Skipping extension: ${EXTENSION_NAME}")
+    endif()
 endforeach()
 
 # Common compile definitions

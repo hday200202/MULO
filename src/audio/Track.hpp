@@ -75,6 +75,7 @@ public:
     // Audio clip management - must be implemented by derived classes
     virtual void clearClips() = 0;
     virtual const std::vector<AudioClip>& getClips() const = 0;
+    virtual AudioClip* getClip(size_t index) { return nullptr; } // Default implementation for MIDI tracks
     virtual void addClip(const AudioClip& clip) = 0;
     virtual void removeClip(size_t index) = 0;
     virtual AudioClip* getReferenceClip() = 0;

@@ -74,9 +74,7 @@ void MixerComponent::init() {
         contains{}, 
         "mixer"
     );
-    
-    containers["mixer"] = mixerScrollable;
-    
+        
     // Build tracks from engine
     rebuildUIFromEngine();
     

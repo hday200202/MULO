@@ -16,6 +16,16 @@
 #ifdef Success
 #undef Success
 #endif
+
+// log X11 errors rather than exiting
+static int x11ErrorHandler(Display* display, XErrorEvent* event) {
+    char errorText[256];
+    XGetErrorText(display, event->error_code, errorText, sizeof(errorText));
+    std::cerr << "X11 Error: " << errorText 
+              << " (request code: " << (int)event->request_code 
+              << ", minor code: " << (int)event->minor_code << ")" << std::endl;
+    return 0;
+}
 #endif
 
 #ifdef _WIN32
@@ -53,6 +63,10 @@ namespace fs = std::filesystem;
 Application::Application() {}
 
 void Application::initialise(const juce::String& commandLine) {
+#ifdef __linux__
+    XSetErrorHandler(x11ErrorHandler);
+#endif
+
 #ifdef _WIN32
     char path[MAX_PATH];
     GetModuleFileNameA(NULL, path, MAX_PATH);
@@ -912,14 +926,11 @@ void Application::unloadAllPlugins() {
         unloadPlugin(name);
     }
 
-    sliders.clear();
-    containers.clear();
-    texts.clear();
-    spacers.clear();
-    buttons.clear();
-    dropdowns.clear();
     uilo_owned_elements.clear();
     high_priority_elements.clear();
+    
+    // Note: Element registries (sliders, buttons, etc.) are now per-UILO instance
+    // and will be cleaned up when the UILO instance is destroyed
 }
 
 void Application::saveLayoutConfig() {

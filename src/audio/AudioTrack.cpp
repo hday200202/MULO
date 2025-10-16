@@ -14,6 +14,13 @@ void AudioTrack::removeClip(size_t idx) {
 
 const std::vector<AudioClip>& AudioTrack::getClips() const { return clips; }
 
+AudioClip* AudioTrack::getClip(size_t index) {
+    if (index < clips.size()) {
+        return &clips[index];
+    }
+    return nullptr;
+}
+
 void AudioTrack::clearClips() { clips.clear(); }
 
 void AudioTrack::setReferenceClip(const AudioClip& clip) {
