@@ -2312,13 +2312,17 @@ void TimelineComponent::handleClipDrag() {
         if (uiState.isResizingClip) return;        
         if (uiState.selectedClipTrack.empty() || uiState.selectedClipStartTime < 0.0) return;
         
-        // Skip if mouse is in automation lane area
         if (isMouseInAutomationLane(uiState.selectedClipTrack, input.mousePosition.y)) return;
         
         // Only start if mouse was just pressed (not already dragging from previous frame)
         if (!input.prevLeftMousePressed) {
             Track* track = app->getTrack(uiState.selectedClipTrack);
             if (!track) return;
+
+            Container* trackLane = app->ui->getRow(track->getName() + "_lane_scrollable");
+            if (trackLane)
+                if (!trackLane->m_bounds.getGlobalBounds().contains(app->ui->getMousePosition()))
+                    return;
             
             if (!uiState.showCursor || uiState.cursorTrackName.empty()) return;
             
@@ -2774,10 +2778,9 @@ std::vector<std::shared_ptr<sf::Drawable>> TimelineComponent::generateClipShapes
             if (!clip.midiData.isEmpty()) {
                 sf::Color noteColor = app->resources.activeTheme->wave_form_color;
                 
-                // First pass: find the pitch range of all notes
                 int minNote = 127;
                 int maxNote = 0;
-                std::vector<std::tuple<int, double, double>> noteList; // note number, start time, duration
+                std::vector<std::tuple<int, double, double>> noteList;
                 
                 for (const auto metadata : clip.midiData) {
                     auto message = metadata.getMessage();
@@ -2840,9 +2843,6 @@ std::vector<std::shared_ptr<sf::Drawable>> TimelineComponent::generateClipShapes
                     
                     // Make sure note is at least 1 pixel wide
                     if (noteWidth < 1.f) noteWidth = 1.f;
-                    
-                    // Calculate Y position based on pitch range
-                    // Higher notes at top, lower notes at bottom
                     float noteYRatio = (float)(maxNote - noteNumber) / (float)pitchRange;
                     float noteY = 2.f + clipHeight * noteYRatio * 0.95f; // Leave small margin at top/bottom
                     float noteHeight = std::max(1.5f, clipHeight / (float)pitchRange * 0.9f);
