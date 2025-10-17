@@ -1,10 +1,10 @@
 #pragma once
 
-// Debug configuration for MDAW
+// Debug configuration for MULO
 // Uncomment the line below to enable debug output
-#define MDAW_DEBUG
+// #define MULO_DEBUG
 
-#ifdef MDAW_DEBUG
+#ifdef MULO_DEBUG
     #include <iostream>
     #include <iomanip>
     #define DEBUG_PRINT(x) std::cout << x << std::endl

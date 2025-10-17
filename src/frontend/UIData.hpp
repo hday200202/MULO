@@ -74,6 +74,9 @@ struct UIResources {
     sf::Image mixerIcon;
     sf::Image storeIcon;
     sf::Image fileIcon;
+    sf::Image automationIcon;
+    sf::Image collabIcon;
+    sf::Image loginIcon;
 
     UITheme* activeTheme = nullptr;
     // Add more resources as needed

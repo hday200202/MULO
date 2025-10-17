@@ -66,6 +66,7 @@ private:
 
     ScrollableColumn* baseColumn;
     float pianoRollOffset = 0.f;
+    float columnOffset = 0.f;
     std::unordered_map<std::string, ScrollableRow*> noteRows;
     bool pianoRollShown = false;
     bool wasVisible = false;
@@ -74,6 +75,8 @@ private:
     float lastMeasureWidth = -1.f;
     float lastScrollOffset = -1.f;
     sf::Vector2f lastRowSize = {-1.f, -1.f};
+    float lastZoomLevel = -1.f;
+    float pianoRollZoomLevel = 1.0f;
 
     // MIDI clip editing
     MIDIClip* selectedMIDIClip = nullptr;
@@ -112,6 +115,9 @@ private:
     float xPositionToClipTime(float xPosition) const;
     int getNoteNumberFromRowName(const std::string& noteName) const;
     std::vector<std::shared_ptr<sf::Drawable>> generateNoteRectsForRow(int targetNoteNumber, const sf::Vector2f& rowSize) const;
+    void handleZoom(float verticalDelta);
+    float getCurrentPixelsPerSecond() const;
+    void setInitialZoomForClip();
 };
 
 inline std::vector<std::shared_ptr<sf::Drawable>> generatePianoRollMeasures(
@@ -165,7 +171,8 @@ inline std::vector<std::shared_ptr<sf::Drawable>> generatePianoRollMeasures(
 #include "Application.hpp"
 
 PianoRoll::PianoRoll() { 
-    name = "piano_roll"; 
+    name = "piano_roll";
+    pianoRollZoomLevel = 1.0f;
 }
 
 PianoRoll::~PianoRoll() {}
@@ -211,7 +218,32 @@ void PianoRoll::update() {
     updateKeyboardHighlighting();
     handleNoteDragUpdate();
     
+    if (pianoRollShown) {
+        bool ctrlPressed = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) || 
+                          sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RControl);
+        
+        if (ctrlPressed) {
+            const float verticalDelta = app->ui->getVerticalScrollDelta();
+            if (verticalDelta != 0.f) {
+                handleZoom(verticalDelta);
+                app->ui->resetScrollDeltas();
+            }
+        } else {
+            if (baseColumn) {
+                columnOffset = baseColumn->getOffset();
+            }
+        }
+    }
+    
+    if (pianoRollShown && baseColumn) {
+        baseColumn->setOffset(columnOffset);
+    }
+    
     if (pianoRollShown && !wasVisible) {
+        if (baseColumn) {
+            columnOffset = baseColumn->getOffset();
+        }
+        
         if (auto* mixer = app->getComponent("mixer")) {
             if (mixer->getLayout()) {
                 mixer->getLayout()->m_modifier.setVisible(false);
@@ -260,21 +292,46 @@ void PianoRoll::update() {
 void PianoRoll::handleMeasureLines() {
     if (!isVisible()) return;
 
-    float beatWidth = 50.0f;
-    if (selectedMIDIClip && clipDuration > 0.001f) {
-        const float availableWidth = 1800.0f;
-        const float clipPixelsPerSecond = (availableWidth * 0.8f) / clipDuration;
-        const double bpm = app->getBpm();
-        const float beatsPerSecond = bpm / 60.0f;
-        const float secondsPerBeat = 1.0f / beatsPerSecond;
-        beatWidth = clipPixelsPerSecond * secondsPerBeat;
+    const float beatWidth = 100.f * pianoRollZoomLevel;
+    const double bpm = app->getBpm();
+    const float pixelsPerSecond = (beatWidth * bpm) / 60.0f;
+
+    std::vector<std::shared_ptr<sf::Drawable>> baseCustomGeometry;
+    
+    if (selectedMIDIClip) {
+        const sf::Vector2f baseSize = baseColumn->getSize();
+        double currentEngineTime = app->getPosition();
+        double clipStartTime = selectedMIDIClip->startTime;
+        double clipEndTime = clipStartTime + clipDuration;
+        
+        if (currentEngineTime >= clipStartTime && currentEngineTime <= clipEndTime) {
+            double clipRelativeTime = currentEngineTime - clipStartTime;
+            float playheadX = static_cast<float>(clipRelativeTime * pixelsPerSecond) + pianoRollOffset;
+            
+            if (playheadX >= -10.0f && playheadX <= baseSize.x + 10.0f) {
+                auto playhead = std::make_shared<sf::RectangleShape>(sf::Vector2f(3.0f, baseSize.y));
+                playhead->setPosition(sf::Vector2f(playheadX, 0.0f));
+                playhead->setFillColor(sf::Color::Red);
+                baseCustomGeometry.push_back(playhead);
+            }
+        }
+        
+        float clipEndX = static_cast<float>(clipDuration * pixelsPerSecond) + pianoRollOffset;
+        if (clipEndX >= -10.0f && clipEndX <= baseSize.x + 10.0f) {
+            auto clipEndLine = std::make_shared<sf::RectangleShape>(sf::Vector2f(2.0f, baseSize.y));
+            clipEndLine->setPosition(sf::Vector2f(clipEndX, 0.0f));
+            clipEndLine->setFillColor(app->resources.activeTheme->clip_color);
+            baseCustomGeometry.push_back(clipEndLine);
+        }
     }
+    
+    baseColumn->setCustomGeometry(baseCustomGeometry);
 
     for (const auto& [noteName, scrollableRow] : noteRows) {
         if (!scrollableRow) continue;
 
         const sf::Vector2f trackRowSize = scrollableRow->getSize();
-        auto measureLines = getCachedMeasureLines(beatWidth, 0.0f, trackRowSize);
+        auto measureLines = getCachedMeasureLines(beatWidth, pianoRollOffset, trackRowSize);
         
         if (selectedMIDIClip) {
             int noteNumber = getNoteNumberFromRowName(noteName);
@@ -291,9 +348,11 @@ const std::vector<std::shared_ptr<sf::Drawable>>& PianoRoll::getCachedMeasureLin
     float scrollOffset, 
     const sf::Vector2f& rowSize
 ) {
+    float currentZoom = pianoRollZoomLevel;
     bool shouldRebuild = (beatWidth != lastMeasureWidth) || 
                         (scrollOffset != lastScrollOffset) || 
-                        (rowSize != lastRowSize);
+                        (rowSize != lastRowSize) ||
+                        (currentZoom != lastZoomLevel);
 
     if (shouldRebuild) {
         auto [timeSigNum, timeSigDen] = app->getTimeSignature();
@@ -304,6 +363,7 @@ const std::vector<std::shared_ptr<sf::Drawable>>& PianoRoll::getCachedMeasureLin
         lastMeasureWidth = beatWidth;
         lastScrollOffset = scrollOffset;
         lastRowSize = rowSize;
+        lastZoomLevel = currentZoom;
     }
 
     return cachedMeasureLines;
@@ -342,8 +402,8 @@ bool PianoRoll::handleEvents() {
             }
             currentlyPressedNotes.insert(noteNumber);
             
-            // If Left Control is held, scroll to the note
-            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) {
+            // Only scroll to note if piano roll is visible and Left Control is held
+            if (pianoRollShown && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) {
                 scrollToNote(noteNumber);
             }
             
@@ -365,6 +425,10 @@ bool PianoRoll::handleEvents() {
         }
         
         keyStates[key] = keyPressed;
+    }
+    
+    if (!pianoRollShown) {
+        return false;
     }
     
     return false;
@@ -492,20 +556,15 @@ void PianoRoll::updateSelectedMIDIClip() {
     clipDuration = 1.0f;
     
     if (app) {
-        // Get the selected clip from the timeline component instead of just the first clip from the track
         selectedMIDIClip = app->getTimelineSelectedMIDIClip();
         
-        // Debug output to see what's being selected, only when it changes
         if (selectedMIDIClip != prevSelectedClip) {
             if (selectedMIDIClip) {
-                DEBUG_PRINT("[PIANO_ROLL] Using timeline selected clip: startTime=" 
-                            << selectedMIDIClip->startTime << ", duration=" << selectedMIDIClip->duration);
+                setInitialZoomForClip();
             } else {
-                // Fallback to the application's method if timeline doesn't have a selection
                 selectedMIDIClip = app->getSelectedMIDIClip();
                 if (selectedMIDIClip) {
-                    DEBUG_PRINT("[PIANO_ROLL] Using fallback clip: startTime=" 
-                                << selectedMIDIClip->startTime << ", duration=" << selectedMIDIClip->duration);
+                    setInitialZoomForClip();
                 }
             }
         }
@@ -542,37 +601,26 @@ void PianoRoll::updateKeyboardHighlighting() {
 void PianoRoll::scrollToNote(int noteNumber) {
     if (!baseColumn) return;
     
-    // Calculate the row index for this note (127 is highest, 0 is lowest)
     int rowIndex = 127 - noteNumber;
-    
-    // Each row is 32 pixels tall
     float noteY = rowIndex * 32.0f;
     
-    // Get the actual viewport height from the base column bounds
     sf::Vector2f columnSize = baseColumn->getSize();
     float viewportHeight = columnSize.y;
     
-    // If we can't get the size, use a reasonable default
     if (viewportHeight <= 0) {
-        viewportHeight = 600.0f;  // Fallback viewport height
+        viewportHeight = 600.0f;
     }
     
-    // Calculate exact center position
     float viewportCenter = viewportHeight / 2.0f;
-    
-    // Calculate the offset needed to place the note at exact center
-    // Negative offset scrolls down (to show lower notes on screen)
     float targetOffset = -(noteY - viewportCenter);
     
-    // Ensure we don't scroll beyond reasonable bounds
-    // For vertical scrolling: positive = scroll up (towards note 127), negative = scroll down (towards note 0)
-    float maxUpwardScroll = 0.0f;  // Don't scroll above the top
-    float maxDownwardScroll = -(127 * 32.0f - viewportHeight);  // Don't scroll below the bottom
+    float maxUpwardScroll = 0.0f;
+    float maxDownwardScroll = -(127 * 32.0f - viewportHeight);
     
     targetOffset = std::min(maxUpwardScroll, std::max(maxDownwardScroll, targetOffset));
     
-    // Set the scroll offset on the base column
     baseColumn->setOffset(targetOffset);
+    columnOffset = targetOffset;
 }
 
 void PianoRoll::handleNoteClick(int noteNumber, float xPosition, bool isRightClick) {
@@ -597,9 +645,8 @@ void PianoRoll::handleNoteClick(int noteNumber, float xPosition, bool isRightCli
 float PianoRoll::xPositionToClipTime(float xPosition) const {
     if (clipDuration <= 0.001f) return 0.0f;
     
-    const float availableWidth = 1800.0f;
-    const float clipPixelsPerSecond = (availableWidth * 0.8f) / clipDuration;
-    float clipRelativeTime = (xPosition - pianoRollOffset) / clipPixelsPerSecond;
+    const float pixelsPerSecond = getCurrentPixelsPerSecond();
+    float clipRelativeTime = (xPosition - pianoRollOffset) / pixelsPerSecond;
     
     // Don't clamp to clipDuration when dragging to allow extending beyond clip length
     if (isDraggingNote) {
@@ -695,8 +742,7 @@ std::vector<std::shared_ptr<sf::Drawable>> PianoRoll::generateNoteRectsForRow(in
     
     if (!selectedMIDIClip || clipDuration <= 0.001f) return noteRects;
     
-    const float availableWidth = 1800.0f;
-    const float clipPixelsPerSecond = (availableWidth * 0.8f) / clipDuration;
+    const float pixelsPerSecond = getCurrentPixelsPerSecond();
         
     std::vector<std::pair<float, float>> noteSpans;
     
@@ -730,8 +776,8 @@ std::vector<std::shared_ptr<sf::Drawable>> PianoRoll::generateNoteRectsForRow(in
         float duration = endTime - startTime;
         
         // Position notes relative to the clip's timeline position
-        float xPosition = (startTime * clipPixelsPerSecond) + pianoRollOffset;
-        float width = std::max(20.0f, duration * clipPixelsPerSecond);
+        float xPosition = (startTime * pixelsPerSecond) + pianoRollOffset;
+        float width = std::max(20.0f, duration * pixelsPerSecond);
         
         auto noteRect = std::make_shared<sf::RectangleShape>();
         noteRect->setPosition(sf::Vector2f(xPosition, 1.0f));
@@ -834,6 +880,124 @@ void PianoRoll::handleNoteDragEnd() {
     isDraggingNote = false;
     draggingNoteNumber = -1;
     dragStartTime = 0.0f;
+}
+
+void PianoRoll::handleZoom(float verticalDelta) {
+    if (!app || !app->ui) return;
+    
+    if (std::abs(verticalDelta) > 0.1f) {
+        bool ctrlPressed = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl) || 
+                          sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RControl);
+        
+        if (ctrlPressed) {
+            const float minZoom = 0.1f;
+            const float maxZoom = 10.0f;
+            const float currentZoom = pianoRollZoomLevel;
+            
+            // Use the same adaptive zoom speed as timeline
+            const float baseSpeed = 0.35f;
+            float speedMultiplier = 1.0f;
+            
+            // Normalize zoom level (0.1 to 10.0 -> 0.0 to 1.0)
+            float normalizedZoom = (currentZoom - minZoom) / (maxZoom - minZoom);
+            
+            if (normalizedZoom > 0.88f) {
+                float nearMaxFactor = (normalizedZoom - 0.88f) / 0.12f;
+                speedMultiplier = 1.0f - (nearMaxFactor * 0.5f);
+            }
+            
+            float adaptiveZoomSpeed = baseSpeed * speedMultiplier;
+            adaptiveZoomSpeed = std::max(0.015f, adaptiveZoomSpeed);
+            
+            float newZoom = currentZoom + (verticalDelta > 0 ? adaptiveZoomSpeed : -adaptiveZoomSpeed);
+            newZoom = std::clamp(newZoom, minZoom, maxZoom);
+            
+            if (newZoom != pianoRollZoomLevel) {
+                // Calculate mouse position for zoom centering
+                sf::Vector2f mousePos = app->ui->getMousePosition();
+                sf::Vector2f basePos = baseColumn->getPosition();
+                sf::Vector2f localMousePos = mousePos - basePos;
+                
+                // Calculate what time is currently under the mouse cursor
+                const float oldPixelsPerSecond = getCurrentPixelsPerSecond();
+                const float timeAtMouse = (localMousePos.x - pianoRollOffset) / oldPixelsPerSecond;
+                
+                // Update zoom level (piano roll's own zoom)
+                pianoRollZoomLevel = newZoom;
+                
+                // Calculate new offset so that same time is under mouse cursor
+                const float newPixelsPerSecond = getCurrentPixelsPerSecond();
+                pianoRollOffset = localMousePos.x - (timeAtMouse * newPixelsPerSecond);
+                
+                // Apply new offset to all rows
+                for (const auto& [noteName, scrollableRow] : noteRows) {
+                    if (scrollableRow) {
+                        scrollableRow->setOffset(pianoRollOffset);
+                    }
+                }
+                
+                // Force cache invalidation
+                lastMeasureWidth = -1.0f;
+                lastScrollOffset = -1.0f;
+                lastRowSize = {-1.0f, -1.0f};
+                lastZoomLevel = -1.0f;
+            }
+            
+            // Block vertical scrolling when zooming - consume the scroll event
+            return;
+        }
+    }
+}
+
+float PianoRoll::getCurrentPixelsPerSecond() const {
+    const float beatWidth = 100.f * pianoRollZoomLevel;
+    const double bpm = app->getBpm();
+    return (beatWidth * bpm) / 60.0f;
+}
+
+void PianoRoll::setInitialZoomForClip() {
+    if (!selectedMIDIClip || !baseColumn || clipDuration <= 0.001f) return;
+    
+    // Get the available width for piano notes (excluding the piano key labels)
+    const sf::Vector2f baseSize = baseColumn->getSize();
+    float availableWidth = baseSize.x;
+    
+    // Account for piano key label width (approximately 128 pixels)
+    float pianoNotesWidth = availableWidth - 128.0f;
+    
+    if (pianoNotesWidth <= 0) return;
+    
+    // Calculate zoom level needed to fit the clip end at the edge of piano notes
+    const double bpm = app->getBpm();
+    const float targetPixelsPerSecond = pianoNotesWidth / clipDuration;
+    
+    // Calculate required zoom level: pixelsPerSecond = (beatWidth * bpm) / 60.0f
+    // beatWidth = 100.f * zoomLevel
+    // So: targetPixelsPerSecond = (100.f * zoomLevel * bpm) / 60.0f
+    // Therefore: zoomLevel = (targetPixelsPerSecond * 60.0f) / (100.f * bpm)
+    const float targetZoom = (targetPixelsPerSecond * 60.0f) / (100.f * bpm);
+    
+    // Clamp to reasonable zoom range
+    const float clampedZoom = std::clamp(targetZoom, 0.1f, 10.0f);
+    
+    // Set the zoom level
+    pianoRollZoomLevel = clampedZoom;
+    
+    // Reset piano roll offset to start at beginning of clip
+    pianoRollOffset = 0.0f;
+    
+    // Apply offset to all rows
+    for (const auto& [noteName, scrollableRow] : noteRows) {
+        if (scrollableRow) {
+            scrollableRow->setOffset(pianoRollOffset);
+        }
+    }
+    
+    // Force cache invalidation
+    lastMeasureWidth = -1.0f;
+    lastScrollOffset = -1.0f;
+    lastRowSize = {-1.0f, -1.0f};
+    lastZoomLevel = -1.0f;
 }
 
 GET_INTERFACE
