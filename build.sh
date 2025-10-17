@@ -110,7 +110,7 @@ case "$PLATFORM" in
         EXE_PATH="bin/Windows/$BUILD_TYPE/MULO.exe"
         ;;
     Mac)
-        EXE_PATH="bin/Mac/$BUILD_TYPE/MULO"
+        EXE_PATH="bin/Darwin/$BUILD_TYPE/MULO"
         ;;
     Linux)
         EXE_PATH="bin/Linux/$BUILD_TYPE/MULO"
