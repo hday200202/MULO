@@ -5,7 +5,13 @@
 
 # Get the directory where this script is located
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-PROJECT_DIR="$SCRIPT_DIR"
+
+# Detect if we're in a subdirectory (like bin/) and adjust to project root
+if [[ "$SCRIPT_DIR" == */bin ]]; then
+    PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+else
+    PROJECT_DIR="$SCRIPT_DIR"
+fi
 
 # Detect the platform
 if [[ "$OSTYPE" == "darwin"* ]]; then
@@ -23,30 +29,42 @@ else
     exit 1
 fi
 
-# Find the sandbox library
-BUILD_TYPE="${BUILD_TYPE:-Release}"
-SANDBOX_PATH="$PROJECT_DIR/bin/$PLATFORM/$BUILD_TYPE/$SANDBOX_LIB"
-
-if [ ! -f "$SANDBOX_PATH" ]; then
-    echo "❌ Sandbox library not found at: $SANDBOX_PATH"
-    echo "Please build the project first:"
-    echo "  cd build && cmake --build . --target sandbox_override"
-    exit 1
-fi
-
-echo "✅ Found sandbox library: $SANDBOX_PATH"
-
 # Find the MULO executable
+BUILD_TYPE="${BUILD_TYPE:-Release}"
 MULO_PATH="$PROJECT_DIR/bin/$PLATFORM/$BUILD_TYPE/MULO"
 
-if [ ! -f "$MULO_PATH" ]; then
-    echo "❌ MULO executable not found at: $MULO_PATH"
-    echo "Please build the project first:"
-    echo "  cd build && cmake --build ."
-    exit 1
+# Check if running without sandbox first
+if [ "$1" == "--no-sandbox" ]; then
+    if [ ! -f "$MULO_PATH" ]; then
+        echo "❌ MULO executable not found at: $MULO_PATH"
+        echo "Please build the project first:"
+        echo "  cd build && cmake --build ."
+        exit 1
+    fi
+    echo "✅ Found MULO executable: $MULO_PATH"
+    # Skip sandbox library check
+else
+    # Find the sandbox library (only if not running with --no-sandbox)
+    SANDBOX_PATH="$PROJECT_DIR/build/$SANDBOX_LIB"
+    
+    if [ ! -f "$SANDBOX_PATH" ]; then
+        echo "❌ Sandbox library not found at: $SANDBOX_PATH"
+        echo "Please build the project first:"
+        echo "  cd build && cmake --build . --target sandbox_override"
+        exit 1
+    fi
+    
+    echo "✅ Found sandbox library: $SANDBOX_PATH"
+    
+    if [ ! -f "$MULO_PATH" ]; then
+        echo "❌ MULO executable not found at: $MULO_PATH"
+        echo "Please build the project first:"
+        echo "  cd build && cmake --build ."
+        exit 1
+    fi
+    
+    echo "✅ Found MULO executable: $MULO_PATH"
 fi
-
-echo "✅ Found MULO executable: $MULO_PATH"
 
 # Display information
 echo ""

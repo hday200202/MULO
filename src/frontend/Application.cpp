@@ -47,7 +47,6 @@ void SetMinWindowSize(HWND hwnd, int minWidth, int minHeight)
 #include <objc/message.h>
 #include <CoreGraphics/CoreGraphics.h>
 #include <mach-o/dyld.h>
-#include <limits.h>
 #endif
 
 namespace fs = std::filesystem;
@@ -59,18 +58,21 @@ void Application::initialise(const juce::String& commandLine) {
     char path[MAX_PATH];
     GetModuleFileNameA(NULL, path, MAX_PATH);
     exeDirectory = fs::path(path).parent_path().string();
-#elif __APPLE__
-    char path[PATH_MAX];
+#elif defined(__APPLE__)
+    char path[1024];
     uint32_t size = sizeof(path);
     if (_NSGetExecutablePath(path, &size) == 0) {
-        exeDirectory = fs::canonical(path).parent_path().string();
+        try {
+            exeDirectory = fs::canonical(path).parent_path().string();
+        } catch (const std::exception& e) {
+            // Fallback if canonical fails (e.g., symlink issues)
+            exeDirectory = fs::path(path).parent_path().string();
+        }
     } else {
-        // Buffer too small, but shouldn't happen with PATH_MAX
-        std::cerr << "Error: Could not get executable path" << std::endl;
-        exeDirectory = ".";
+        // Fallback to current directory if _NSGetExecutablePath fails
+        exeDirectory = fs::current_path().string();
     }
 #else
-    // Linux
     exeDirectory = fs::canonical("/proc/self/exe").parent_path().string();
 #endif
     loadConfig();
