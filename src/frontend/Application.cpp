@@ -46,6 +46,7 @@ void SetMinWindowSize(HWND hwnd, int minWidth, int minHeight)
 #include <objc/objc.h>
 #include <objc/message.h>
 #include <CoreGraphics/CoreGraphics.h>
+#include <mach-o/dyld.h>
 #endif
 
 namespace fs = std::filesystem;
@@ -57,8 +58,37 @@ void Application::initialise(const juce::String& commandLine) {
     char path[MAX_PATH];
     GetModuleFileNameA(NULL, path, MAX_PATH);
     exeDirectory = fs::path(path).parent_path().string();
+#elif defined(__APPLE__)
+    // On macOS, use _NSGetExecutablePath which fills the buffer with a path
+    // that may be a symbolic link. We canonicalize it via filesystem if possible.
+    char pathbuf[PATH_MAX];
+    uint32_t bufsize = sizeof(pathbuf);
+    if (_NSGetExecutablePath(pathbuf, &bufsize) == 0) {
+        try {
+            exeDirectory = fs::canonical(fs::path(pathbuf)).parent_path().string();
+        } catch (const std::exception&) {
+            // fall back to the raw path if canonicalization fails
+            exeDirectory = fs::path(pathbuf).parent_path().string();
+        }
+    } else {
+        // Buffer was too small or call failed; fall back to current path
+        try {
+            exeDirectory = fs::current_path().string();
+        } catch (...) {
+            exeDirectory = std::string();
+        }
+    }
+#elif defined(__linux__)
+    // On Linux use /proc/self/exe to resolve the executable path
+    try {
+        exeDirectory = fs::canonical("/proc/self/exe").parent_path().string();
+    } catch (const std::exception&) {
+        // fallback to current path if /proc resolution fails
+        try { exeDirectory = fs::current_path().string(); } catch (...) { exeDirectory = std::string(); }
+    }
 #else
-    exeDirectory = fs::canonical("/proc/self/exe").parent_path().string();
+    // Generic fallback for other platforms
+    try { exeDirectory = fs::current_path().string(); } catch (...) { exeDirectory = std::string(); }
 #endif
     loadConfig();
     if (!uiState.vstDirecory.empty()) {
