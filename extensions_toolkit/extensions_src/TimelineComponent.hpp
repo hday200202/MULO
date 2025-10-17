@@ -37,9 +37,8 @@ struct WaveformLOD {
                 bestLOD = static_cast<int>(i);
             }
             
-            if (linesPerSecond < targetLinesPerSecond && i > 0) {
+            if (linesPerSecond < targetLinesPerSecond && i > 0)
                 break;
-            }
         }
         
         return bestLOD;
@@ -90,11 +89,8 @@ public:
                 mid = (mid / 2) * 2;
                 if (mid >= vertexCount) break;
                 double time = (*vertices)[mid].position.x;
-                if (time < visibleStartTime) {
-                    left = mid + 2;
-                } else {
-                    right = mid;
-                }
+                if (time < visibleStartTime) left = mid + 2;
+                else right = mid;
             }
             startIndex = left;
         }
@@ -201,8 +197,7 @@ private:
         
         Track* getTrack(const std::string& trackName) {
             auto it = trackCache.find(trackName);
-            if (it != trackCache.end())
-                return it->second;
+            if (it != trackCache.end()) return it->second;
             return nullptr;
         }
     };
@@ -351,7 +346,8 @@ private:
         const std::string& effectName,
         const std::string& parameter,
         float defaultValue,
-        uilo::Row* automationLane);
+        uilo::Row* automationLane
+    );
     void updateMeasureLines();
     void updateVirtualCursor();
     void updatePlayhead();
@@ -457,7 +453,7 @@ void TimelineComponent::init() {
     updateEngineState();
     
     uiState.lastUiScale = app->ui->getScale();
-    uiState.initialUpdateCount = 5; // Force 5 initial updates to ensure proper rendering
+    uiState.initialUpdateCount = 5; // Force 5 initial updates
     uiState.measureLinesShouldUpdate = true; // Force initial update
 
     cursorBlinkClock.restart();
@@ -467,6 +463,9 @@ void TimelineComponent::init() {
 bool TimelineComponent::handleEvents() {
     if (!this->isVisible()) return false;
     input.updateInput(app, laneScrollable);
+    
+    if (!input.leftMousePressed && !input.rightMousePressed)
+        automationDragState.isInteracting = false;
     
     // Unlock scrollables from previous zoom
     if (uiState.didZoom) {
@@ -483,9 +482,8 @@ bool TimelineComponent::handleEvents() {
     }
 
     // Handle clip placement on double-click
-    if (input.isDoubleClick) {
+    if (input.isDoubleClick)
         handleClipPlacement();
-    }
 
     // Handle cursor placement and clip selection on left click
     if (input.leftMouseClicked && !input.isDoubleClick) {
@@ -963,69 +961,69 @@ void TimelineComponent::update() {
         }
         
         uiState.measureLinesShouldUpdate = false;
-        
-        // Also update automation lanes when measure lines update (zoom/scroll)
-        for (const auto& trackName : tracksInUI) {
-            if (trackContainers.count(trackName) && !trackContainers[trackName].automationLaneRows.empty()) {
-                auto track = app->getTrack(trackName);
-                if (!track) continue;
+    }
+    
+    // Update automation lanes continuously
+    for (const auto& trackName : tracksInUI) {
+        if (trackContainers.count(trackName) && !trackContainers[trackName].automationLaneRows.empty()) {
+            auto track = app->getTrack(trackName);
+            if (!track) continue;
+            
+            // Get all automated parameters
+            const auto& automatedParams = track->getAutomatedParameters();
+            
+            // Update locked lanes (parameters with automation points)
+            for (const auto& [effectName, paramName] : automatedParams) {
+                std::string laneId = trackName + "_" + effectName + "_" + paramName + "_automation_lane_scrollable";
                 
-                // Get all automated parameters
-                const auto& automatedParams = track->getAutomatedParameters();
-                
-                // Update locked lanes (parameters with automation points)
-                for (const auto& [effectName, paramName] : automatedParams) {
-                    std::string laneId = trackName + "_" + effectName + "_" + paramName + "_automation_lane_scrollable";
+                auto automationLane = app->ui->getRow(laneId);
+                if (automationLane) {
+                    float currentValue = track->getCurrentParameterValue(effectName, paramName);
                     
-                    auto automationLane = app->ui->getRow(laneId);
-                    if (automationLane) {
-                        float currentValue = track->getCurrentParameterValue(effectName, paramName);
-                        
-                        std::vector<std::shared_ptr<sf::Drawable>> customGeom;
-                        
-                        for (auto& bar : automationBarShapes)
-                            customGeom.push_back(bar);
-                        
-                        auto automationDrawables = generateAutomationLine(trackName, effectName, paramName, currentValue, automationLane);
-                        for (auto& drawable : automationDrawables)
-                            customGeom.push_back(drawable);
-                        
-                        customGeom.push_back(subMeasureLines);
-                        customGeom.push_back(measureLines);
-                        
-                        if (playhead && app->isPlaying())
-                            customGeom.push_back(playhead);
-                        
-                        automationLane->setCustomGeometry(customGeom);
-                    }
+                    std::vector<std::shared_ptr<sf::Drawable>> customGeom;
+                    
+                    for (auto& bar : automationBarShapes)
+                        customGeom.push_back(bar);
+                    
+                    auto automationDrawables = generateAutomationLine(trackName, effectName, paramName, currentValue, automationLane);
+                    for (auto& drawable : automationDrawables)
+                        customGeom.push_back(drawable);
+                    
+                    customGeom.push_back(subMeasureLines);
+                    customGeom.push_back(measureLines);
+                    
+                    if (playhead && app->isPlaying())
+                        customGeom.push_back(playhead);
+                    
+                    automationLane->setCustomGeometry(customGeom);
                 }
+            }
+            
+            // Update potential lane if it exists
+            if (track->hasPotentialAutomation()) {
+                const auto& potentialAuto = track->getPotentialAutomation();
+                std::string potentialLaneId = trackName + "_potential_automation_lane_scrollable";
                 
-                // Update potential lane if it exists
-                if (track->hasPotentialAutomation()) {
-                    const auto& potentialAuto = track->getPotentialAutomation();
-                    std::string potentialLaneId = trackName + "_potential_automation_lane_scrollable";
+                auto potentialLane = app->ui->getRow(potentialLaneId);
+                if (potentialLane) {
+                    float currentValue = track->getCurrentParameterValue(potentialAuto.first, potentialAuto.second);
                     
-                    auto potentialLane = app->ui->getRow(potentialLaneId);
-                    if (potentialLane) {
-                        float currentValue = track->getCurrentParameterValue(potentialAuto.first, potentialAuto.second);
-                        
-                        std::vector<std::shared_ptr<sf::Drawable>> customGeom;
-                        
-                        for (auto& bar : automationBarShapes)
-                            customGeom.push_back(bar);
-                        
-                        auto automationDrawables = generateAutomationLine(trackName, potentialAuto.first, potentialAuto.second, currentValue, potentialLane);
-                        for (auto& drawable : automationDrawables)
-                            customGeom.push_back(drawable);
-                        
-                        customGeom.push_back(subMeasureLines);
-                        customGeom.push_back(measureLines);
-                        
-                        if (playhead && app->isPlaying())
-                            customGeom.push_back(playhead);
-                        
-                        potentialLane->setCustomGeometry(customGeom);
-                    }
+                    std::vector<std::shared_ptr<sf::Drawable>> customGeom;
+                    
+                    for (auto& bar : automationBarShapes)
+                        customGeom.push_back(bar);
+                    
+                    auto automationDrawables = generateAutomationLine(trackName, potentialAuto.first, potentialAuto.second, currentValue, potentialLane);
+                    for (auto& drawable : automationDrawables)
+                        customGeom.push_back(drawable);
+                    
+                    customGeom.push_back(subMeasureLines);
+                    customGeom.push_back(measureLines);
+                    
+                    if (playhead && app->isPlaying())
+                        customGeom.push_back(playhead);
+                    
+                    potentialLane->setCustomGeometry(customGeom);
                 }
             }
         }
@@ -1199,9 +1197,7 @@ void TimelineComponent::createAutomationLane(const std::string& trackName, const
     
     float currentValue = track->getCurrentParameterValue(effectName, parameterName);
     std::string displayName = effectName.empty() ? parameterName : effectName + " - " + parameterName;
-    if (isPotential) {
-        displayName = "[+] " + displayName;
-    }
+    if (isPotential) displayName = "[+] " + displayName;
     
     // Create automation lane scrollable
     auto automationLaneScrollable = scrollableRow(
@@ -1241,15 +1237,7 @@ void TimelineComponent::createAutomationLane(const std::string& trackName, const
         
         float mouseTimeInSecs = ((localMousePos.x - uiState.xOffset) / uiState.beatWidth) * 60.0f / app->getBpm();
         
-        // Snap to grid unless shift is held
-        bool shiftHeld = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LShift) || 
-                         sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RShift);
-        if (!shiftHeld) {
-            auto [timeSigNum, timeSigDen] = app->getTimeSignature();
-            float beatDuration = 60.0f / app->getBpm();
-            float snapInterval = beatDuration / 4.0f; // Sixteenth notes
-            mouseTimeInSecs = std::round(mouseTimeInSecs / snapInterval) * snapInterval;
-        }
+        mouseTimeInSecs = findNearestGridLine(mouseTimeInSecs);
         mouseTimeInSecs = std::max(0.0f, mouseTimeInSecs);
         
         const auto* points = track->getAutomationPoints(effectName, parameterName);
@@ -1270,9 +1258,9 @@ void TimelineComponent::createAutomationLane(const std::string& trackName, const
             if (ctrlHeld && points->size() > 1) {
                 // Sort points for curve editing
                 std::vector<Track::AutomationPoint> sortedPoints;
-                for (const auto& point : *points) {
+                for (const auto& point : *points)
                     if (point.time >= 0.0) sortedPoints.push_back(point);
-                }
+
                 std::sort(sortedPoints.begin(), sortedPoints.end(),
                     [](const Track::AutomationPoint& a, const Track::AutomationPoint& b) {
                         return a.time < b.time;
@@ -1353,9 +1341,9 @@ void TimelineComponent::createAutomationLane(const std::string& trackName, const
                 point.curve = 0.5f;
                 
                 track->addAutomationPoint(effectName, parameterName, point);
+                bool isPotentialLane = (laneId.find("_potential_automation_lane") != std::string::npos);
                 
-                // Update automation lanes to reflect the new point (convert potential to locked)
-                updateAutomationLanes();
+                if (isPotentialLane) updateAutomationLanes();
                 
                 // Update lane ID to the new locked lane (not the potential lane anymore)
                 std::string newLaneId = trackName + "_" + effectName + "_" + parameterName + "_automation_lane_scrollable";
@@ -1374,11 +1362,7 @@ void TimelineComponent::createAutomationLane(const std::string& trackName, const
                 automationDragState.parameterName = parameterName;
                 automationDragState.laneScrollableId = newLaneId;
             }
-        }
-        
-        if (!automationDragState.isDragging) {
-            automationDragState.isInteracting = false;
-        }
+        }    
     };
     
     auto handleAutomationRightClick = [this, trackName, effectName, parameterName, laneId]() {
@@ -1430,10 +1414,22 @@ void TimelineComponent::createAutomationLane(const std::string& trackName, const
             
             if (targetTime >= 0.0f && targetValue >= 0.0f) {
                 track->removeAutomationPointPrecise(effectName, parameterName, targetTime, targetValue);
+                const auto* remainingPoints = track->getAutomationPoints(effectName, parameterName);
+                bool onlyInitPointRemains = true;
+                if (remainingPoints) {
+                    for (const auto& point : *remainingPoints) {
+                        if (point.time >= 0.0f) {
+                            onlyInitPointRemains = false;
+                            break;
+                        }
+                    }
+                }
+                
+                if (onlyInitPointRemains) {
+                    updateAutomationLanes();
+                }
             }
         }
-        
-        automationDragState.isInteracting = false;
     };
     
     automationLaneScrollable->m_modifier.onLClick(handleAutomationLeftClick);
@@ -1480,9 +1476,18 @@ void TimelineComponent::createAutomationLane(const std::string& trackName, const
         deleteButton->m_modifier.onLClick([this, trackName, effectName, parameterName]() {
             auto track = app->getTrack(trackName);
             if (track) {
-                // Clear all automation points for this parameter
-                track->clearAutomationParameter(effectName, parameterName);
-                updateAutomationLanes();
+                const auto* points = track->getAutomationPoints(effectName, parameterName);
+                if (points) {
+                    std::vector<std::pair<float, float>> pointsToRemove;
+                    for (const auto& point : *points)
+                        if (point.time >= 0.0f)
+                            pointsToRemove.push_back({point.time, point.value});
+                    
+                    for (const auto& [time, value] : pointsToRemove)
+                        track->removeAutomationPointPrecise(effectName, parameterName, time, value);
+                    
+                    updateAutomationLanes();
+                }
             }
         });
         
@@ -1612,9 +1617,7 @@ void TimelineComponent::updateAutomationLanes() {
 }
 
 std::tuple<std::string, std::string, float> TimelineComponent::getCurrentAutomationParameter(Track* track) {
-    if (!track) {
-        return {"", "Volume", track ? track->getVolume() : 1.0f};
-    }
+    if (!track) return {"", "Volume", track ? track->getVolume() : 1.0f};
     
     // First check if track has stored potential automation
     if (track->hasPotentialAutomation()) {
@@ -1941,7 +1944,8 @@ void TimelineComponent::handleClipSelection() {
     uiState.selectedClipStartTime = -1.0;
     uiState.selectedClipIsMIDI = false;
     
-    if (!uiState.showCursor || uiState.cursorTrackName.empty()) return;
+    if (!uiState.showCursor || uiState.cursorTrackName.empty()) return;    
+    if (automationDragState.isInteracting) return;
     
     // Skip if cursor is in automation lane area
     if (isMouseInAutomationLane(uiState.cursorTrackName, input.mousePosition.y)) return;
@@ -1979,7 +1983,8 @@ void TimelineComponent::handleClipSelection() {
 }
 
 void TimelineComponent::handleClipDeletion() {
-    if (!uiState.showCursor || uiState.cursorTrackName.empty()) return;
+    if (!uiState.showCursor || uiState.cursorTrackName.empty()) return;    
+    if (automationDragState.isInteracting) return;
     
     // Skip if cursor is in automation lane area
     if (isMouseInAutomationLane(uiState.cursorTrackName, input.mousePosition.y)) return;
@@ -2030,6 +2035,8 @@ void TimelineComponent::handleClipDeletion() {
 }
 
 void TimelineComponent::handleClipResize() {
+    if (automationDragState.isInteracting) return;
+    
     // If resizing, handle it continuously
     if (uiState.isResizingClip) {
         if (!input.leftMousePressed) {
@@ -2298,6 +2305,8 @@ void TimelineComponent::handleClipResize() {
 }
 
 void TimelineComponent::handleClipDrag() {
+    if (automationDragState.isInteracting) return;
+    
     if (!uiState.isDraggingClip) {
         if (!input.leftMousePressed) return;        
         if (uiState.isResizingClip) return;        
@@ -2610,7 +2619,6 @@ void TimelineComponent::generateTrackWaveform(const std::string& trackName) {
             double linesPerSec = static_cast<double>(vertexIndex / 2) / durationSeconds;
         }
         
-        // Atomically assign the completed vector and mark as ready
         lod->lodLevels = std::move(tempLodLevels);
         lod->isReady = true;        
     }).detach();
@@ -3085,17 +3093,7 @@ void TimelineComponent::handleAutomationDragOperations() {
             float newTime = ((localMousePos.x - uiState.xOffset) / uiState.beatWidth) * 60.0f / app->getBpm();
             float newValue = 1.0f - (localMousePos.y / rowSize.y);
             newValue = std::max(0.0f, std::min(1.0f, newValue));
-            
-            // Snap to grid unless shift is held
-            bool shiftHeld = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LShift) || 
-                             sf::Keyboard::isKeyPressed(sf::Keyboard::Key::RShift);
-            if (!shiftHeld) {
-                auto [timeSigNum, timeSigDen] = app->getTimeSignature();
-                float beatDuration = 60.0f / app->getBpm();
-                // Snap to submeasures (1/4 of a beat = sixteenth notes)
-                float snapInterval = beatDuration / 4.0f;
-                newTime = std::round(newTime / snapInterval) * snapInterval;
-            }
+            newTime = findNearestGridLine(newTime);
             
             if (newTime >= 0.0f) {
                 Track* track = app->getTrack(automationDragState.trackName);
