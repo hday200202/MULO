@@ -40,5 +40,5 @@ bool DecibelComponent::handleEvents() {
 }
 
 void DecibelComponent::update() {
-
+    if (!decReaderRow) return;
 }
