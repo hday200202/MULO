@@ -2,8 +2,7 @@
 
 ## 🎉 Status: WORKING
 
-The plugin sandbox sandbox works on mac as of now. Still working on the windows...
-
+The plugin sandbox is now successfully running on macOS! Both with and without sandbox mode work correctly.
 
 ## 🚀 How to Run
 

@@ -67,14 +67,15 @@ inline std::vector<std::string> VSTPluginManager::getDefaultVSTSearchPaths() con
     paths.push_back("C:\\Program Files (x86)\\Steinberg\\VSTPlugins");
     
 #elif defined(__APPLE__)
-    // macOS VST3 paths
+    // macOS VST3 paths (standard locations)
     paths.push_back("/Library/Audio/Plug-Ins/VST3");
-    paths.push_back("/System/Library/Audio/Plug-Ins/VST3");
     
     // User-specific paths
     char* homeDir = getenv("HOME");
     if (homeDir) {
         paths.push_back(std::string(homeDir) + "/Library/Audio/Plug-Ins/VST3");
+        // Add custom Vital location if it exists
+        paths.push_back(std::string(homeDir) + "/Music/Vital");
     }
     
     // Legacy VST paths
