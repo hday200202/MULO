@@ -1,5 +1,5 @@
 #pragma once
-#include "MULOComponent.hpp"
+#include "Extension/MULOComponent.hpp"
 #include "Application.hpp"
 #include "../../src/DebugConfig.hpp"
 

@@ -131,8 +131,8 @@ set(ENGINE_SOURCES
     "${CMAKE_SOURCE_DIR}/../src/audio/MIDIClip.cpp"
     "${CMAKE_SOURCE_DIR}/../src/audio/Effect.cpp"
     "${CMAKE_SOURCE_DIR}/../src/frontend/Application.cpp"
-    "${CMAKE_SOURCE_DIR}/../src/frontend/PluginSandbox.cpp"
-    "${CMAKE_SOURCE_DIR}/../src/frontend/FileTree.cpp"
+    "${CMAKE_SOURCE_DIR}/../src/frontend/Extension/PluginSandbox.cpp"
+    "${CMAKE_SOURCE_DIR}/../src/frontend/Util/FileTree.cpp"
 )
 
 set(COMMON_INCLUDE_DIRS

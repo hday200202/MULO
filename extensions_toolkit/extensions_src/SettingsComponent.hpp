@@ -1,7 +1,7 @@
 
 #pragma once
 
-#include "MULOComponent.hpp"
+#include "Extension/MULOComponent.hpp"
 #include "../../src/DebugConfig.hpp"
 #include <sys/socket.h>
 #include <unistd.h>

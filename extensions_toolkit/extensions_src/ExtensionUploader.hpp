@@ -1,6 +1,6 @@
 #pragma once
 
-#include "MULOComponent.hpp"
+#include "Extension/MULOComponent.hpp"
 #include <fstream>
 
 class ExtensionUploader : public MULOComponent {

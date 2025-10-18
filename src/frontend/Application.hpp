@@ -2,49 +2,20 @@
 
 #include "UILO/UILO.hpp"
 #include "Engine.hpp"
-#include "UIData.hpp"
-#include "FileTree.hpp"
-#include "MULOComponent.hpp"
+#include "Data/UIData.hpp"
+#include "Util/FileTree.hpp"
+#include "Extension/MULOComponent.hpp"
+#include "PlatformDefines.hpp"
+#include "Firebase-User/EmailService.hpp"
 #include <nlohmann/json.hpp>
-#include <iostream>
 #include <juce_core/juce_core.h>
+#include <juce_gui_basics/juce_gui_basics.h>
+#include <iostream>
 #include <mutex>
 #include <thread>
 #include <unordered_set>
-#include <juce_gui_basics/juce_gui_basics.h>
 #include <chrono>
-#include <thread>
 #include <list>
-#include "EmailService.hpp"
-
-#ifdef FIREBASE_AVAILABLE
-    #include <firebase/database.h>
-#endif
-
-#ifdef _WIN32
-    #include <windows.h>
-    #define PLUGIN_EXT ".dll"
-#elif __APPLE__
-    #include <dlfcn.h>
-    #define PLUGIN_EXT ".dylib"
-#else
-    #include <dlfcn.h>
-    #define PLUGIN_EXT ".so"
-#endif
-
-#ifdef FIREBASE_AVAILABLE
-#include <firebase/app.h>
-#include <firebase/firestore.h>
-#include <firebase/database.h>
-#include <firebase/auth.h>
-#include <firebase/storage.h>
-#endif
-
-class Application;
-class Engine;
-struct UIResources;
-struct UIState;
-class MIDIClip;
 
 class Application : public juce::JUCEApplication {
 public:
@@ -70,181 +41,91 @@ public:
 
     void update();
     void render();
-    inline bool isRunning() const { return running; }
+    bool isRunning() const;
 
-    inline Container* getComponentLayout(const std::string& componentName) { 
-        if (muloComponents.find(componentName) != muloComponents.end()) 
-            return muloComponents[componentName]->getLayout(); 
-        return nullptr;
-    }
-    inline MULOComponent* getComponent(const std::string& componentName) {
-        auto it = muloComponents.find(componentName);
-        return (it != muloComponents.end()) ? it->second.get() : nullptr;
-    }
-    inline Container* getPageBaseContainer() { return baseContainer; }
-    inline Row* getMainContentRow() { return mainContentRow; }
+    Container* getComponentLayout(const std::string& componentName);
+    MULOComponent* getComponent(const std::string& componentName);
+    Container* getPageBaseContainer();
+    Row* getMainContentRow();
     void setComponentParentContainer(const std::string& componentName, Container* parent);
 
     std::string selectDirectory();
     std::string selectFile(std::initializer_list<std::string> filters);
 
-    inline const sf::RenderWindow& getWindow() const { return window; }
-    inline void requestUIRebuild() { pendingUIRebuild = true; }
-    inline void requestFullscreenToggle() { pendingFullscreenToggle = true; }
+    const sf::RenderWindow& getWindow() const;
+    void requestUIRebuild();
+    void requestFullscreenToggle();
 
+    Track* getMasterTrack();
+    Track* getTrack(const std::string& name);
+    std::vector<std::unique_ptr<Track>>& getAllTracks();
+    void addTrack(const std::string& name, const std::string& samplePath);
+    void removeTrack(const std::string& name);
+    void exportAudio();
+    void setMetronomeEnabled(bool enabled);
+    bool isMetronomeEnabled() const;
 
-    inline Track* getMasterTrack() { return engine.getMasterTrack(); }
-    inline Track* getTrack(const std::string& name) { return engine.getTrackByName(name); }
-    inline std::vector<std::unique_ptr<Track>>& getAllTracks() { return engine.getAllTracks(); }
-    inline void addTrack(const std::string& name, const std::string& samplePath) { engine.addTrack(name, samplePath); }
-    inline void removeTrack(const std::string& name) { pendingTrackRemoveName = name; }
-    inline void exportAudio() {
-        std::string path = selectDirectory();
-        engine.exportMaster(path);
-    }
-    inline void setMetronomeEnabled(bool enabled) { engine.setMetronomeEnabled(enabled); }
-    inline bool isMetronomeEnabled() const { return engine.isMetronomeEnabled(); }
+    void playSound(const std::string& filePath, float db);
+    void playSound(const juce::File& file, float db);
 
-    inline void playSound(const std::string& filePath, float db) { engine.playSound(filePath, db); }
-    inline void playSound(const juce::File& file, float db) { engine.playSound(file, db); }
+    std::string getEngineStateString() const;
+    void loadEngineStateString(const std::string& stateString);
+    std::string getEngineStateHash() const;
 
-    inline std::string getEngineStateString() const { return engine.getStateString(); }
-    inline void loadEngineStateString(const std::string& stateString) { engine.load(stateString); }
-    inline std::string getEngineStateHash() const { return engine.getStateHash(); }
+    void sendMIDINote(int noteNumber, int velocity, bool noteOn = true);
 
-    inline void sendMIDINote(int noteNumber, int velocity, bool noteOn = true) {
-        engine.sendRealtimeMIDI(noteNumber, velocity, noteOn);
-    }
+    void addEffect(const std::string& filePath);
+    void addSynthesizer(const std::string& filePath);
+    void requestOpenEffectWindow(size_t effectIndex);
+    void deferEffectLoading(const std::string& trackName, const std::string& vstPath, bool openWindow = false, bool enabled = true, int index = -1, const std::vector<std::pair<int, float>>& parameters = {});
 
-    inline void addEffect(const std::string& filePath) {
-        pendingEffectPath = filePath;
-        hasPendingEffect = true;
-    }
-    
-    inline void addSynthesizer(const std::string& filePath) {
-        pendingSynthPath = filePath;
-        hasPendingSynth = true;
-    }
-    
-    inline void requestOpenEffectWindow(size_t effectIndex) {
-        pendingEffectWindowIndex = effectIndex;
-        hasPendingEffectWindow = true;
-    }
+    void play();
+    void pause();
+    void setSavedPosition(double seconds);
+    bool isPlaying() const;
+    void setBpm(float bpm);
+    float getBpm() const;
+    double getPosition() const;
+    double getSavedPosition() const;
+    void setPosition(double seconds);
+    std::pair<int, int> getTimeSignature();
 
-    inline void deferEffectLoading(const std::string& trackName, const std::string& vstPath, bool openWindow = false, bool enabled = true, int index = -1, const std::vector<std::pair<int, float>>& parameters = {}) {
-        DeferredEffect def;
-        def.trackName = trackName;
-        def.vstPath = vstPath;
-        def.shouldOpenWindow = openWindow;
-        def.enabled = enabled;
-        def.index = index;
-        def.parameters = parameters;
-        
-        deferredEffects.push_back(def);
-        hasDeferredEffects = true;
-    }
+    AudioClip* getReferenceClip(const std::string& trackName);
+    void addClipToTrack(const std::string& trackName, const AudioClip& clip);
+    void removeClipFromTrack(const std::string& trackName, size_t index);
+    void updateClipInTrack(const std::string& trackName, size_t index, const AudioClip& newClip);
 
-    inline void play() { engine.play(); }
-    inline void pause() { engine.pause(); }
-    inline void setSavedPosition(double seconds) { engine.setPosition(seconds); }
-    inline bool isPlaying() const { return engine.isPlaying(); }
-    inline void setBpm(float bpm) { engine.setBpm(bpm); }
-    inline float getBpm() const { return engine.getBpm(); }
-    inline double getPosition() const { return engine.getPosition(); }
-    inline double getSavedPosition() const { return engine.getSavedPosition(); }
-    inline void setPosition(double seconds) { engine.setPosition(seconds); }
-    inline std::pair<int, int> getTimeSignature() {return engine.getTimeSignature(); }
-
-    inline AudioClip* getReferenceClip(const std::string& trackName) { return engine.getTrackByName(trackName)->getReferenceClip(); }
-    inline void addClipToTrack(const std::string& trackName, const AudioClip& clip) { 
-        engine.getTrackByName(trackName)->addClip(clip); 
-        // Force state update after clip modification
-        std::string currentRoom = readConfig<std::string>("collab_room", "");
-        if (!currentRoom.empty()) {
-            updateRoomEngineState(currentRoom, engine.getStateString());
-        }
-    }
-    inline void removeClipFromTrack(const std::string& trackName, size_t index) { 
-        engine.getTrackByName(trackName)->removeClip(index); 
-        // Force state update after clip modification
-        std::string currentRoom = readConfig<std::string>("collab_room", "");
-        if (!currentRoom.empty()) {
-            updateRoomEngineState(currentRoom, engine.getStateString());
-        }
-    }
-    
-    // Method for updating clip positions (for moves)
-    inline void updateClipInTrack(const std::string& trackName, size_t index, const AudioClip& newClip) {
-        auto* track = engine.getTrackByName(trackName);
-        if (track && index < track->getClips().size()) {
-            track->removeClip(index);
-            track->addClip(newClip);
-            // Force state update after clip modification
-            std::string currentRoom = readConfig<std::string>("collab_room", "");
-            if (!currentRoom.empty()) {
-                updateRoomEngineState(currentRoom, engine.getStateString());
-            }
-        }
-    }
-
-    inline double getSampleRate() const { return engine.getSampleRate(); }
-    inline void setSampleRate(const double newSampleRate) { 
-        uiState.sampleRate = newSampleRate;
-        writeConfig("sampleRate", newSampleRate);
-        engine.configureAudioDevice(newSampleRate);
-    }
+    double getSampleRate() const;
+    void setSampleRate(const double newSampleRate);
 
     template<typename T>
-    void writeConfig(const std::string& key, const T& value) {
-        config[key] = value;
-        saveConfig();
-    }
+    void writeConfig(const std::string& key, const T& value);
 
     template<typename T>
-    T readConfig(const std::string& key, const T& defaultValue = T{}) const {
-        if (config.contains(key)) {
-            try {
-                return config[key].get<T>();
-            } catch (const std::exception& e) {
-                return defaultValue;
-            }
-        }
-        return defaultValue;
-    }
+    T readConfig(const std::string& key, const T& defaultValue = T{}) const;
 
     void saveConfig();
     void loadConfig();
-    
-    void syncUIStateToConfig() {
-        writeConfig("fileBrowserDirectory", uiState.fileBrowserDirectory);
-        writeConfig("vstDirectory", uiState.vstDirecory);
-        writeConfig("vstDirectories", uiState.vstDirectories);
-        writeConfig("saveDirectory", uiState.saveDirectory);
-        writeConfig("selectedTheme", uiState.selectedTheme);
-        writeConfig("sampleRate", uiState.sampleRate);
-        writeConfig("autoSaveIntervalSeconds", uiState.autoSaveIntervalSeconds);
-        writeConfig("enableAutoVSTScan", uiState.enableAutoVSTScan);
-    }
+    void syncUIStateToConfig();
     void saveLayoutConfig();
+    void loadLayoutConfig();
 
-    inline void setSelectedTrack(const std::string& trackName) { engine.setSelectedTrack(trackName); }
-    inline std::string getSelectedTrack() const { return engine.getSelectedTrack(); }
-    inline Track* getSelectedTrackPtr() { return engine.getSelectedTrackPtr(); }
-    inline bool hasSelectedTrack() const { return engine.hasSelectedTrack(); }
+    void setSelectedTrack(const std::string& trackName);
+    std::string getSelectedTrack() const;
+    Track* getSelectedTrackPtr();
+    bool hasSelectedTrack() const;
 
-    inline void loadComposition(const std::string& path) { engine.loadComposition(path); engine.generateMetronomeTrack(); }
-    inline std::string getCurrentCompositionName() const { return engine.getCurrentCompositionName(); }
-    inline void setCurrentCompositionName(const std::string& name) { engine.setCurrentCompositionName(name); }
-    inline void saveState() { engine.save(); }
-    inline void saveToFile(const std::string& path) const { engine.save(path); }
+    void loadComposition(const std::string& path);
+    std::string getCurrentCompositionName() const;
+    void setCurrentCompositionName(const std::string& name);
+    void saveState();
+    void saveToFile(const std::string& path) const;
 
     MIDIClip* getSelectedMIDIClip() const;
     MIDIClip* getTimelineSelectedMIDIClip() const;
 
-    // Parameter tracking for automation
     void updateParameterTracking();
 
-    // Firebase methods for MarketplaceComponent
     struct ExtensionData {
         std::string id = "";
         std::string author = "Unknown";
@@ -377,19 +258,16 @@ private:
     bool mfaRequired = false;
     std::string pendingMFASessionInfo = "";
     std::string lastLoggedInUser = "";
-    std::unordered_map<std::string, std::string> usernamesToEmails; // Map usernames to emails
-    std::unordered_map<std::string, std::string> pendingVerificationCodes; // Map emails to verification codes
-    std::unordered_map<std::string, std::chrono::steady_clock::time_point> codeTimestamps; // Code expiration
+    std::unordered_map<std::string, std::string> usernamesToEmails;
+    std::unordered_map<std::string, std::string> pendingVerificationCodes;
+    std::unordered_map<std::string, std::chrono::steady_clock::time_point> codeTimestamps;
     
-    // Window title tracking
     std::string lastWindowTitle = "";
     
-    // Thread safety for Firebase operations
 #ifdef FIREBASE_AVAILABLE
     std::vector<firebase::Future<firebase::database::DataSnapshot>> pendingFirebaseFutures;
 #endif
     
-    // Thread-safe engine state updates
     std::mutex engineUpdateMutex;
     std::string pendingEngineStateUpdate;
     bool hasPendingEngineUpdate = false;
@@ -399,7 +277,6 @@ private:
     void createWindow();
     void loadComponents();
     void rebuildUI();
-    void loadLayoutConfig();
     void toggleFullscreen();
     void cleanup();
 
@@ -416,6 +293,7 @@ private:
     void setPluginTrusted(const std::string& pluginName, bool trusted);
     
     bool isPluginTrusted(const std::string& pluginName) const;
+    std::string getAlignmentString(uilo::Align alignment) const;
     
     void cleanupFirebaseResources();    
     void processPendingEngineUpdates();

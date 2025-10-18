@@ -1,6 +1,6 @@
 #pragma once
 
-#include "MULOComponent.hpp"
+#include "Extension/MULOComponent.hpp"
 #include "../../src/DebugConfig.hpp"
 #include "../../src/audio/MIDIClip.hpp"
 #include "../../src/audio/MIDITrack.hpp"

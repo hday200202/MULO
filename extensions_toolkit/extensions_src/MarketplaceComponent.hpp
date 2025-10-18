@@ -1,6 +1,6 @@
 #pragma once
 
-#include "MULOComponent.hpp"
+#include "Extension/MULOComponent.hpp"
 #include "../../src/DebugConfig.hpp"
 
 class MarketplaceComponent : public MULOComponent {

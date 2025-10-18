@@ -1,7 +1,7 @@
 
 #pragma once
 
-#include "MULOComponent.hpp"
+#include "Extension/MULOComponent.hpp"
 
 class MixerComponent : public MULOComponent {
 public:

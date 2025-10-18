@@ -1,9 +1,9 @@
 #pragma once
 
-#include "MULOComponent.hpp"
-#include "FileTree.hpp"
-#include "../../src/audio/VSTPluginManager.hpp"
-#include "../../src/DebugConfig.hpp"
+#include "Extension/MULOComponent.hpp"
+#include "frontend/Util/FileTree.hpp"
+#include "audio/VSTPluginManager.hpp"
+#include "DebugConfig.hpp"
 #include <nlohmann/json.hpp>
 #include <fstream>
 #include <unordered_map>

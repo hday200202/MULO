@@ -1,7 +1,7 @@
 
 #pragma once
 
-#include "MULOComponent.hpp"
+#include "Extension/MULOComponent.hpp"
 
 class KBShortcuts : public MULOComponent {
 public:
