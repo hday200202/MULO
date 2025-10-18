@@ -69,6 +69,7 @@ bin/
 *.kdev4
 *.creator
 *.autosave
+*.hash
 
 # JUCE specific files
 # JUCE projects often generate platform-specific IDE project files and build folders
