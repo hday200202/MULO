@@ -53,4 +53,5 @@ void Resources::initUIResources(UIResources& resources, const std::string& exeDi
     resources.automationIcon    = sf::Image(findIcon("showautomation.png"));
     resources.collabIcon        = sf::Image(findIcon("collab.png"));
     resources.loginIcon         = sf::Image(findIcon("login.png"));
+    resources.muloIcon          = sf::Image(findIcon("mulo_logo.png"));
 }

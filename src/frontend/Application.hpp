@@ -57,6 +57,7 @@ public:
     const sf::RenderWindow& getWindow() const;
     void requestUIRebuild();
     void requestFullscreenToggle();
+    void requestThemeChange(const std::string& themeName);
 
     Track* getMasterTrack();
     Track* getTrack(const std::string& name);
@@ -273,6 +274,12 @@ private:
     std::mutex engineUpdateMutex;
     std::string pendingEngineStateUpdate;
     bool hasPendingEngineUpdate = false;
+    // Theme change is applied from the main loop to avoid re-entrant UI/resource updates
+    bool hasPendingThemeChange = false;
+    std::string pendingThemeName;
+
+    sf::Clock logoPageTimer;
+    std::string currentPage = "";
 
     void initUI();
     void initUIResources();
@@ -299,4 +306,6 @@ private:
     
     void cleanupFirebaseResources();    
     void processPendingEngineUpdates();
+
+    void createLogoScreen();
 };

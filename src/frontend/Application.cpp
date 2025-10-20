@@ -36,8 +36,9 @@ namespace fs = std::filesystem;
 Application::Application() {}
 
 void Application::initialise(const juce::String& commandLine) {
+    logoPageTimer.restart();
 #ifdef __linux__
-    XSetErrorHandler(x11ErrorHandler);
+    g_previousX11ErrorHandler = XSetErrorHandler(x11ErrorHandler);
 #endif
     exeDirectory = PlatformUtils::getExecutableDirectory();
     
@@ -77,11 +78,9 @@ void Application::initialise(const juce::String& commandLine) {
         dropdownSetting("UI Theme", &uiState.selectedTheme, Themes::AllThemeNames, 
             uiState.selectedTheme, [this]() {
             writeConfig("selectedTheme", uiState.selectedTheme);
-            applyTheme(resources, uiState.selectedTheme);
+            requestThemeChange(uiState.selectedTheme);
             uiState.settingsShown = false;
-            requestUIRebuild();
             if (globalSettings) globalSettings->hideWindow();
-            shouldForceUpdate = true;
         }),
         buttonSetting("Save Component Layout", "Save", [this](){ saveLayoutConfig(); })
     });
@@ -92,10 +91,10 @@ void Application::initialise(const juce::String& commandLine) {
     running = ui->isRunning();
 
     loadComponents();
-    loadLayoutConfig();
-    
-    // Initialize Firebase for marketplace functionality
+    loadLayoutConfig();    
     initFirebase();
+
+    createLogoScreen();
 
     ui->setScale(uiState.uiScale);
     ui->forceUpdate();
@@ -113,11 +112,24 @@ Application::~Application() {
     }
 #endif
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
+#ifdef __linux__
+    // restore previous x11 handler if we set one
+    if (g_previousX11ErrorHandler) {
+        XSetErrorHandler(g_previousX11ErrorHandler);
+        g_previousX11ErrorHandler = nullptr;
+    }
+#endif
 }
 
 void Application::shutdown() {
     unloadAllPlugins();
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
+#ifdef __linux__
+    if (g_previousX11ErrorHandler) {
+        XSetErrorHandler(g_previousX11ErrorHandler);
+        g_previousX11ErrorHandler = nullptr;
+    }
+#endif
 }
 
 void Application::update() {
@@ -128,6 +140,9 @@ void Application::update() {
     
     running = ui->isRunning();
     if (!running) return;
+
+    if (logoPageTimer.getElapsedTime().asMilliseconds() > 2000)
+        if (currentPage == "logo_page") ui->switchToPage("base");
     
     processPendingEngineUpdates();
     handleEvents();
@@ -204,13 +219,24 @@ void Application::render() {
 }
 
 void Application::handleEvents() {
+    if (hasPendingThemeChange) {
+        if (!engine.isPlaying()) {
+            applyTheme(resources, pendingThemeName);
+            pendingUIRebuild = true;
+            hasPendingThemeChange = false;
+            pendingThemeName.clear();
+        }
+    }
+
     for (auto& component : muloComponents)
         shouldForceUpdate |= component.second->handleEvents();
 
     if (pendingUIRebuild) {
-        rebuildUI();
-        loadLayoutConfig();
-        pendingUIRebuild = false;
+        if (!engine.isPlaying()) {
+            rebuildUI();
+            loadLayoutConfig();
+            pendingUIRebuild = false;
+        }
     }
 
     if (pendingFullscreenToggle) {
@@ -242,14 +268,9 @@ void Application::handleEvents() {
                 if (effect) {
                     effect->openWindow();
                     
-                    if (effect->isSynthesizer()) {
+                    if (effect->isSynthesizer())
                         engine.sendBpmToSynthesizers();
-
-                    }
-                } else {
-
                 }
-            } else {
 
             }
         }
@@ -354,6 +375,11 @@ void Application::handleEvents() {
     handleDragAndDrop();
 }
 
+void Application::requestThemeChange(const std::string& themeName) {
+    pendingThemeName = themeName;
+    hasPendingThemeChange = true;
+}
+
 void Application::initUI() {
     baseContainer = column(Modifier(), contains{}, "base_container");
     mainContentRow = row(Modifier().setWidth(1.f).setHeight(1.f).align(Align::BOTTOM), contains{}, "main_content_row");
@@ -398,10 +424,9 @@ void Application::rebuildUI() {
     unloadAllPlugins();
     muloComponents.clear();
 
-    applyTheme(resources, uiState.selectedTheme);
-
     cleanup();
     initUI();
+    createLogoScreen();
     loadComponents();
 
     freshRebuild = true; // Notify components that a rebuild happened
@@ -423,4 +448,31 @@ void Application::cleanup() {
     componentsToDestroy.clear();
 
     uiloPages.clear();
+}
+
+void Application::createLogoScreen() {
+    if (!ui) return;
+
+    auto muloLogo = image(
+        Modifier()
+            .setColor(resources.activeTheme->button_color)
+            .setfixedHeight(320.f)
+            .setfixedWidth(320.f)
+            .align(Align::CENTER_X | Align::CENTER_Y),
+        resources.muloIcon,
+        true,
+        "mulo_init_screen_icon"
+    );
+
+    ui->addPage(page({
+        column(
+            Modifier().setColor(resources.activeTheme->middle_color),
+        contains{
+            muloLogo
+        })
+    }), "logo_page");
+
+    ui->switchToPage("logo_page");
+    currentPage = "logo_page";
+    logoPageTimer.restart();
 }
