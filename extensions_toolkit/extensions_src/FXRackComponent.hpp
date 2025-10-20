@@ -34,6 +34,17 @@ FXRack::FXRack() { name = "fxrack"; }
 FXRack::~FXRack() {}
 
 inline void FXRack::init() {
+    // Add null checks for app and required resources
+    if (!app) {
+        std::cerr << "FXRack::init() - app pointer is null!" << std::endl;
+        return;
+    }
+    
+    if (!app->resources.activeTheme) {
+        std::cerr << "FXRack::init() - activeTheme is null!" << std::endl;
+        return;
+    }
+    
     if (app->baseContainer)
         parentContainer = app->baseContainer;
     else
