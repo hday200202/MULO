@@ -33,6 +33,17 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE      ${CMAKE_SOURCE_DIR}/bin/${CMAKE_
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${CMAKE_SOURCE_DIR}/bin/${CMAKE_SYSTEM_NAME}/RelWithDebInfo)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL     ${CMAKE_SOURCE_DIR}/bin/${CMAKE_SYSTEM_NAME}/MinSizeRel)
 
+# Enable AddressSanitizer for RelWithDebInfo on supported compilers (Unix)
+if(UNIX AND NOT WIN32)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+        message(STATUS "Enabling AddressSanitizer for RelWithDebInfo builds (compiler: ${CMAKE_CXX_COMPILER_ID})")
+        add_compile_options($<$<CONFIG:RelWithDebInfo>:-fsanitize=address> $<$<CONFIG:RelWithDebInfo>:-fno-omit-frame-pointer>)
+        add_link_options($<$<CONFIG:RelWithDebInfo>:-fsanitize=address>)
+    else()
+        message(STATUS "AddressSanitizer not enabled: unsupported compiler ${CMAKE_CXX_COMPILER_ID}")
+    endif()
+endif()
+
 # Platform-specific JUCE - Optimized build
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     # JUCE build optimizations

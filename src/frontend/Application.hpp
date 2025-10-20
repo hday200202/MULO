@@ -7,6 +7,7 @@
 #include "Extension/MULOComponent.hpp"
 #include "PlatformDefines.hpp"
 #include "Firebase-User/EmailService.hpp"
+#include "Config/GlobalSettings.hpp"
 #include <nlohmann/json.hpp>
 #include <juce_core/juce_core.h>
 #include <juce_gui_basics/juce_gui_basics.h>
@@ -28,6 +29,7 @@ public:
     UIState uiState;
     UIResources resources;
     nlohmann::json config;
+    std::unique_ptr<GlobalSettings> globalSettings = nullptr;
 
 
     const juce::String getApplicationName() override { return "MULO"; }

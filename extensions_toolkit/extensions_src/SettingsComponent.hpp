@@ -58,6 +58,7 @@ void SettingsComponent::init() {
 }
 
 void SettingsComponent::update() {
+    return;
     if (app->uiState.settingsShown && !window.isOpen()) {
         show();
     } 

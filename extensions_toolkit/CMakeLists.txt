@@ -41,6 +41,17 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_RELEASE       ${CMAKE_SOURCE_DIR}/bin/${EXT_P
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_RELWITHDEBINFO ${CMAKE_SOURCE_DIR}/bin/${EXT_PLATFORM}/RelWithDebInfo)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_MINSIZEREL    ${CMAKE_SOURCE_DIR}/bin/${EXT_PLATFORM}/MinSizeRel)
 
+# Enable AddressSanitizer for RelWithDebInfo on supported compilers (Unix)
+if(UNIX AND NOT WIN32)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+        message(STATUS "Enabling AddressSanitizer for RelWithDebInfo builds in extensions_toolkit (compiler: ${CMAKE_CXX_COMPILER_ID})")
+        add_compile_options($<$<CONFIG:RelWithDebInfo>:-fsanitize=address> $<$<CONFIG:RelWithDebInfo>:-fno-omit-frame-pointer>)
+        add_link_options($<$<CONFIG:RelWithDebInfo>:-fsanitize=address>)
+    else()
+        message(STATUS "AddressSanitizer not enabled for extensions_toolkit: unsupported compiler ${CMAKE_CXX_COMPILER_ID}")
+    endif()
+endif()
+
 # Platform-specific JUCE (using relative paths for self-contained toolkit)
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_subdirectory(${CMAKE_SOURCE_DIR}/../external/linux/JUCE ${CMAKE_BINARY_DIR}/JUCE)

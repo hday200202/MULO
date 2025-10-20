@@ -31,6 +31,10 @@ struct UIState {
     bool settingsShown = false;
     bool marketplaceShown = false;
     bool enableAutoVSTScan = false;
+    
+    std::string compositionName = "untitled";
+    std::string bpmStr = "120";
+    std::string sampleRateStr = "44100";
 
     inline void printUIState() {
         DEBUG_PRINT("  [File Browser Dir] " << fileBrowserDirectory);

@@ -26,16 +26,6 @@
 #ifdef False
 #undef False
 #endif
-
-// log X11 errors rather than exiting
-static int x11ErrorHandler(Display* display, XErrorEvent* event) {
-    char errorText[256];
-    XGetErrorText(display, event->error_code, errorText, sizeof(errorText));
-    std::cerr << "X11 Error: " << errorText 
-              << " (request code: " << (int)event->request_code 
-              << ", minor code: " << (int)event->minor_code << ")" << std::endl;
-    return 0;
-}
 #endif
 
 #ifdef _WIN32

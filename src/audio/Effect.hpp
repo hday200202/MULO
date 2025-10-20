@@ -72,9 +72,9 @@ private:
     bool scheduledForCleanup = false;
     int index = -1;
     
-    static std::vector<std::unique_ptr<juce::AudioPluginInstance>> scheduledPlugins;
-    static std::mutex cleanupMutex;
-    static std::unordered_map<std::string, int> pluginInstanceCount;
+    inline static std::vector<std::unique_ptr<juce::AudioPluginInstance>> scheduledPlugins;
+    inline static std::mutex cleanupMutex;
+    inline static std::unordered_map<std::string, int> pluginInstanceCount;
     
     std::unique_ptr<VSTEditorWindow> editorWindow;
 };

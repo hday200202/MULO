@@ -21,24 +21,33 @@ struct WaveformLOD {
     double durationSeconds = 0.0;
     std::atomic<bool> isReady{false};
     
-    int selectLOD(double pixelsPerSecond, double sampleRate = 44100.0) const {
-        if (lodLevels.empty()) return 0;
+    int selectLOD(double pixelsPerSecond, double sampleRate = 44100.0, double visibleDuration = 1.0) const {
+        if (lodLevels.empty()) return -1;
         
-        double targetLinesPerSecond = pixelsPerSecond * 1.5;
-        int bestLOD = 0;
-        double bestDiff = std::numeric_limits<double>::max();
+        const double maxLinesOnScreen = 10000.0;
+        double maxLinesPerSecond = maxLinesOnScreen / visibleDuration;
         
-        for (size_t i = 0; i < samplesPerLine.size(); ++i) {
+        double targetLinesPerSecond = std::min(pixelsPerSecond * 0.3, maxLinesPerSecond);
+        int bestLOD = -1;
+        
+        for (int i = static_cast<int>(samplesPerLine.size()) - 1; i >= 0; --i) {
+            if (i >= static_cast<int>(lodLevels.size()) || !lodLevels[i]) continue;
+            
             double linesPerSecond = sampleRate / samplesPerLine[i];
-            double diff = std::abs(linesPerSecond - targetLinesPerSecond);
             
-            if (diff < bestDiff) {
-                bestDiff = diff;
-                bestLOD = static_cast<int>(i);
-            }
-            
-            if (linesPerSecond < targetLinesPerSecond && i > 0)
+            if (linesPerSecond >= targetLinesPerSecond || i == 0) {
+                bestLOD = i;
                 break;
+            }
+        }
+        
+        if (bestLOD == -1) {
+            for (int i = static_cast<int>(lodLevels.size()) - 1; i >= 0; --i) {
+                if (lodLevels[i]) {
+                    bestLOD = i;
+                    break;
+                }
+            }
         }
         
         return bestLOD;
@@ -60,14 +69,6 @@ public:
     void draw(sf::RenderTarget& target, sf::RenderStates states) const override {
         if (!lod || !lod->isReady || lod->lodLevels.empty() || duration <= 0) return;
         
-        double pixelsPerSecond = clipWidth / duration;
-        int lodIndex = lod->selectLOD(pixelsPerSecond);
-        
-        if (lodIndex < 0 || lodIndex >= static_cast<int>(lod->lodLevels.size())) return;
-        
-        auto& vertices = lod->lodLevels[lodIndex];
-        if (!vertices || vertices->getVertexCount() == 0) return;
-        
         float visibleClipLeft = std::max(clipX, viewportLeft);
         float visibleClipRight = std::min(clipX + clipWidth, viewportRight);
         if (visibleClipLeft >= visibleClipRight) return;
@@ -77,6 +78,15 @@ public:
         double visibleEndTime = offset + (visibleClipRight - clipX) / pixelsPerSec;
         visibleStartTime = std::max(visibleStartTime, offset);
         visibleEndTime = std::min(visibleEndTime, offset + duration);
+        
+        double visibleDuration = visibleEndTime - visibleStartTime;
+        double pixelsPerSecond = (visibleClipRight - visibleClipLeft) / visibleDuration;
+        int lodIndex = lod->selectLOD(pixelsPerSecond, 44100.0, visibleDuration);
+        
+        if (lodIndex < 0 || lodIndex >= static_cast<int>(lod->lodLevels.size())) return;
+        
+        auto& vertices = lod->lodLevels[lodIndex];
+        if (!vertices || vertices->getVertexCount() == 0) return;
         
         if (visibleStartTime >= visibleEndTime) return;
         
@@ -248,6 +258,8 @@ private:
         double originalClipDuration = 0.0;
         size_t resizingClipIndex = 0;
 
+        float measureLineOpacity = 1.f;
+
         std::string previousSelectedTrack = "";
         
         // Clipboard state
@@ -255,8 +267,19 @@ private:
         std::vector<MIDIClip> copiedMIDIClips;
         bool hasClipboard = false;
         
-        // Initial update counter to force refreshes on startup
         int initialUpdateCount = 0;
+        
+        Row* scrubberRow = nullptr;
+        std::vector<std::shared_ptr<sf::Drawable>> scrubberGeometry;
+        bool isDraggingScrubber = false;
+        sf::Vector2f dragStartMousePos;
+        float dragStartScrubberPos = 0.0f;
+        float dragOffsetInScrubberRect = 0.0f;
+        float dragStartBeatWidth = 0.0f;
+        float dragStartWidthRatio = 0.0f;
+        float targetWidthRatio = 0.2f;
+        float scrubberPosition = 0.0f;
+        float scrubberWidthRatio = 0.2f;
     };
     
     struct Input {
@@ -351,6 +374,7 @@ private:
     void updateMeasureLines();
     void updateVirtualCursor();
     void updatePlayhead();
+    void updateScrubber();
     std::vector<std::shared_ptr<sf::Drawable>> generateClipShapes(const std::string& trackName);
     bool handleScroll();
     bool handleZoom();
@@ -373,6 +397,7 @@ private:
     double getBeatsPerSecond();
     float getLaneStartX();
     double findNearestGridLine(double seconds);
+    float getTotalTimelineWidth();
 
     void updateEngineState();
     void generateTrackWaveform(const std::string& trackName);
@@ -385,7 +410,8 @@ private:
 #include "Application.hpp"
 
 void TimelineComponent::Input::updateInput(Application* app, Container* layoutBounds) {
-    prevLeftMousePressed = leftMousePressed;
+    if (!app->getWindow().hasFocus()) return;
+  prevLeftMousePressed = leftMousePressed;
     prevRightMousePressed = rightMousePressed;
     
     mousePosition = app->ui->getMousePosition();
@@ -456,6 +482,15 @@ void TimelineComponent::init() {
     uiState.initialUpdateCount = 5; // Force 5 initial updates
     uiState.measureLinesShouldUpdate = true; // Force initial update
 
+    app->globalSettings->addSection(
+        "Timeline",
+        {
+            sliderSetting("Measure Opacity", &uiState.measureLineOpacity, 0.f, 1.f, 1.f, [this]() {
+                uiState.measureLinesShouldUpdate = true;
+            })
+        }
+    );
+
     cursorBlinkClock.restart();
     initialized = true;
 }
@@ -466,6 +501,8 @@ bool TimelineComponent::handleEvents() {
     
     if (!input.leftMousePressed && !input.rightMousePressed)
         automationDragState.isInteracting = false;
+    
+    if (uiState.isDraggingScrubber) return true;
     
     // Unlock scrollables from previous zoom
     if (uiState.didZoom) {
@@ -589,16 +626,13 @@ bool TimelineComponent::handleZoom() {
     float mouseX = input.mousePosition.x;    
     double targetMouseTimePos = xPosToSeconds(mouseX);
     
-    // Zoom by adjusting beatWidth directly (10% change per scroll)
     float zoomFactor = (scrollDelta > 0) ? 1.1f : 0.9f;
     uiState.beatWidth *= zoomFactor;
     
-    // Recalculate effective values
     float newEffectiveBeatWidth = getEffectiveBeatWidth(uiState.beatWidth);
     double beatsPerSecond = getBeatsPerSecond();
     float laneStart = getLaneStartX();
     
-    // Calculate new xOffset to keep mouse position stable
     float newXOffset = (mouseX - laneStart) - (targetMouseTimePos * beatsPerSecond * newEffectiveBeatWidth);
     
     if (newXOffset > 0) uiState.xOffset = 0;
@@ -738,11 +772,29 @@ void TimelineComponent::update() {
     }
     wasPlaying = isPlaying;
     
-    // Sync volume sliders bidirectionally with engine
-    syncSlidersToEngine();
-    
-    // Handle automation point dragging
+    syncSlidersToEngine();    
     handleAutomationDragOperations();
+    
+    // block timeline input if scrubber dragged
+    if (uiState.isDraggingScrubber) {
+        input.leftMousePressed = false;
+        input.rightMousePressed = false;
+        input.leftMouseClicked = false;
+        input.rightMouseClicked = false;
+        input.isDoubleClick = false;
+    }
+    
+    double lastClipEndSeconds = 0.0;
+    for (const auto& track : app->getAllTracks()) {
+        const auto& clips = track->getClips();
+        for (const auto& clip : clips) {
+            double clipEndTime = clip.startTime + clip.duration;
+            lastClipEndSeconds = std::max(lastClipEndSeconds, clipEndTime);
+        }
+    }
+    
+    if (lastClipEndSeconds <= 0.0)
+        lastClipEndSeconds = 1.0;
     
     // Detect UI scale changes and reinitialize if changed
     float currentScale = app->ui->getScale();
@@ -1028,6 +1080,175 @@ void TimelineComponent::update() {
             }
         }
     }
+    
+    updateScrubber();
+    
+    // sync scrubber with timeline
+    if (!uiState.isDraggingScrubber && baseRow) {
+        float timelineViewWidth = baseRow->getSize().x - uiState.labelWidth;
+        float totalTimelineWidth = getTotalTimelineWidth();
+        
+        if (totalTimelineWidth > 0) {
+            float calculatedRatio = timelineViewWidth / totalTimelineWidth;
+            uiState.scrubberWidthRatio = std::max(0.01f, std::min(1.0f, calculatedRatio));
+            
+            float scrollableWidth = totalTimelineWidth - timelineViewWidth;
+            if (scrollableWidth > 0) {
+                uiState.scrubberPosition = (-uiState.xOffset) / scrollableWidth;
+                uiState.scrubberPosition = std::max(0.0f, std::min(1.0f, uiState.scrubberPosition));
+            } else uiState.scrubberPosition = 0.0f;
+        }
+    }
+}
+
+void TimelineComponent::updateScrubber() {
+    if (!uiState.scrubberRow) return;
+    
+    sf::Vector2f mousePos = app->ui->getMousePosition();
+    sf::Vector2f rowPos = uiState.scrubberRow->getPosition();
+    sf::Vector2f rowSize = uiState.scrubberRow->getSize();
+    sf::FloatRect rowBounds(rowPos, rowSize);
+    
+    bool mouseOverRow = rowBounds.contains(mousePos);
+    bool mousePressed = sf::Mouse::isButtonPressed(sf::Mouse::Button::Left);
+    
+    if (uiState.isDraggingClip || uiState.isResizingClip) {
+        uiState.isDraggingScrubber = false;
+        return;
+    }
+    
+    float totalWidth = rowSize.x;
+    float rectWidth = uiState.scrubberWidthRatio * totalWidth;
+    float rectX = uiState.scrubberPosition * totalWidth - (uiState.scrubberPosition * rectWidth);
+    rectX = std::max(0.0f, std::min(rectX, totalWidth - rectWidth));
+    
+    // scrubber drag start
+    if (mousePressed && !uiState.isDraggingScrubber && mouseOverRow) {
+        uiState.isDraggingScrubber = true;
+        uiState.dragStartMousePos = mousePos;
+        uiState.dragStartScrubberPos = uiState.scrubberPosition;
+        uiState.dragStartBeatWidth = uiState.beatWidth;
+        uiState.dragStartWidthRatio = uiState.scrubberWidthRatio;
+        uiState.targetWidthRatio = uiState.scrubberWidthRatio; // Initialize target to current
+        
+        float mouseXInRect = mousePos.x - (rowPos.x + rectX);
+        uiState.dragOffsetInScrubberRect = mouseXInRect / rectWidth;
+        uiState.dragOffsetInScrubberRect = std::max(0.0f, std::min(1.0f, uiState.dragOffsetInScrubberRect));
+    }
+    
+    // scrubber zoom
+    if (uiState.isDraggingScrubber && mousePressed) {
+        float yDelta = mousePos.y - uiState.dragStartMousePos.y;
+        const float zoomDeadZone = 5.0f;
+        float effectiveYDelta = 0.0f;
+        if (std::abs(yDelta) > zoomDeadZone) {
+            effectiveYDelta = yDelta > 0 ? (yDelta - zoomDeadZone) : (yDelta + zoomDeadZone);
+            effectiveYDelta = std::max(-500.0f, std::min(500.0f, effectiveYDelta));
+        }
+
+        float baseZoomSpeed = 0.003f;
+        float zoomSpeed = baseZoomSpeed * (0.2f + uiState.dragStartWidthRatio * 1.2f);
+
+        float newTargetRatio = uiState.dragStartWidthRatio - (effectiveYDelta * zoomSpeed);
+        newTargetRatio = std::max(0.01f, std::min(1.0f, newTargetRatio));
+        uiState.targetWidthRatio = newTargetRatio;
+
+        float zoomSmoothFactor = 0.35f;
+        if (std::abs(uiState.targetWidthRatio - uiState.scrubberWidthRatio) < 0.02f)
+            uiState.scrubberWidthRatio = uiState.targetWidthRatio;
+        else uiState.scrubberWidthRatio += (uiState.targetWidthRatio - uiState.scrubberWidthRatio) * zoomSmoothFactor;
+
+        if (baseRow) {
+            float timelineViewWidth = baseRow->getSize().x - uiState.labelWidth;
+            double lastClipEndSeconds = 0.0;
+            for (const auto& track : app->getAllTracks()) {
+                const auto& clips = track->getClips();
+                for (const auto& clip : clips) lastClipEndSeconds = std::max(lastClipEndSeconds, clip.startTime + clip.duration);
+            }
+            if (lastClipEndSeconds <= 0.0) lastClipEndSeconds = 1.0;
+
+            float targetTotalWidth = timelineViewWidth / std::max(0.01f, uiState.scrubberWidthRatio);
+            double beatsPerSecond = getBeatsPerSecond();
+            double totalBeats = lastClipEndSeconds * beatsPerSecond;
+
+            if (totalBeats > 0) {
+                float scale = app->ui->getScale();
+                float zoom = uiState.zoom;
+                float divisor = totalBeats * zoom * scale;
+                if (divisor > 0.001f) {
+                    float newBeatWidth = targetTotalWidth / divisor;
+                    if (std::abs(newBeatWidth - uiState.beatWidth) > 0.01f) {
+                        uiState.beatWidth = newBeatWidth;
+                        uiState.measureLinesShouldUpdate = true;
+                    }
+                }
+            }
+            rectWidth = uiState.scrubberWidthRatio * totalWidth;
+        }
+
+        if (uiState.scrubberWidthRatio > 0.0f && uiState.scrubberWidthRatio < 0.99f) {
+            const float panDeadZone = 15.0f;
+            float mouseOffsetInRectPixels = uiState.dragOffsetInScrubberRect * rectWidth;
+            float targetRectX = (mousePos.x - rowPos.x) - mouseOffsetInRectPixels;
+            targetRectX = std::max(0.0f, std::min(targetRectX, totalWidth - rectWidth));
+
+            float dragStartRectWidth = uiState.dragStartWidthRatio * totalWidth;
+            float startMouseOffsetInRectPixels = uiState.dragOffsetInScrubberRect * dragStartRectWidth;
+            float startTargetRectX = (uiState.dragStartMousePos.x - rowPos.x) - startMouseOffsetInRectPixels;
+            startTargetRectX = std::max(0.0f, std::min(startTargetRectX, totalWidth - dragStartRectWidth));
+
+            float targetRectXDelta = targetRectX - startTargetRectX;
+            float newPosition;
+            float xDelta = targetRectXDelta;
+            if (std::abs(xDelta) <= panDeadZone) newPosition = uiState.dragStartScrubberPos;
+            else if (rectWidth < totalWidth) newPosition = targetRectX / (totalWidth - rectWidth);
+            else newPosition = 0.0f;
+
+            newPosition = std::max(0.0f, std::min(1.0f, newPosition));
+            float baseSmoothFactor = 0.5f;
+            float smoothFactor = baseSmoothFactor * uiState.scrubberWidthRatio;
+            smoothFactor = std::max(0.15f, std::min(0.5f, smoothFactor));
+
+            uiState.scrubberPosition = uiState.scrubberPosition + (newPosition - uiState.scrubberPosition) * smoothFactor;
+            float timelineViewWidth = baseRow->getSize().x - uiState.labelWidth;
+            float totalTimelineWidth = getTotalTimelineWidth();
+            float scrollableWidth = totalTimelineWidth - timelineViewWidth;
+            if (scrollableWidth > 0) uiState.xOffset = - (uiState.scrubberPosition * scrollableWidth);
+            else uiState.xOffset = 0.0f;
+            syncLaneOffsets();
+        } else if (uiState.scrubberWidthRatio >= 0.99f) uiState.xOffset = 0.0f, uiState.scrubberPosition = 0.0f, syncLaneOffsets();
+    }
+    
+    if (!mousePressed) uiState.isDraggingScrubber = false;
+    
+    uiState.scrubberGeometry.clear();
+    
+    if (uiState.scrubberWidthRatio > 0.0f && uiState.scrubberWidthRatio <= 1.0f && rowSize.x > 0) {
+        float totalWidth = rowSize.x;
+        float rectWidth = uiState.scrubberWidthRatio * totalWidth;
+        float rectX = uiState.scrubberPosition * totalWidth - (uiState.scrubberPosition * rectWidth);
+        rectX = std::max(0.0f, std::min(rectX, totalWidth - rectWidth));
+        
+        sf::FloatRect rectBounds({rowPos.x + rectX, rowPos.y}, {rectWidth, rowSize.y});
+        bool mouseOverRect = rectBounds.contains(mousePos);
+        bool isHighlighted = mouseOverRect || uiState.isDraggingScrubber;
+        
+        auto viewportRect = std::make_shared<sf::RectangleShape>();
+        viewportRect->setSize({rectWidth, rowSize.y * 0.8f});
+        viewportRect->setPosition({rectX, rowSize.y * 0.1f});
+        
+        sf::Color rectColor = app->resources.activeTheme->foreground_color;
+        if (isHighlighted) {
+            rectColor.r = std::min(255, (int)(rectColor.r * 1.3f));
+            rectColor.g = std::min(255, (int)(rectColor.g * 1.3f));
+            rectColor.b = std::min(255, (int)(rectColor.b * 1.3f));
+        }
+        viewportRect->setFillColor(rectColor);
+        
+        uiState.scrubberGeometry.push_back(viewportRect);
+    }
+    
+    uiState.scrubberRow->setCustomGeometry(uiState.scrubberGeometry);
 }
 
 Container* TimelineComponent::buildUILayout() {
@@ -1051,11 +1272,24 @@ Container* TimelineComponent::buildUILayout() {
     baseRow = row(Modifier().setColor(app->resources.activeTheme->middle_color),
     contains{laneScrollable, labelScrollable});
 
+    // Create the scrubber row - spans full width above timeline
+    uiState.scrubberRow = row(
+        Modifier()
+            .setWidth(1.f)
+            .setfixedHeight(32)
+            .align(Align::TOP | Align::LEFT)
+            .setColor(app->resources.activeTheme->track_color),
+        contains{}, "scrubber_row"
+    );
+
     timelineColumn = column(
         Modifier()
             .setColor(app->resources.activeTheme->middle_color)
             .align(Align::RIGHT | Align::BOTTOM),
-        contains{baseRow}, "timeline_column");
+        contains{
+            uiState.scrubberRow,
+            baseRow
+        }, "timeline_column");
 
     baseColumn = column(Modifier(),
     contains{timelineColumn});
@@ -1737,8 +1971,9 @@ void TimelineComponent::updateMeasureLines() {
     barColor.b = static_cast<uint8_t>(barColor.b * 0.95f);
     
     sf::Color lineColor = app->resources.activeTheme->line_color;
+    lineColor.a = static_cast<uint8_t>(lineColor.a * uiState.measureLineOpacity);
     sf::Color subLineColor = lineColor;
-    subLineColor.a = static_cast<uint8_t>(lineColor.a * 0.4f);
+    subLineColor.a = static_cast<uint8_t>(lineColor.a * 0.4f * uiState.measureLineOpacity);
     
     float scrollableHeight = laneScrollable->m_bounds.getSize().y;
     
@@ -2331,6 +2566,8 @@ void TimelineComponent::handleClipDrag() {
             const float pixelsPerSecond = uiState.beatWidth * uiState.zoom;
             const double edgeThresholdSeconds = edgeThreshold / pixelsPerSecond;
             
+            double mouseTime = xPosToSeconds(input.mousePosition.x);
+            
             if (uiState.selectedClipIsMIDI) {
                 MIDITrack* midiTrack = static_cast<MIDITrack*>(track);
                 const auto& clips = midiTrack->getMIDIClips();
@@ -2339,12 +2576,11 @@ void TimelineComponent::handleClipDrag() {
                     if (std::abs(clip.startTime - uiState.selectedClipStartTime) < 0.001) {
                         double clipEnd = clip.startTime + clip.duration;
                         
-                        // Check if cursor is within clip but not near edges
-                        if (uiState.cursorPosition >= (clip.startTime + edgeThresholdSeconds) &&
-                            uiState.cursorPosition <= (clipEnd - edgeThresholdSeconds)) {
+                        if (mouseTime >= (clip.startTime + edgeThresholdSeconds) &&
+                            mouseTime <= (clipEnd - edgeThresholdSeconds)) {
                             uiState.isDraggingClip = true;
-                            uiState.dragStartMouseTime = uiState.cursorPosition;
-                            uiState.dragOffsetWithinClip = uiState.cursorPosition - clip.startTime;
+                            uiState.dragStartMouseTime = mouseTime;
+                            uiState.dragOffsetWithinClip = mouseTime - clip.startTime;
                             uiState.originalClipStartTime = clip.startTime;
                         }
                         break;
@@ -2357,12 +2593,11 @@ void TimelineComponent::handleClipDrag() {
                     if (std::abs(clip.startTime - uiState.selectedClipStartTime) < 0.001) {
                         double clipEnd = clip.startTime + clip.duration;
                         
-                        // Check if cursor is within clip but not near edges
-                        if (uiState.cursorPosition >= (clip.startTime + edgeThresholdSeconds) &&
-                            uiState.cursorPosition <= (clipEnd - edgeThresholdSeconds)) {
+                        if (mouseTime >= (clip.startTime + edgeThresholdSeconds) &&
+                            mouseTime <= (clipEnd - edgeThresholdSeconds)) {
                             uiState.isDraggingClip = true;
-                            uiState.dragStartMouseTime = uiState.cursorPosition;
-                            uiState.dragOffsetWithinClip = uiState.cursorPosition - clip.startTime;
+                            uiState.dragStartMouseTime = mouseTime;
+                            uiState.dragOffsetWithinClip = mouseTime - clip.startTime;
                             uiState.originalClipStartTime = clip.startTime;
                         }
                         break;
@@ -2378,17 +2613,35 @@ void TimelineComponent::handleClipDrag() {
             return;
         }
         
-        // Update cursor position from current mouse position
         double currentMouseTime = xPosToSeconds(input.mousePosition.x);
         
         Track* track = app->getTrack(uiState.selectedClipTrack);
         if (!track) return;
         
-        // Calculate new position based on current mouse time
         double newStartTime = currentMouseTime - uiState.dragOffsetWithinClip;
         
-        // Snap to grid
-        newStartTime = findNearestGridLine(newStartTime);
+        double beatsPerSecond = getBeatsPerSecond();
+        auto timeSignature = app->getTimeSignature();
+        int numerator = timeSignature.first;
+        
+        // dynamic grid snapping
+        double snapUnit; 
+        if (uiState.beatWidth < 15.f)
+            snapUnit = static_cast<double>(numerator);
+        else if (uiState.beatWidth < 60.f)
+            snapUnit = 1.0;
+        else {
+            int subdivisionsPerBeat = numerator;
+            if (uiState.beatWidth >= 300.f) subdivisionsPerBeat = 8;
+            if (uiState.beatWidth >= 600.f) subdivisionsPerBeat = 16;
+            if (uiState.beatWidth >= 1200.f) subdivisionsPerBeat = 32;
+            if (uiState.beatWidth >= 2400.f) subdivisionsPerBeat = 64;
+            snapUnit = 1.0 / subdivisionsPerBeat;
+        }
+        
+        double newStartBeat = newStartTime * beatsPerSecond;
+        double snappedBeat = std::round(newStartBeat / snapUnit) * snapUnit;
+        newStartTime = snappedBeat / beatsPerSecond;
         newStartTime = std::max(0.0, newStartTime);
         
         if (uiState.selectedClipIsMIDI) {
@@ -2464,6 +2717,23 @@ float TimelineComponent::secondsToXPos(const double seconds) {
     return timelineXPos + uiState.xOffset;
 }
 
+float TimelineComponent::getTotalTimelineWidth() {
+    double lastClipEndSeconds = 0.0;
+    for (const auto& track : app->getAllTracks()) {
+        const auto& clips = track->getClips();
+        for (const auto& clip : clips) {
+            double clipEndTime = clip.startTime + clip.duration;
+            lastClipEndSeconds = std::max(lastClipEndSeconds, clipEndTime);
+        }
+    }
+    if (lastClipEndSeconds <= 0.0) lastClipEndSeconds = 1.0;
+    
+    float effectiveBeatWidth = getEffectiveBeatWidth(uiState.beatWidth);
+    double beatsPerSecond = getBeatsPerSecond();
+    double totalBeats = lastClipEndSeconds * beatsPerSecond;
+    return totalBeats * effectiveBeatWidth;
+}
+
 void TimelineComponent::updateEngineState() {
     engineState.rebuildTrackCache(app->getAllTracks());
     engineState.position = app->getPosition();
@@ -2528,29 +2798,30 @@ void TimelineComponent::generateTrackWaveform(const std::string& trackName) {
     lod->durationSeconds = durationSeconds;
     
     lod->samplesPerLine = {
-        uiState.waveformRes * 4,
-        uiState.waveformRes * 8,
-        uiState.waveformRes * 20,
-        uiState.waveformRes * 40,
-        uiState.waveformRes * 80,
-        uiState.waveformRes * 200,
-        uiState.waveformRes * 400,
-        uiState.waveformRes * 800,
-        uiState.waveformRes * 2000,
-        uiState.waveformRes * 4000,
-        uiState.waveformRes * 8000,
-        uiState.waveformRes * 20000,
-        uiState.waveformRes * 40000,
-        uiState.waveformRes * 200000,
-        uiState.waveformRes * 400000
+        1,                               // 1 sample per line
+        2,                               // 2 samples per line
+        4,                               // 4 samples per line
+        8,                               // 8 samples per line
+        uiState.waveformRes * 2,         // 20 samples per line
+        uiState.waveformRes * 4,         // 40 samples per line
+        uiState.waveformRes * 8,         // 80 samples per line
+        uiState.waveformRes * 20,        // 200 samples per line
+        uiState.waveformRes * 40,        // 400 samples per line
+        uiState.waveformRes * 80,        // 800 samples per line
+        uiState.waveformRes * 200,       // 2000 samples per line
+        uiState.waveformRes * 400,       // 4000 samples per line
+        uiState.waveformRes * 800,       // 8000 samples per line
+        uiState.waveformRes * 2000,      // 20000 samples per line
+        uiState.waveformRes * 4000,      // 40000 samples per line
+        uiState.waveformRes * 8000,      // 80000 samples per line
+        uiState.waveformRes * 20000,     // 200000 samples per line
+        uiState.waveformRes * 40000      // 400000 samples per line
     };
     
-    // Reserve space for all LOD levels to prevent reallocation during generation
     lod->lodLevels.reserve(lod->samplesPerLine.size());
     
     sf::Color waveColor = app->resources.activeTheme->wave_form_color;
     
-    // Assign to both caches BEFORE starting thread
     {
         std::lock_guard<std::mutex> lock(waveformMutex);
         trackWaveforms[trackName] = lod;
@@ -2565,11 +2836,11 @@ void TimelineComponent::generateTrackWaveform(const std::string& trackName) {
         formatManager.registerBasicFormats();
         std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(juce::File(audioPath)));
         
-        // Build all LOD levels in a temporary vector first
-        std::vector<std::shared_ptr<sf::VertexArray>> tempLodLevels;
-        tempLodLevels.reserve(lod->samplesPerLine.size());
+        lod->lodLevels.resize(lod->samplesPerLine.size());
         
-        for (size_t lodIdx = 0; lodIdx < lod->samplesPerLine.size(); ++lodIdx) {
+        lod->isReady = true; // use as they become ready
+        
+        for (int lodIdx = static_cast<int>(lod->samplesPerLine.size()) - 1; lodIdx >= 0; --lodIdx) {
             const int samplesPerLine = lod->samplesPerLine[lodIdx];
             const long long numLines = totalSamples / samplesPerLine;
             
@@ -2619,12 +2890,8 @@ void TimelineComponent::generateTrackWaveform(const std::string& trackName) {
             if (vertexIndex < waveform->getVertexCount())
                 waveform->resize(vertexIndex);
             
-            tempLodLevels.push_back(waveform);
-            double linesPerSec = static_cast<double>(vertexIndex / 2) / durationSeconds;
+            lod->lodLevels[lodIdx] = waveform;
         }
-        
-        lod->lodLevels = std::move(tempLodLevels);
-        lod->isReady = true;        
     }).detach();
 }
 
@@ -2812,36 +3079,30 @@ std::vector<std::shared_ptr<sf::Drawable>> TimelineComponent::generateClipShapes
                 // Calculate pitch range with minimum of 14 notes (1 octave + padding)
                 int pitchRange = maxNote - minNote + 1;
                 if (pitchRange < 14) {
-                    // Center the range around the existing notes
                     int expansion = (14 - pitchRange) / 2;
                     minNote = std::max(0, minNote - expansion - 1);
                     maxNote = std::min(127, maxNote + expansion + 1);
                     pitchRange = maxNote - minNote + 1;
                 } else {
-                    // Add padding of 1 note above and below
                     minNote = std::max(0, minNote - 1);
                     maxNote = std::min(127, maxNote + 1);
                     pitchRange = maxNote - minNote + 1;
                 }
                 
-                // Second pass: draw all notes with scaled Y positions
+                // draw all notes with scaled Y positions
                 for (const auto& [noteNumber, noteStartTime, noteDuration] : noteList) {
-                    // Calculate note position relative to clip start
                     double relativeNoteStart = noteStartTime;
                     double relativeNoteEnd = noteStartTime + noteDuration;
                     
-                    // Clip notes to clip boundaries
                     if (relativeNoteEnd < 0 || relativeNoteStart > clip.duration)
                         continue;
                     
                     relativeNoteStart = std::max(0.0, relativeNoteStart);
                     relativeNoteEnd = std::min(clip.duration, relativeNoteEnd);
                     
-                    // Calculate screen position
                     float noteX = clipX + (relativeNoteStart / clip.duration) * clipWidth;
                     float noteWidth = ((relativeNoteEnd - relativeNoteStart) / clip.duration) * clipWidth;
                     
-                    // Make sure note is at least 1 pixel wide
                     if (noteWidth < 1.f) noteWidth = 1.f;
                     float noteYRatio = (float)(maxNote - noteNumber) / (float)pitchRange;
                     float noteY = 2.f + clipHeight * noteYRatio * 0.95f; // Leave small margin at top/bottom
@@ -2903,7 +3164,6 @@ std::vector<std::shared_ptr<sf::Drawable>> TimelineComponent::generateClipShapes
             
             // Add waveform drawable on top if available
             if (waveformLOD && totalDuration > 0) {
-                // Calculate viewport bounds in screen space for culling
                 float viewportLeft = secondsToXPos(viewStartSeconds);
                 float viewportRight = secondsToXPos(viewEndSeconds);
                 

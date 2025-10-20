@@ -12,10 +12,6 @@
 #undef min
 #endif
 
-std::vector<std::unique_ptr<juce::AudioPluginInstance>> Effect::scheduledPlugins;
-std::mutex Effect::cleanupMutex;
-std::unordered_map<std::string, int> Effect::pluginInstanceCount;
-
 VSTEditorWindow::VSTEditorWindow(const juce::String& name, juce::AudioProcessor* processor, std::function<void()> onClose)
     : juce::DocumentWindow(name, juce::Colours::lightgrey, juce::DocumentWindow::allButtons)
     , vstProcessor(processor)

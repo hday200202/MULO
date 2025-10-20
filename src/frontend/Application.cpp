@@ -5,6 +5,25 @@
 #include "Data/Resources.hpp"
 #include "../audio/MIDIClip.hpp"
 
+#ifdef __linux__
+#include <X11/Xlib.h>
+#include <X11/Xutil.h>
+#ifdef Success
+#undef Success
+#endif
+
+// used to prevent exit on x11 errors (fixes fullscreen toggle)
+static XErrorHandler g_previousX11ErrorHandler = nullptr;
+static int x11ErrorHandler(Display* display, XErrorEvent* event) {
+    char errorText[256];
+    XGetErrorText(display, event->error_code, errorText, sizeof(errorText));
+    std::cerr << "X11 Error: " << errorText
+              << " (request code: " << (int)event->request_code
+              << ", minor code: " << (int)event->minor_code << ")" << std::endl;
+    return 0;
+}
+#endif
+
 #include <tinyfiledialogs/tinyfiledialogs.hpp>
 #include <filesystem>
 #include <fstream>
@@ -17,23 +36,55 @@ namespace fs = std::filesystem;
 Application::Application() {}
 
 void Application::initialise(const juce::String& commandLine) {
+#ifdef __linux__
+    XSetErrorHandler(x11ErrorHandler);
+#endif
     exeDirectory = PlatformUtils::getExecutableDirectory();
     
     loadConfig();
-    if (!uiState.vstDirecory.empty()) {
+    if (!uiState.vstDirecory.empty())
         engine.setVSTDirectory(uiState.vstDirecory);
-    }
-    if (!uiState.saveDirectory.empty()) {
+    if (!uiState.saveDirectory.empty())
         engine.setSampleDirectory(uiState.saveDirectory);
-    } else if (!uiState.fileBrowserDirectory.empty()) {
+    else if (!uiState.fileBrowserDirectory.empty())
         engine.setSampleDirectory(uiState.fileBrowserDirectory);
-        DEBUG_PRINT("Using fileBrowserDirectory as sample directory: " << uiState.fileBrowserDirectory);
-    }
     
     createWindow();
     applyTheme(resources, uiState.selectedTheme);
     Resources::initUIResources(resources, exeDirectory);
     initUI();
+    
+    globalSettings = std::make_unique<GlobalSettings>(*this);
+    
+    // Register Application settings section
+    globalSettings->addSection("Application", {
+        textboxSetting("Composition Name", &uiState.compositionName, getCurrentCompositionName(), 256, [this]() {
+            engine.setCurrentCompositionName(uiState.compositionName);
+        }),
+        textboxSetting("BPM", &uiState.bpmStr, std::to_string(static_cast<int>(getBpm())), 8, [this]() {
+            try {
+                float bpm = std::stof(uiState.bpmStr);
+                if (bpm >= 20.0f && bpm <= 999.0f) engine.setBpm(bpm);
+            } catch (...) {}
+        }),
+        dropdownSetting("Sample Rate", &uiState.sampleRateStr, {"44100", "48000", "96000"}, 
+            std::to_string(static_cast<int>(engine.getSampleRate())), [this]() {
+            try {
+                double sampleRate = std::stod(uiState.sampleRateStr);
+                setSampleRate(sampleRate);
+            } catch (...) {}
+        }),
+        dropdownSetting("UI Theme", &uiState.selectedTheme, Themes::AllThemeNames, 
+            uiState.selectedTheme, [this]() {
+            writeConfig("selectedTheme", uiState.selectedTheme);
+            applyTheme(resources, uiState.selectedTheme);
+            uiState.settingsShown = false;
+            requestUIRebuild();
+            if (globalSettings) globalSettings->hideWindow();
+            shouldForceUpdate = true;
+        }),
+        buttonSetting("Save Component Layout", "Save", [this](){ saveLayoutConfig(); })
+    });
 
     engine.newComposition("untitled");
     engine.addTrack("Master");
@@ -93,6 +144,9 @@ void Application::update() {
     for (const auto& [name, component] : muloComponents)
         if (component)
             component->update();
+    
+    if (globalSettings)
+        globalSettings->update();
 
     updateParameterTracking();
     
@@ -155,6 +209,7 @@ void Application::handleEvents() {
 
     if (pendingUIRebuild) {
         rebuildUI();
+        loadLayoutConfig();
         pendingUIRebuild = false;
     }
 
@@ -215,15 +270,8 @@ void Application::handleEvents() {
                 synthEffect->enable();
                 synthEffect->openWindow();
                 engine.setSelectedTrack(trackName);
-                
                 engine.sendBpmToSynthesizers();
-
-
-            } else {
-
             }
-        } else {
-
         }
         hasPendingSynth = false;
         pendingSynthPath.clear();
@@ -233,13 +281,8 @@ void Application::handleEvents() {
         Track* selectedTrack = getSelectedTrackPtr();
         if (selectedTrack) {
             auto& effects = selectedTrack->getEffects();
-            if (pendingEffectWindowIndex < effects.size()) {
+            if (pendingEffectWindowIndex < effects.size())
                 effects[pendingEffectWindowIndex]->openWindow();
-            } else {
-
-            }
-        } else {
-
         }
         hasPendingEffectWindow = false;
         pendingEffectWindowIndex = SIZE_MAX;
@@ -253,45 +296,32 @@ void Application::handleEvents() {
         Track* targetTrack = nullptr;
         if (deferredEffect.trackName == "Master") {
             targetTrack = getMasterTrack();
-        } else {
+        } else
             targetTrack = getTrack(deferredEffect.trackName);
-        }
         
         if (targetTrack) {
             Effect* effect = targetTrack->addEffect(deferredEffect.vstPath);
             if (effect) {
-                if (!deferredEffect.enabled) {
+                if (!deferredEffect.enabled)
                     effect->disable();
-                }
-                if (deferredEffect.index >= 0) {
+                if (deferredEffect.index >= 0)
                     effect->setIndex(deferredEffect.index);
-                }
                 
-                for (const auto& paramPair : deferredEffect.parameters) {
+                for (const auto& paramPair : deferredEffect.parameters)
                     effect->setParameter(paramPair.first, paramPair.second);
-                }
                 
-                if (effect->isSynthesizer()) {
+                if (effect->isSynthesizer())
                     engine.sendBpmToSynthesizers();
-
-                }
                 
                 if (effect->hasEditor()) {
                     effect->openWindow();
                     std::this_thread::sleep_for(std::chrono::milliseconds(50));
                     effect->closeWindow();
                 }
-                
-
             }
-        } else {
-
         }
         
-        if (deferredEffects.empty()) {
-            hasDeferredEffects = false;
-
-        }
+        if (deferredEffects.empty()) hasDeferredEffects = false;
     }
 
     const auto& enginePendingEffects = engine.getPendingEffects();
@@ -310,19 +340,13 @@ void Application::handleEvents() {
         
         hasDeferredEffects = !deferredEffects.empty();
         engine.clearPendingEffects();
-        
-        if (hasDeferredEffects) {
-
-        }
     }
 
     if (pendingTrackRemoveName != "") {
         auto track = engine.getTrackByName(pendingTrackRemoveName);
         
-        if (track)
-            track->clearEffects();
+        if (track) track->clearEffects();
             
-
         engine.removeTrackByName(pendingTrackRemoveName);
         pendingTrackRemoveName = "";
     }
