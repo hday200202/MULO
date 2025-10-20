@@ -50,6 +50,11 @@ private:
 #include "Application.hpp"
 
 inline void MarketplaceComponent::init() {
+    if (!app) {
+        std::cerr << "MarketplaceComponent::init() - app pointer is null!" << std::endl;
+        return;
+    }
+    
     resolution.size.x = app->getWindow().getSize().x / 3;
     resolution.size.y = app->getWindow().getSize().y / 1.5;
     windowView.setSize(static_cast<sf::Vector2f>(resolution.size));

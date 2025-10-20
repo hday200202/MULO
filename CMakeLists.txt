@@ -115,6 +115,12 @@ file(GLOB_RECURSE MULO_SOURCES
 # Define executable
 add_executable(MULO ${MULO_SOURCES})
 
+# Disable typed operator new/delete on macOS to avoid initialization issues
+# when running with DYLD_INSERT_LIBRARIES (sandbox mode)
+if (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    target_compile_options(MULO PRIVATE -fno-typed-cxx-new-delete)
+endif()
+
 # Add JUCE module headers to includes
 target_include_directories(MULO PRIVATE
     "${CMAKE_SOURCE_DIR}/src"
@@ -305,6 +311,22 @@ target_link_libraries(MULO PRIVATE tinyfiledialogs)
 if (CMAKE_SYSTEM_NAME STREQUAL "Darwin" OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_library(sandbox_override SHARED src/frontend/sandbox_override.cpp src/frontend/PluginSandbox.cpp)
     target_include_directories(sandbox_override PRIVATE src/frontend)
+    
+    # Disable typed operator new/delete and use minimal C++ runtime
+    # to avoid initialization issues when injected via DYLD_INSERT_LIBRARIES or LD_PRELOAD
+    target_compile_options(sandbox_override PRIVATE 
+        -fno-typed-cxx-new-delete
+        -fno-exceptions
+        -fno-rtti
+    )
+    
+    # Link with minimal dependencies
+    if (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+        target_link_options(sandbox_override PRIVATE 
+            -Wl,-flat_namespace
+            -Wl,-undefined,dynamic_lookup
+        )
+    endif()
     
     if (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
         # macOS: Build as dylib for DYLD_INSERT_LIBRARIES
