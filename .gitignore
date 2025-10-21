@@ -96,3 +96,4 @@ Builds/
 Thumbs.db # Windows specific
 test_project_files/untitled.mpf
 *.mpf
+log.txt
