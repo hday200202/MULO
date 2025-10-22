@@ -4,6 +4,16 @@ project(MULOExtensions)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Disable AVX-512 support
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    add_compile_options(-mno-avx512f -mno-avx512dq -mno-avx512cd -mno-avx512bw -mno-avx512vl)
+    message(STATUS "Disabled AVX-512 support for extensions")
+elseif(MSVC)
+    # MSVC doesn't enable AVX-512 by default, but we can explicitly disable it
+    add_compile_options(/arch:AVX2)
+    message(STATUS "Limited to AVX2 for extensions (MSVC)")
+endif()
+
 # Set default build type to Release to avoid Debug crashes
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
@@ -42,15 +52,15 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_RELWITHDEBINFO ${CMAKE_SOURCE_DIR}/bin/${EXT_
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_MINSIZEREL    ${CMAKE_SOURCE_DIR}/bin/${EXT_PLATFORM}/MinSizeRel)
 
 # Enable AddressSanitizer for RelWithDebInfo on supported compilers (Unix)
-if(UNIX AND NOT WIN32)
-    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-        message(STATUS "Enabling AddressSanitizer for RelWithDebInfo builds in extensions_toolkit (compiler: ${CMAKE_CXX_COMPILER_ID})")
-        add_compile_options($<$<CONFIG:RelWithDebInfo>:-fsanitize=address> $<$<CONFIG:RelWithDebInfo>:-fno-omit-frame-pointer>)
-        add_link_options($<$<CONFIG:RelWithDebInfo>:-fsanitize=address>)
-    else()
-        message(STATUS "AddressSanitizer not enabled for extensions_toolkit: unsupported compiler ${CMAKE_CXX_COMPILER_ID}")
-    endif()
-endif()
+#if(UNIX AND NOT WIN32)
+#    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+#        message(STATUS "Enabling AddressSanitizer for RelWithDebInfo builds in extensions_toolkit (compiler: ${CMAKE_CXX_COMPILER_ID})")
+#        add_compile_options($<$<CONFIG:RelWithDebInfo>:-fsanitize=address> $<$<CONFIG:RelWithDebInfo>:-fno-omit-frame-pointer>)
+#        add_link_options($<$<CONFIG:RelWithDebInfo>:-fsanitize=address>)
+#    else()
+#        message(STATUS "AddressSanitizer not enabled for extensions_toolkit: unsupported compiler ${CMAKE_CXX_COMPILER_ID}")
+#    endif()
+#endif()
 
 # Platform-specific JUCE (using relative paths for self-contained toolkit)
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -191,6 +201,11 @@ function(add_extension EXTENSION_NAME)
     
     # Create shared library
     add_library(${EXTENSION_NAME} SHARED ${SOURCE_FILES})
+    
+    # Apply AVX-512 disable flags directly to extension target
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(${EXTENSION_NAME} PRIVATE -mno-avx512f -mno-avx512dq -mno-avx512cd -mno-avx512bw -mno-avx512vl)
+    endif()
     
     target_include_directories(${EXTENSION_NAME} PRIVATE ${COMMON_INCLUDE_DIRS})
     target_compile_definitions(${EXTENSION_NAME} PRIVATE ${COMMON_COMPILE_DEFINITIONS})

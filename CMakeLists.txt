@@ -16,6 +16,16 @@ endif()
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Disable AVX-512
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    add_compile_options(-mno-avx512f -mno-avx512dq -mno-avx512cd -mno-avx512bw -mno-avx512vl)
+    message(STATUS "Disabled AVX-512 support for main application")
+elseif(MSVC)
+    # MSVC doesn't enable AVX-512 by default, but we can explicitly disable it
+    add_compile_options(/arch:AVX2)
+    message(STATUS "Limited to AVX2 for main application (MSVC)")
+endif()
+
 # Use ccache if available for faster rebuilds
 find_program(CCACHE_PROGRAM ccache)
 if(CCACHE_PROGRAM)
@@ -34,15 +44,15 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${CMAKE_SOURCE_DIR}/bin/${CMAK
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL     ${CMAKE_SOURCE_DIR}/bin/${CMAKE_SYSTEM_NAME}/MinSizeRel)
 
 # Enable AddressSanitizer for RelWithDebInfo on supported compilers (Unix)
-if(UNIX AND NOT WIN32)
-    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-        message(STATUS "Enabling AddressSanitizer for RelWithDebInfo builds (compiler: ${CMAKE_CXX_COMPILER_ID})")
-        add_compile_options($<$<CONFIG:RelWithDebInfo>:-fsanitize=address> $<$<CONFIG:RelWithDebInfo>:-fno-omit-frame-pointer>)
-        add_link_options($<$<CONFIG:RelWithDebInfo>:-fsanitize=address>)
-    else()
-        message(STATUS "AddressSanitizer not enabled: unsupported compiler ${CMAKE_CXX_COMPILER_ID}")
-    endif()
-endif()
+#if(UNIX AND NOT WIN32)
+#    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+#        message(STATUS "Enabling AddressSanitizer for RelWithDebInfo builds (compiler: ${CMAKE_CXX_COMPILER_ID})")
+#        add_compile_options($<$<CONFIG:RelWithDebInfo>:-fsanitize=address> $<$<CONFIG:RelWithDebInfo>:-fno-omit-frame-pointer>)
+#        add_link_options($<$<CONFIG:RelWithDebInfo>:-fsanitize=address>)
+#    else()
+#        message(STATUS "AddressSanitizer not enabled: unsupported compiler ${CMAKE_CXX_COMPILER_ID}")
+#    endif()
+#endif()
 
 # Platform-specific JUCE - Optimized build
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -125,6 +135,11 @@ file(GLOB_RECURSE MULO_SOURCES
 
 # Define executable
 add_executable(MULO ${MULO_SOURCES})
+
+# Apply AVX-512 disable flags directly to MULO target
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(MULO PRIVATE -mno-avx512f -mno-avx512dq -mno-avx512cd -mno-avx512bw -mno-avx512vl)
+endif()
 
 # Add JUCE module headers to includes
 target_include_directories(MULO PRIVATE

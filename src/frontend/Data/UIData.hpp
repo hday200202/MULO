@@ -35,6 +35,9 @@ struct UIState {
     std::string compositionName = "untitled";
     std::string bpmStr = "120";
     std::string sampleRateStr = "44100";
+    
+    bool xResizing = false;
+    bool yResizing = false;
 
     inline void printUIState() {
         DEBUG_PRINT("  [File Browser Dir] " << fileBrowserDirectory);

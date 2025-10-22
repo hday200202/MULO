@@ -29,6 +29,35 @@ private:
     Image* extensionUploaderButton;
 
     bool wasPlaying = false;
+    
+    struct ButtonImageStates {
+        sf::Image normal;
+        sf::Image hovered;
+        sf::Image toggled;
+        sf::Image toggledHovered;
+    };
+    
+    ButtonImageStates loadButtonImages;
+    ButtonImageStates saveButtonImages;
+    ButtonImageStates exportButtonImages;
+    ButtonImageStates loginButtonImages;
+    ButtonImageStates playButtonImages;
+    ButtonImageStates pauseButtonImages;
+    ButtonImageStates metronomeButtonImages;
+    ButtonImageStates automationButtonImages;
+    ButtonImageStates pianoRollButtonImages;
+    ButtonImageStates mixerButtonImages;
+    ButtonImageStates extStoreImages;
+    ButtonImageStates settingsButtonImages;
+    ButtonImageStates collaborationButtonImages;
+    ButtonImageStates extensionUploaderButtonImages;
+    
+    sf::Color baseButtonColor;
+    sf::Color baseMuteColor;
+    sf::Color hoverButtonColor;
+    sf::Color hoverMuteColor;
+    
+    void generateButtonStates(ButtonImageStates& states, const sf::Image& sourceImage);
 };
 
 #include "Application.hpp"
@@ -41,23 +70,72 @@ AppControls::~AppControls() {
     
 }
 
+void AppControls::generateButtonStates(ButtonImageStates& states, const sf::Image& sourceImage) {
+    auto recolorImage = [](const sf::Image& source, const sf::Color& color) -> sf::Image {
+        sf::Image result = source;
+        sf::Vector2u size = result.getSize();
+        for (unsigned int y = 0; y < size.y; ++y) {
+            for (unsigned int x = 0; x < size.x; ++x) {
+                sf::Color pixel = result.getPixel({x, y});
+                if (pixel.a > 0) {
+                    result.setPixel({x, y}, sf::Color(color.r, color.g, color.b, pixel.a));
+                }
+            }
+        }
+        return result;
+    };
+    
+    states.normal = recolorImage(sourceImage, baseButtonColor);
+    states.hovered = recolorImage(sourceImage, hoverButtonColor);
+    states.toggled = recolorImage(sourceImage, baseMuteColor);
+    states.toggledHovered = recolorImage(sourceImage, hoverMuteColor);
+}
+
 void AppControls::init() {
     if (app->baseContainer)
         parentContainer = app->baseContainer;
+    
+    baseButtonColor = app->resources.activeTheme->button_color;
+    baseMuteColor = app->resources.activeTheme->mute_color;
+    hoverButtonColor = sf::Color(
+        std::min(255, (int)(baseButtonColor.r + 50)),
+        std::min(255, (int)(baseButtonColor.g + 50)),
+        std::min(255, (int)(baseButtonColor.b + 50))
+    );
+    hoverMuteColor = sf::Color(
+        std::min(255, (int)(baseMuteColor.r + 50)),
+        std::min(255, (int)(baseMuteColor.g + 50)),
+        std::min(255, (int)(baseMuteColor.b + 50))
+    );
+    
+    generateButtonStates(loadButtonImages, app->resources.loadIcon);
+    generateButtonStates(saveButtonImages, app->resources.saveIcon);
+    generateButtonStates(exportButtonImages, app->resources.exportIcon);
+    generateButtonStates(loginButtonImages, app->resources.loginIcon);
+    generateButtonStates(playButtonImages, app->resources.playIcon);
+    generateButtonStates(pauseButtonImages, app->resources.pauseIcon);
+    generateButtonStates(metronomeButtonImages, app->resources.metronomeIcon);
+    generateButtonStates(automationButtonImages, app->resources.automationIcon);
+    generateButtonStates(pianoRollButtonImages, app->resources.pianoRollIcon);
+    generateButtonStates(mixerButtonImages, app->resources.mixerIcon);
+    generateButtonStates(extStoreImages, app->resources.storeIcon);
+    generateButtonStates(settingsButtonImages, app->resources.settingsIcon);
+    generateButtonStates(collaborationButtonImages, app->resources.collabIcon);
+    generateButtonStates(extensionUploaderButtonImages, app->resources.exportIcon);
     
     loadButton = image(
         Modifier()
             .align(Align::LEFT | Align::CENTER_Y)
             .setfixedHeight(48.f)
             .setfixedWidth(48)
-            .setColor(app->resources.activeTheme->button_color)
+            .setColor(baseButtonColor)
             .onLClick([&](){
                 std::string path = app->selectFile({"*.mpf"});
                 if (!path.empty())
                     app->loadComposition(path);
             }),
-        app->resources.loadIcon,
-        true,
+        loadButtonImages.normal,
+        false,
         "load_button"
     );
 
@@ -65,7 +143,7 @@ void AppControls::init() {
         Modifier()
             .align(Align::LEFT | Align::CENTER_Y)
             .setfixedWidth(48).setfixedHeight(48.f)
-            .setColor(app->resources.activeTheme->button_color)
+            .setColor(baseButtonColor)
             .onLClick([&](){
                 app->uiState.saveDirectory = app->selectDirectory();
                 std::string savePath = app->uiState.saveDirectory + "/" + app->getCurrentCompositionName() + ".mpf";
@@ -73,8 +151,8 @@ void AppControls::init() {
                 app->saveToFile(savePath);
                 DEBUG_PRINT("Project saved successfully to: " << savePath);
             }),
-        app->resources.saveIcon,
-        true,
+        saveButtonImages.normal,
+        false,
         "save_button"
     );
 
@@ -82,13 +160,13 @@ void AppControls::init() {
         Modifier()
             .align(Align::LEFT | Align::CENTER_Y)
             .setfixedWidth(48).setfixedHeight(48.f)
-            .setColor(app->resources.activeTheme->button_color)
+            .setColor(baseButtonColor)
             .onLClick([&](){
                 DEBUG_PRINT("Exporting Master...");
                 app->exportAudio();
             }),
-        app->resources.exportIcon,
-        true,
+        exportButtonImages.normal,
+        false,
         "export_button"
     );
 
@@ -96,14 +174,14 @@ void AppControls::init() {
         Modifier()
             .align(Align::LEFT | Align::CENTER_Y)
             .setfixedWidth(48).setfixedHeight(48.f)
-            .setColor(app->resources.activeTheme->button_color)
+            .setColor(baseButtonColor)
             .onLClick([&](){
                 bool currentState = app->readConfig<bool>("show_user_login", false);
                 app->writeConfig("show_user_login", !currentState);
                 DEBUG_PRINT((!currentState ? "Show Login" : "Hide Login"));
             }),
-        app->resources.loginIcon,
-        true,
+        loginButtonImages.normal,
+        false,
         "login_button"
     );
 
@@ -111,7 +189,7 @@ void AppControls::init() {
         Modifier()
             .align(Align::CENTER_X | Align::CENTER_Y)
             .setfixedWidth(48).setfixedHeight(48)
-            .setColor(app->resources.activeTheme->button_color)
+            .setColor(baseButtonColor)
             .onLClick([&](){
                 if (!app->isPlaying()) {
                     app->play();
@@ -121,8 +199,8 @@ void AppControls::init() {
                 }
                 app->shouldForceUpdate = true;
             }),
-        app->resources.playIcon,
-        true,
+        playButtonImages.normal,
+        false,
         "play_button"
     );
 
@@ -130,12 +208,12 @@ void AppControls::init() {
         Modifier()
             .align(Align::CENTER_X | Align::CENTER_Y)
             .setfixedWidth(48).setfixedHeight(48.f)
-            .setColor(app->resources.activeTheme->button_color)
+            .setColor(baseButtonColor)
             .onLClick([&](){
                 app->setMetronomeEnabled(!app->isMetronomeEnabled());
             }),
-        app->resources.metronomeIcon,
-        true,
+        metronomeButtonImages.normal,
+        false,
         "metronome_button"
     );
 
@@ -144,13 +222,13 @@ void AppControls::init() {
             .align(Align::RIGHT | Align::CENTER_Y)
             .setfixedHeight(48.f)
             .setfixedWidth(48)
-            .setColor(app->resources.activeTheme->button_color)
+            .setColor(baseButtonColor)
             .onLClick([&](){
                 app->writeConfig<bool>("show_automation", 
                     !app->readConfig<bool>("show_automation", false));
             }),
-        app->resources.automationIcon,
-        true,
+        automationButtonImages.normal,
+        false,
         "show_automation_button"
     );
 
@@ -159,7 +237,7 @@ void AppControls::init() {
             .align(Align::RIGHT | Align::CENTER_Y)
             .setfixedHeight(48.f)
             .setfixedWidth(48)
-            .setColor(app->resources.activeTheme->button_color)
+            .setColor(baseButtonColor)
             .onLClick([&](){
                 auto* pianoRoll = app->getComponent("piano_roll");
                 if (pianoRoll) {
@@ -172,8 +250,8 @@ void AppControls::init() {
                     DEBUG_PRINT("Piano Roll component not found!");
                 }
             }),
-        app->resources.pianoRollIcon,
-        true,
+        pianoRollButtonImages.normal,
+        false,
         "piano_roll_button"
     );
 
@@ -182,13 +260,13 @@ void AppControls::init() {
             .align(Align::RIGHT | Align::CENTER_Y)
             .setfixedHeight(48.f)
             .setfixedWidth(48)
-            .setColor(app->resources.activeTheme->button_color)
+            .setColor(baseButtonColor)
             .onLClick([&](){
                 app->uiState.marketplaceShown = !app->uiState.marketplaceShown;
                 DEBUG_PRINT((app->uiState.marketplaceShown ? "Show Marketplace" : "Hide Marketplace"));
             }),
-        app->resources.storeIcon,
-        true,
+        extStoreImages.normal,
+        false,
         "store_button"
     );
 
@@ -197,13 +275,13 @@ void AppControls::init() {
             .align(Align::RIGHT | Align::CENTER_Y)
             .setfixedHeight(48.f)
             .setfixedWidth(48)
-            .setColor(app->resources.activeTheme->button_color)
+            .setColor(baseButtonColor)
             .onLClick([&](){
                 app->uiState.settingsShown = !app->uiState.settingsShown;
                 DEBUG_PRINT((app->uiState.settingsShown ? "Show Settings" : "Hide Settings"));
             }),
-        app->resources.settingsIcon,
-        true,
+        settingsButtonImages.normal,
+        false,
         "settings_button"
     );
     
@@ -212,14 +290,14 @@ void AppControls::init() {
             .align(Align::LEFT | Align::CENTER_Y)
             .setfixedHeight(48.f)
             .setfixedWidth(48)
-            .setColor(app->resources.activeTheme->button_color)
+            .setColor(baseButtonColor)
             .onLClick([&](){
                 bool currentState = app->readConfig<bool>("collabShowWindow", false);
                 app->writeConfig("collabShowWindow", !currentState);
                 DEBUG_PRINT((!currentState ? "Show Collaboration" : "Hide Collaboration"));
             }),
-        app->resources.collabIcon,
-        true,
+        collaborationButtonImages.normal,
+        false,
         "collaboration_button"
     );
 
@@ -228,14 +306,14 @@ void AppControls::init() {
             .align(Align::LEFT | Align::CENTER_Y)
             .setfixedHeight(48.f)
             .setfixedWidth(48)
-            .setColor(app->resources.activeTheme->button_color)
+            .setColor(baseButtonColor)
             .onLClick([&](){
                 bool currentState = app->readConfig<bool>("extupload_shown", false);
                 app->writeConfig("extupload_shown", !currentState);
                 DEBUG_PRINT((!currentState ? "Show Extension Uploader" : "Hide Extension Uploader"));
             }),
-        app->resources.exportIcon,
-        true,
+        extensionUploaderButtonImages.normal,
+        false,
         "extension_uploader_button"
     );
 
@@ -243,7 +321,7 @@ void AppControls::init() {
         Modifier()
             .align(Align::RIGHT | Align::CENTER_Y)
             .setfixedWidth(48).setfixedHeight(48.f)
-            .setColor(app->resources.activeTheme->button_color)
+            .setColor(baseButtonColor)
             .onLClick([&](){
                 if (app) {
                     if (app->getComponent("mixer")) {
@@ -258,8 +336,8 @@ void AppControls::init() {
                     }
                 }
             }),
-        app->resources.mixerIcon,
-        true,
+        mixerButtonImages.normal,
+        false,
         "mixer_button"
     );
 
@@ -309,272 +387,55 @@ void AppControls::init() {
 bool AppControls::handleEvents() { 
     bool forceUpdate = false;
 
-    sf::Color baseButtonColor = app->resources.activeTheme->button_color;
-    sf::Color baseMuteColor = app->resources.activeTheme->mute_color;
-    
-    sf::Color playButtonBaseColor = app->isPlaying() ? baseMuteColor : baseButtonColor;
-    sf::Color metronomeButtonBaseColor = app->isMetronomeEnabled() ? baseMuteColor : baseButtonColor;
-    sf::Color settingsButtonBaseColor = app->uiState.settingsShown ? baseMuteColor : baseButtonColor;
-    bool collaborationShown = app->readConfig<bool>("collabShowWindow", false);
-    sf::Color collaborationButtonBaseColor = collaborationShown ? baseMuteColor : baseButtonColor;
-    bool extensionUploaderShown = app->readConfig<bool>("extupload_shown", false);
-    sf::Color extensionUploaderButtonBaseColor = extensionUploaderShown ? baseMuteColor : baseButtonColor;
-    sf::Color extStoreBaseColor = app->uiState.marketplaceShown ? baseMuteColor : baseButtonColor;
-    bool loginShown = app->readConfig<bool>("show_user_login", false);
-    sf::Color loginButtonBaseColor = loginShown ? baseMuteColor : baseButtonColor;
-    bool automationShown = app->readConfig<bool>("show_automation", false);
-    sf::Color automationButtonBaseColor = automationShown ? baseMuteColor : baseButtonColor;
-
     bool currentlyPlaying = app->isPlaying();
+    bool metronomeEnabled = app->isMetronomeEnabled();
+    bool settingsShown = app->uiState.settingsShown;
+    bool collaborationShown = app->readConfig<bool>("collabShowWindow", false);
+    bool extensionUploaderShown = app->readConfig<bool>("extupload_shown", false);
+    bool marketplaceShown = app->uiState.marketplaceShown;
+    bool loginShown = app->readConfig<bool>("show_user_login", false);
+    bool automationShown = app->readConfig<bool>("show_automation", false);
+    
     if (currentlyPlaying != wasPlaying) {
         if (playButton) {
-            try {
-                if (currentlyPlaying) {
-                    playButton->m_modifier.setColor(baseMuteColor);
-                    playButton->setImage(app->resources.pauseIcon, true);
-                } else {
-                    playButton->m_modifier.setColor(baseButtonColor);
-                    playButton->setImage(app->resources.playIcon, true);
-                }
-                forceUpdate = true;
-            } catch (...) {
+            if (currentlyPlaying) {
+                playButton->setImage(playButton->isHovered() ? pauseButtonImages.toggledHovered : pauseButtonImages.toggled, false);
+            } else {
+                playButton->setImage(playButton->isHovered() ? playButtonImages.hovered : playButtonImages.normal, false);
             }
+            forceUpdate = true;
         }
         wasPlaying = currentlyPlaying;
     }
-
-    if (app->isMetronomeEnabled()) {
-        metronomeButton->m_modifier.setColor(baseMuteColor);
-        metronomeButton->setImage(app->resources.metronomeIcon, true);
-    }
-    else {
-        metronomeButton->m_modifier.setColor(baseButtonColor);
-        metronomeButton->setImage(app->resources.metronomeIcon, true);
-    }
-
-    if (app->uiState.settingsShown) {
-        settingsButton->m_modifier.setColor(baseMuteColor);
-        settingsButton->setImage(app->resources.settingsIcon, true);
-    }
-    else {
-        settingsButton->m_modifier.setColor(baseButtonColor);
-        settingsButton->setImage(app->resources.settingsIcon, true);
-    }
     
-    if (collaborationShown) {
-        collaborationButton->m_modifier.setColor(baseMuteColor);
-        collaborationButton->setImage(app->resources.collabIcon, true);
-    }
-    else {
-        collaborationButton->m_modifier.setColor(baseButtonColor);
-        collaborationButton->setImage(app->resources.collabIcon, true);
-    }
+    auto updateButton = [](Image* btn, ButtonImageStates& states, bool isToggled) {
+        if (!btn) return;
+        bool hovered = btn->isHovered();
+        sf::Image* targetImage = nullptr;
+        
+        if (isToggled) {
+            targetImage = hovered ? &states.toggledHovered : &states.toggled;
+        } else {
+            targetImage = hovered ? &states.hovered : &states.normal;
+        }
+        
+        btn->setImage(*targetImage, false);
+        if (hovered) btn->m_isHovered = false;
+    };
 
-    if (extensionUploaderShown) {
-        extensionUploaderButton->m_modifier.setColor(baseMuteColor);
-        extensionUploaderButton->setImage(app->resources.exportIcon, true);
-    }
-    else {
-        extensionUploaderButton->m_modifier.setColor(baseButtonColor);
-        extensionUploaderButton->setImage(app->resources.exportIcon, true);
-    }
-
-    if (app->uiState.marketplaceShown) {
-        extStore->m_modifier.setColor(baseMuteColor);
-        extStore->setImage(app->resources.storeIcon, true);
-    }
-    else {
-        extStore->m_modifier.setColor(baseButtonColor);
-        extStore->setImage(app->resources.storeIcon, true);
-    }
-
-    if (app->readConfig("show_automation", false)) {
-        automationButton->m_modifier.setColor(baseMuteColor);
-        automationButton->setImage(app->resources.automationIcon, true);
-    }
-    else {
-        automationButton->m_modifier.setColor(baseButtonColor);
-        automationButton->setImage(app->resources.automationIcon, true);
-    }
-
-    // Apply hover effects using the captured base colors
-    if (loadButton->isHovered()) {
-        loadButton->m_modifier.setColor(sf::Color(
-            std::min(255, (int)(baseButtonColor.r + 50)),
-            std::min(255, (int)(baseButtonColor.g + 50)),
-            std::min(255, (int)(baseButtonColor.b + 50))
-        ));
-        loadButton->setImage(app->resources.loadIcon, true);
-        loadButton->m_isHovered = false;
-    }
-    else {
-        loadButton->m_modifier.setColor(baseButtonColor);
-        loadButton->setImage(app->resources.loadIcon, true);
-    }
-
-    if (saveButton->isHovered()) {
-        saveButton->m_modifier.setColor(sf::Color(
-            std::min(255, (int)(baseButtonColor.r + 50)),
-            std::min(255, (int)(baseButtonColor.g + 50)),
-            std::min(255, (int)(baseButtonColor.b + 50))
-        ));
-        saveButton->setImage(app->resources.saveIcon, true);
-        saveButton->m_isHovered = false;
-    }
-    else {
-        saveButton->m_modifier.setColor(baseButtonColor);
-        saveButton->setImage(app->resources.saveIcon, true);
-    }
-
-    if (exportButton->isHovered()) {
-        exportButton->m_modifier.setColor(sf::Color(
-            std::min(255, (int)(baseButtonColor.r + 50)),
-            std::min(255, (int)(baseButtonColor.g + 50)),
-            std::min(255, (int)(baseButtonColor.b + 50))
-        ));
-        exportButton->setImage(app->resources.exportIcon, true);
-        exportButton->m_isHovered = false;
-    }
-    else {
-        exportButton->m_modifier.setColor(baseButtonColor);
-        exportButton->setImage(app->resources.exportIcon, true);
-    }
-
-    if (loginButton->isHovered()) {
-        loginButton->m_modifier.setColor(sf::Color(
-            std::min(255, (int)(loginButtonBaseColor.r + 50)),
-            std::min(255, (int)(loginButtonBaseColor.g + 50)),
-            std::min(255, (int)(loginButtonBaseColor.b + 50))
-        ));
-        loginButton->setImage(app->resources.loginIcon, true);
-        loginButton->m_isHovered = false;
-    }
-    else {
-        loginButton->m_modifier.setColor(loginButtonBaseColor);
-        loginButton->setImage(app->resources.loginIcon, true);
-    }
-
-    if (playButton->isHovered()) {
-        playButton->m_modifier.setColor(sf::Color(
-            std::min(255, (int)(playButtonBaseColor.r + 50)),
-            std::min(255, (int)(playButtonBaseColor.g + 50)),
-            std::min(255, (int)(playButtonBaseColor.b + 50))
-        ));
-        playButton->setImage(currentlyPlaying ? app->resources.pauseIcon : app->resources.playIcon, true);
-        playButton->m_isHovered = false;
-    }
-    else {
-        playButton->m_modifier.setColor(playButtonBaseColor);
-        playButton->setImage(currentlyPlaying ? app->resources.pauseIcon : app->resources.playIcon, true);
-    }
-
-    if (metronomeButton->isHovered()) {
-        metronomeButton->m_modifier.setColor(sf::Color(
-            std::min(255, (int)(metronomeButtonBaseColor.r + 50)),
-            std::min(255, (int)(metronomeButtonBaseColor.g + 50)),
-            std::min(255, (int)(metronomeButtonBaseColor.b + 50))
-        ));
-        metronomeButton->setImage(app->resources.metronomeIcon, true);
-        metronomeButton->m_isHovered = false;
-    }
-
-    if (automationButton->isHovered()) {
-        automationButton->m_modifier.setColor(sf::Color(
-            std::min(255, (int)(automationButtonBaseColor.r + 50)),
-            std::min(255, (int)(automationButtonBaseColor.g + 50)),
-            std::min(255, (int)(automationButtonBaseColor.b + 50))
-        ));
-        automationButton->setImage(app->resources.automationIcon, true);
-        automationButton->m_isHovered = false;
-    }
-    else {
-        automationButton->m_modifier.setColor(automationButtonBaseColor);
-        automationButton->setImage(app->resources.automationIcon, true);
-    }
-
-    if (pianoRollButton->isHovered()) {
-        pianoRollButton->m_modifier.setColor(sf::Color(
-            std::min(255, (int)(baseButtonColor.r + 50)),
-            std::min(255, (int)(baseButtonColor.g + 50)),
-            std::min(255, (int)(baseButtonColor.b + 50))
-        ));
-        pianoRollButton->setImage(app->resources.pianoRollIcon, true);
-        pianoRollButton->m_isHovered = false;
-    }
-    else {
-        pianoRollButton->m_modifier.setColor(baseButtonColor);
-        pianoRollButton->setImage(app->resources.pianoRollIcon, true);
-    }
-
-    if (extStore->isHovered()) {
-        extStore->m_modifier.setColor(sf::Color(
-            std::min(255, (int)(extStoreBaseColor.r + 50)),
-            std::min(255, (int)(extStoreBaseColor.g + 50)),
-            std::min(255, (int)(extStoreBaseColor.b + 50))
-        ));
-        extStore->setImage(app->resources.storeIcon, true);
-        extStore->m_isHovered = false;
-    }
-    else {
-        extStore->m_modifier.setColor(extStoreBaseColor);
-        extStore->setImage(app->resources.storeIcon, true);
-    }
-
-    if (settingsButton->isHovered()) {
-        settingsButton->m_modifier.setColor(sf::Color(
-            std::min(255, (int)(settingsButtonBaseColor.r + 50)),
-            std::min(255, (int)(settingsButtonBaseColor.g + 50)),
-            std::min(255, (int)(settingsButtonBaseColor.b + 50))
-        ));
-        settingsButton->setImage(app->resources.settingsIcon, true);
-        settingsButton->m_isHovered = false;
-    }
-    else {
-        settingsButton->m_modifier.setColor(settingsButtonBaseColor);
-        settingsButton->setImage(app->resources.settingsIcon, true);
-    }
-    
-    if (collaborationButton->isHovered()) {
-        collaborationButton->m_modifier.setColor(sf::Color(
-            std::min(255, (int)(collaborationButtonBaseColor.r + 50)),
-            std::min(255, (int)(collaborationButtonBaseColor.g + 50)),
-            std::min(255, (int)(collaborationButtonBaseColor.b + 50))
-        ));
-        collaborationButton->setImage(app->resources.collabIcon, true);
-        collaborationButton->m_isHovered = false;
-    }
-    else {
-        collaborationButton->m_modifier.setColor(collaborationButtonBaseColor);
-        collaborationButton->setImage(app->resources.collabIcon, true);
-    }
-
-    if (extensionUploaderButton->isHovered()) {
-        extensionUploaderButton->m_modifier.setColor(sf::Color(
-            std::min(255, (int)(extensionUploaderButtonBaseColor.r + 50)),
-            std::min(255, (int)(extensionUploaderButtonBaseColor.g + 50)),
-            std::min(255, (int)(extensionUploaderButtonBaseColor.b + 50))
-        ));
-        extensionUploaderButton->setImage(app->resources.exportIcon, true);
-        extensionUploaderButton->m_isHovered = false;
-    }
-    else {
-        extensionUploaderButton->m_modifier.setColor(extensionUploaderButtonBaseColor);
-        extensionUploaderButton->setImage(app->resources.exportIcon, true);
-    }
-
-    if (mixerButton->isHovered()) {
-        mixerButton->m_modifier.setColor(sf::Color(
-            std::min(255, (int)(baseButtonColor.r + 50)),
-            std::min(255, (int)(baseButtonColor.g + 50)),
-            std::min(255, (int)(baseButtonColor.b + 50))
-        ));
-        mixerButton->setImage(app->resources.mixerIcon, true);
-        mixerButton->m_isHovered = false;
-    }
-    else {
-        mixerButton->m_modifier.setColor(baseButtonColor);
-        mixerButton->setImage(app->resources.mixerIcon, true);
-    }
+    updateButton(loadButton, loadButtonImages, false);
+    updateButton(saveButton, saveButtonImages, false);
+    updateButton(exportButton, exportButtonImages, false);
+    updateButton(loginButton, loginButtonImages, loginShown);
+    updateButton(playButton, currentlyPlaying ? pauseButtonImages : playButtonImages, currentlyPlaying);
+    updateButton(metronomeButton, metronomeButtonImages, metronomeEnabled);
+    updateButton(automationButton, automationButtonImages, automationShown);
+    updateButton(pianoRollButton, pianoRollButtonImages, false);
+    updateButton(mixerButton, mixerButtonImages, false);
+    updateButton(extStore, extStoreImages, marketplaceShown);
+    updateButton(settingsButton, settingsButtonImages, settingsShown);
+    updateButton(collaborationButton, collaborationButtonImages, collaborationShown);
+    updateButton(extensionUploaderButton, extensionUploaderButtonImages, extensionUploaderShown);
 
     return forceUpdate;
 }

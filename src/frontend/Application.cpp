@@ -163,6 +163,22 @@ void Application::update() {
     if (globalSettings)
         globalSettings->update();
 
+    // Handle cursor management after all components have updated
+    if (uiState.xResizing) {
+        sf::Cursor cursor(sf::Cursor::Type::SizeHorizontal);
+        window.setMouseCursor(cursor);
+    } else if (uiState.yResizing) {
+        sf::Cursor cursor(sf::Cursor::Type::SizeVertical);
+        window.setMouseCursor(cursor);
+    } else {
+        sf::Cursor cursor(sf::Cursor::Type::Arrow);
+        window.setMouseCursor(cursor);
+    }
+    
+    // Reset resize flags for next frame
+    uiState.xResizing = false;
+    uiState.yResizing = false;
+
     updateParameterTracking();
     
     // Update window title

@@ -34,9 +34,8 @@ private:
     sf::Clock doubleClickTimer;
     std::string lastClickedPath;
     std::string selectedItem;
-    bool validSelection = false; // Flag to track if selection came from a valid file click
+    bool validSelection = false;
     
-    // Store references to row elements for direct color manipulation
     std::unordered_map<std::string, Row*> rowElementsByPath;
     
     bool draggingItem = false;
@@ -44,48 +43,37 @@ private:
     sf::Vector2f dragStartPosition;
     sf::Vector2f currentMousePosition;
     sf::Image* dragIcon = nullptr;
+
+    bool isResizing = false;
+    float resizeStartX = 0.f;
+    bool wasMousePressedLastFrame = false;
     
-    // Visual drag feedback using custom geometry
     sf::Texture dragIconTexture;
     std::unique_ptr<sf::Sprite> dragIconSprite;
     bool isDragIconVisible = false;
 
-    // Main UI builder function
     void buildFileTreeUI();
-
-    // Recursive functions to build the tree views
     void buildFileTreeUIRecursive(const FileTree& tree, int indentLevel);
     void buildVSTTreeUIRecursive(const FileTree& tree, int indentLevel);
-
-    // Functions to handle tree node interactions
     void toggleTreeNodeByPath(const std::string& path);
     void toggleVSTTreeNodeByPath(const std::string& path);
-
-    // Double-click handler for adding items to timeline
-    bool handleDoubleClick(const std::string& path, std::function<void()> action);
-    
-    // Direct color manipulation for selection highlighting
+    bool handleDoubleClick(const std::string& path, std::function<void()> action);    
     void updateSelectionColors();
-    
-    // Drag and drop functionality
     void startDrag(const std::string& path, const sf::Vector2f& mousePos);
     void updateDrag(const sf::Vector2f& mousePos);
     bool handleDrop(const sf::Vector2f& mousePos, std::function<void()> action);
     void cancelDrag();
-
-    // In-memory functions to handle favorites
     void addFavorite(const std::string& path);
     void removeFavorite(const std::string& path);
     void saveFavorites();
     void loadFavorites();
-
-    // Directory browsing functions
     void browseForDirectory();
     void browseForVSTDirectory();
+    void handleResize();
 };
 
 #include "Application.hpp"
-#include <algorithm> // For std::remove_if and std::find_if
+#include <algorithm>
 
 FileBrowserComponent::FileBrowserComponent() {
     name = "file_browser";
@@ -107,6 +95,8 @@ void FileBrowserComponent::init() {
         contains{},
         "file_browser_scroll_column"
     );
+
+    static_cast<ScrollableColumn*>(layout)->setScrollSpeed(40.f);
     
     // Load favorites from config
     loadFavorites();
@@ -130,44 +120,29 @@ void FileBrowserComponent::init() {
 }
 
 void FileBrowserComponent::update() {
-    // Handle drag and drop logic
+    handleResize();
+    
     if (app->ui->isMouseDragging()) {
-        if (!draggingItem && !selectedItem.empty() && validSelection) {
-            // Start dragging the selected item only if it's a valid selection
+        if (!draggingItem && !selectedItem.empty() && validSelection && !isResizing) {
             sf::Vector2f mousePos = app->ui->getMousePosition();
             startDrag(selectedItem, mousePos);
-        } else if (draggingItem && !selectedItem.empty()) {
-            // Update drag position only if we have a valid selected item
+        } else if (draggingItem && !selectedItem.empty() && !isResizing) {
             sf::Vector2f mousePos = app->ui->getMousePosition();
             updateDrag(mousePos);
         }
     } else {
-        // Mouse not dragging - clear any drag state
         if (draggingItem) {
-            // Check for drop if we were dragging
             sf::Vector2f mousePos = app->ui->getMousePosition();
-            
-            // Determine action based on file type
             std::string ext = std::filesystem::path(draggingItemPath).extension().string();
             std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-            
             if (ext == ".vst" || ext == ".vst3") {
-                // VST plugin
-                handleDrop(mousePos, [this](){
-                    app->addEffect(draggingItemPath);
-                });
+                handleDrop(mousePos, [this](){ app->addEffect(draggingItemPath); });
             } else {
-                // Audio file
-                handleDrop(mousePos, [this](){
-                    juce::File sampleFile(draggingItemPath);
-                    std::string trackName = sampleFile.getFileNameWithoutExtension().toStdString();
-                    app->addTrack(trackName, draggingItemPath);
-                });
+                handleDrop(mousePos, [this](){ juce::File sampleFile(draggingItemPath); std::string trackName = sampleFile.getFileNameWithoutExtension().toStdString(); app->addTrack(trackName, draggingItemPath); });
             }
-            
-            // Always cancel drag after handling drop
             cancelDrag();
         }
+        isResizing = false;
     }
 }
 
@@ -204,8 +179,6 @@ void FileBrowserComponent::browseForVSTDirectory() {
         app->writeConfig("vstDirectory", selectedDir);
     }
 }
-
-// --- Favorites Management (In-Memory) ---
 
 void FileBrowserComponent::addFavorite(const std::string& path) {
     auto it = std::find(favoriteItems.begin(), favoriteItems.end(), path);
@@ -955,6 +928,55 @@ void FileBrowserComponent::cancelDrag() {
     }
     
     dragIconSprite.reset();
+}
+
+void FileBrowserComponent::handleResize() {
+    if (!layout) return;
+    
+    if (isResizing) {
+        app->uiState.xResizing = true;
+        
+        if (!app->ui->isMouseDragging()) {
+            isResizing = false;
+            return;
+        }
+        
+        sf::Vector2f mousePos = app->ui->getMousePosition();
+        Align align = layout->m_modifier.getAlignment();
+        int dir = hasAlign(align, Align::LEFT) ? 1 : -1;
+        
+        float delta = (mousePos.x - resizeStartX) * dir;
+        float currentWidth = layout->m_modifier.getFixedWidth();
+        float windowWidth = app->getWindow().getSize().x;
+        float maxWidth = windowWidth * 0.5f;
+        float newWidth = std::clamp(currentWidth + delta, 120.f, maxWidth);
+        layout->m_modifier.setfixedWidth(newWidth);
+        resizeStartX = mousePos.x;
+        return;
+    }
+    
+    sf::FloatRect bounds = layout->m_bounds.getGlobalBounds();
+    sf::Vector2f mousePos = app->ui->getMousePosition();
+    
+    if (!bounds.contains(mousePos)) {
+        return;
+    }
+    
+    Align align = layout->m_modifier.getAlignment();
+    float edgeX = hasAlign(align, Align::LEFT) ? bounds.position.x + bounds.size.x : bounds.position.x;
+    bool nearEdge = std::abs(mousePos.x - edgeX) < 10.f;
+    
+    if (nearEdge) {
+        app->uiState.xResizing = true;
+        
+        bool isPressed = sf::Mouse::isButtonPressed(sf::Mouse::Button::Left);
+        if (isPressed && !wasMousePressedLastFrame) {
+            isResizing = true;
+            resizeStartX = mousePos.x;
+        }
+    }
+    
+    wasMousePressedLastFrame = sf::Mouse::isButtonPressed(sf::Mouse::Button::Left);
 }
 
 // Plugin interface for FileBrowserComponent

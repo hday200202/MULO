@@ -2274,6 +2274,8 @@ void TimelineComponent::handleClipResize() {
     
     // If resizing, handle it continuously
     if (uiState.isResizingClip) {
+        app->uiState.xResizing = true;
+        
         if (!input.leftMousePressed) {
             uiState.isResizingClip = false;
             uiState.resizeMode = UIState::ResizeMode::None;
@@ -2412,11 +2414,7 @@ void TimelineComponent::handleClipResize() {
                 
                 // Check if near start edge
                 if (std::abs(currentMouseTime - clips[i].startTime) <= edgeThresholdSeconds) {
-                    // Set horizontal resize cursor
-                    try {
-                        sf::Cursor cursor(sf::Cursor::Type::SizeHorizontal);
-                        const_cast<sf::RenderWindow&>(app->getWindow()).setMouseCursor(cursor);
-                    } catch (...) {}
+                    app->uiState.xResizing = true;
                     
                     // Start resize if mouse pressed
                     if (input.leftMousePressed && !input.prevLeftMousePressed) {
@@ -2441,11 +2439,7 @@ void TimelineComponent::handleClipResize() {
                 }
                 // Check if near end edge
                 else if (std::abs(currentMouseTime - clipEnd) <= edgeThresholdSeconds) {
-                    // Set horizontal resize cursor
-                    try {
-                        sf::Cursor cursor(sf::Cursor::Type::SizeHorizontal);
-                        const_cast<sf::RenderWindow&>(app->getWindow()).setMouseCursor(cursor);
-                    } catch (...) {}
+                    app->uiState.xResizing = true;
                     
                     // Start resize if mouse pressed
                     if (input.leftMousePressed && !input.prevLeftMousePressed) {
@@ -2478,11 +2472,7 @@ void TimelineComponent::handleClipResize() {
                 
                 // Check if near start edge
                 if (std::abs(currentMouseTime - clips[i].startTime) <= edgeThresholdSeconds) {
-                    // Set horizontal resize cursor
-                    try {
-                        sf::Cursor cursor(sf::Cursor::Type::SizeHorizontal);
-                        const_cast<sf::RenderWindow&>(app->getWindow()).setMouseCursor(cursor);
-                    } catch (...) {}
+                    app->uiState.xResizing = true;
                     
                     // Start resize if mouse pressed
                     if (input.leftMousePressed && !input.prevLeftMousePressed) {
@@ -2504,11 +2494,7 @@ void TimelineComponent::handleClipResize() {
                 }
                 // Check if near end edge
                 else if (std::abs(currentMouseTime - clipEnd) <= edgeThresholdSeconds) {
-                    // Set horizontal resize cursor
-                    try {
-                        sf::Cursor cursor(sf::Cursor::Type::SizeHorizontal);
-                        const_cast<sf::RenderWindow&>(app->getWindow()).setMouseCursor(cursor);
-                    } catch (...) {}
+                    app->uiState.xResizing = true;
                     
                     // Start resize if mouse pressed
                     if (input.leftMousePressed && !input.prevLeftMousePressed) {
@@ -2531,12 +2517,6 @@ void TimelineComponent::handleClipResize() {
             }
         }
     }
-    
-    // Reset cursor if not near any clip edge
-    try {
-        sf::Cursor cursor(sf::Cursor::Type::Arrow);
-        const_cast<sf::RenderWindow&>(app->getWindow()).setMouseCursor(cursor);
-    } catch (...) {}
 }
 
 void TimelineComponent::handleClipDrag() {
