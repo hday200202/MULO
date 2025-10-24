@@ -4,6 +4,7 @@
 #include "frontend/Util/FileTree.hpp"
 #include "audio/VSTPluginManager.hpp"
 #include "DebugConfig.hpp"
+#include "UILO/FileBrowser.hpp"
 #include <nlohmann/json.hpp>
 #include <fstream>
 #include <unordered_map>
@@ -22,8 +23,8 @@ private:
     std::vector<std::string> favoriteItems; 
     bool isFavoritesOpen = true; // Manages expand/collapse state for favorites
 
-    FileTree fileTree;
-    FileTree vstTree;
+    mulo::FileTree fileTree;
+    mulo::FileTree vstTree;
 
     // Flags to trigger UI rebuilds
     bool favoritesTreeNeedsRebuild = false;
@@ -52,9 +53,14 @@ private:
     std::unique_ptr<sf::Sprite> dragIconSprite;
     bool isDragIconVisible = false;
 
+    std::unique_ptr<FileBrowser> fileBrowser;
+    bool fileBrowserActive = false;
+    enum class FileBrowserAction { NONE, BROWSE_FILE_DIR, BROWSE_VST_DIR };
+    FileBrowserAction pendingFileBrowserAction = FileBrowserAction::NONE;
+
     void buildFileTreeUI();
-    void buildFileTreeUIRecursive(const FileTree& tree, int indentLevel);
-    void buildVSTTreeUIRecursive(const FileTree& tree, int indentLevel);
+    void buildFileTreeUIRecursive(const mulo::FileTree& tree, int indentLevel);
+    void buildVSTTreeUIRecursive(const mulo::FileTree& tree, int indentLevel);
     void toggleTreeNodeByPath(const std::string& path);
     void toggleVSTTreeNodeByPath(const std::string& path);
     bool handleDoubleClick(const std::string& path, std::function<void()> action);    
@@ -70,6 +76,7 @@ private:
     void browseForDirectory();
     void browseForVSTDirectory();
     void handleResize();
+    void openFileBrowser(BrowserMode mode, FileBrowserAction action);
 };
 
 #include "Application.hpp"
@@ -147,6 +154,27 @@ void FileBrowserComponent::update() {
 }
 
 bool FileBrowserComponent::handleEvents() {
+    if (fileBrowser && fileBrowserActive) {
+        fileBrowser->update();
+        if (!fileBrowser->isOpen() && pendingFileBrowserAction != FileBrowserAction::NONE) {
+            std::string selectedPath = fileBrowser->getSelectedPath();
+            if (!selectedPath.empty()) {
+                if (pendingFileBrowserAction == FileBrowserAction::BROWSE_FILE_DIR) {
+                    fileTree.setRootDirectory(selectedPath);
+                    fileTreeNeedsRebuild = true;
+                    app->writeConfig("fileBrowserDirectory", selectedPath);
+                } else if (pendingFileBrowserAction == FileBrowserAction::BROWSE_VST_DIR) {
+                    vstTree.setRootDirectory(selectedPath);
+                    vstTreeNeedsRebuild = true;
+                    app->writeConfig("vstDirectory", selectedPath);
+                }
+            }
+            fileBrowser.reset();
+            fileBrowserActive = false;
+            pendingFileBrowserAction = FileBrowserAction::NONE;
+        }
+    }
+
     if (favoritesTreeNeedsRebuild || fileTreeNeedsRebuild || vstTreeNeedsRebuild) {
         buildFileTreeUI();
         favoritesTreeNeedsRebuild = false;
@@ -161,23 +189,11 @@ bool FileBrowserComponent::handleEvents() {
 // --- Directory Browsing ---
 
 void FileBrowserComponent::browseForDirectory() {
-    std::string selectedDir = app->selectDirectory();
-    if (!selectedDir.empty() && std::filesystem::is_directory(selectedDir)) {
-        fileTree.setRootDirectory(selectedDir);
-        fileTreeNeedsRebuild = true;
-        
-        app->writeConfig("fileBrowserDirectory", selectedDir);
-    }
+    openFileBrowser(BrowserMode::SELECT_DIRECTORY, FileBrowserAction::BROWSE_FILE_DIR);
 }
 
 void FileBrowserComponent::browseForVSTDirectory() {
-    std::string selectedDir = app->selectDirectory();
-    if (!selectedDir.empty() && std::filesystem::is_directory(selectedDir)) {
-        vstTree.setRootDirectory(selectedDir);
-        vstTreeNeedsRebuild = true;
-        
-        app->writeConfig("vstDirectory", selectedDir);
-    }
+    openFileBrowser(BrowserMode::SELECT_DIRECTORY, FileBrowserAction::BROWSE_VST_DIR);
 }
 
 void FileBrowserComponent::addFavorite(const std::string& path) {
@@ -225,6 +241,13 @@ void FileBrowserComponent::loadFavorites() {
     } catch (const std::exception& e) {
         favoriteItems.clear();
     }
+}
+
+void FileBrowserComponent::openFileBrowser(BrowserMode mode, FileBrowserAction action) {
+    std::string startPath = std::filesystem::current_path().string();
+    fileBrowser = std::make_unique<FileBrowser>(startPath, mode);
+    fileBrowserActive = true;
+    pendingFileBrowserAction = action;
 }
 
 // --- UI Building ---
@@ -540,7 +563,7 @@ void FileBrowserComponent::buildFileTreeUI() {
     }
 }
 
-void FileBrowserComponent::buildFileTreeUIRecursive(const FileTree& tree, int indentLevel) {
+void FileBrowserComponent::buildFileTreeUIRecursive(const mulo::FileTree& tree, int indentLevel) {
     auto* scrollColumn = static_cast<ScrollableColumn*>(layout);
     if (!scrollColumn) return;
 
@@ -644,7 +667,7 @@ void FileBrowserComponent::buildFileTreeUIRecursive(const FileTree& tree, int in
 }
 
 
-void FileBrowserComponent::buildVSTTreeUIRecursive(const FileTree& tree, int indentLevel) {
+void FileBrowserComponent::buildVSTTreeUIRecursive(const mulo::FileTree& tree, int indentLevel) {
     auto* scrollColumn = static_cast<ScrollableColumn*>(layout);
     if (!scrollColumn) return;
 
@@ -744,8 +767,8 @@ void FileBrowserComponent::buildVSTTreeUIRecursive(const FileTree& tree, int ind
 }
 
 void FileBrowserComponent::toggleTreeNodeByPath(const std::string& path) {
-    std::function<bool(FileTree&)> findAndToggle = 
-        [&](FileTree& node) -> bool {
+    std::function<bool(mulo::FileTree&)> findAndToggle = 
+        [&](mulo::FileTree& node) -> bool {
         if (node.getPath() == path) {
             node.toggleOpen();
             return true;
@@ -759,8 +782,8 @@ void FileBrowserComponent::toggleTreeNodeByPath(const std::string& path) {
 }
 
 void FileBrowserComponent::toggleVSTTreeNodeByPath(const std::string& path) {
-    std::function<bool(FileTree&)> findAndToggle = 
-        [&](FileTree& node) -> bool {
+    std::function<bool(mulo::FileTree&)> findAndToggle = 
+        [&](mulo::FileTree& node) -> bool {
         if (node.getPath() == path) {
             node.toggleOpen();
             return true;

@@ -2,6 +2,7 @@
 #pragma once
 
 #include "Extension/MULOComponent.hpp"
+#include "UILO/FileBrowser.hpp"
 #include "../../src/DebugConfig.hpp"
 
 class AppControls : public MULOComponent {
@@ -11,7 +12,7 @@ public:
     
     void init() override;
     bool handleEvents() override;
-    inline void update() override {}
+    inline void update() override;
 
 private:
     Image* loadButton;
@@ -51,6 +52,13 @@ private:
     ButtonImageStates settingsButtonImages;
     ButtonImageStates collaborationButtonImages;
     ButtonImageStates extensionUploaderButtonImages;
+
+    std::unique_ptr<FileBrowser> fileBrowser = nullptr;
+    bool fileBrowserActive = false;
+    enum class FileBrowserAction { NONE, LOAD, SAVE };
+    FileBrowserAction pendingAction = FileBrowserAction::NONE;
+    
+    void openFileBrowser(BrowserMode mode, FileBrowserAction action);
     
     sf::Color baseButtonColor;
     sf::Color baseMuteColor;
@@ -130,9 +138,7 @@ void AppControls::init() {
             .setfixedWidth(48)
             .setColor(baseButtonColor)
             .onLClick([&](){
-                std::string path = app->selectFile({"*.mpf"});
-                if (!path.empty())
-                    app->loadComposition(path);
+                openFileBrowser(BrowserMode::SELECT_FILE, FileBrowserAction::LOAD);
             }),
         loadButtonImages.normal,
         false,
@@ -145,11 +151,7 @@ void AppControls::init() {
             .setfixedWidth(48).setfixedHeight(48.f)
             .setColor(baseButtonColor)
             .onLClick([&](){
-                app->uiState.saveDirectory = app->selectDirectory();
-                std::string savePath = app->uiState.saveDirectory + "/" + app->getCurrentCompositionName() + ".mpf";
-                app->saveState();
-                app->saveToFile(savePath);
-                DEBUG_PRINT("Project saved successfully to: " << savePath);
+                openFileBrowser(BrowserMode::SELECT_DIRECTORY, FileBrowserAction::SAVE);
             }),
         saveButtonImages.normal,
         false,
@@ -438,6 +440,40 @@ bool AppControls::handleEvents() {
     updateButton(extensionUploaderButton, extensionUploaderButtonImages, extensionUploaderShown);
 
     return forceUpdate;
+}
+
+void AppControls::openFileBrowser(BrowserMode mode, FileBrowserAction action) {
+    if (!fileBrowserActive) {
+        fileBrowser = std::make_unique<FileBrowser>(app->uiState.getExecutableDirectory(), mode);
+        fileBrowserActive = true;
+        pendingAction = action;
+    }
+}
+
+void AppControls::update() {
+    if (fileBrowserActive) {
+        fileBrowser->update();
+
+        if (!fileBrowser->isOpen()) {
+            std::string selectedPath = fileBrowser->getSelectedPath();
+            if (!selectedPath.empty()) {
+                switch (pendingAction) {
+                    case FileBrowserAction::LOAD:
+                        app->loadComposition(selectedPath);
+                        break;
+                    case FileBrowserAction::SAVE:
+                        app->uiState.saveDirectory = selectedPath;
+                        std::string savePath = selectedPath + "/" + app->getCurrentCompositionName() + ".mpf";
+                        app->saveState();
+                        app->saveToFile(savePath);
+                        DEBUG_PRINT("Project saved successfully to: " << savePath);
+                        break;
+                }
+            }
+            fileBrowserActive = false;
+            pendingAction = FileBrowserAction::NONE;
+        }
+    }
 }
 
 

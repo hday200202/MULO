@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Extension/MULOComponent.hpp"
+#include "Data/UIData.hpp"
 #include "Track.hpp"
 #include <limits>
 #include <chrono>
@@ -244,6 +245,7 @@ private:
 
         bool measureLinesShouldUpdate = false;
         bool didZoom = false;
+        bool forceVisualUpdate = false;
         
         // Drag and resize state
         enum class ResizeMode { None, Start, End };
@@ -280,6 +282,9 @@ private:
         float targetWidthRatio = 0.2f;
         float scrubberPosition = 0.0f;
         float scrubberWidthRatio = 0.2f;
+
+        double loopPoint1Sec = -1.0;
+        double loopPoint2Sec = -1.0;
     };
     
     struct Input {
@@ -306,6 +311,7 @@ private:
     EngineState engineState;
     Input input;
     std::vector<std::string> tracksToDelete;
+    std::string trackNameForColorPicker;
 
     // UI
     UIState uiState;
@@ -354,6 +360,11 @@ private:
     std::vector<std::shared_ptr<sf::RectangleShape>> automationBarShapes;
     std::shared_ptr<sf::RectangleShape> virtualCursor;
     std::shared_ptr<sf::RectangleShape> playhead;
+    std::shared_ptr<sf::RectangleShape> loopPoint1Line;
+    std::shared_ptr<sf::RectangleShape> loopPoint2Line;
+    std::shared_ptr<sf::ConvexShape> loopPoint1Triangle;
+    std::shared_ptr<sf::ConvexShape> loopPoint2Triangle;
+    std::shared_ptr<sf::RectangleShape> loopRangeRect;
     sf::Clock cursorBlinkClock;
     
     std::vector<double> gridLinePositions;
@@ -374,6 +385,8 @@ private:
     void updateMeasureLines();
     void updateVirtualCursor();
     void updatePlayhead();
+    void updateLoopPoints();
+    void handleLoopPoints();
     void updateScrubber();
     std::vector<std::shared_ptr<sf::Drawable>> generateClipShapes(const std::string& trackName);
     bool handleScroll();
@@ -402,6 +415,7 @@ private:
     void updateEngineState();
     void generateTrackWaveform(const std::string& trackName);
     sf::Texture generateWaveformTexture(const Track& track);
+    void forceApplyGeometryToAllLanes();
 
     double xPosToSeconds(const float xPos);
     float secondsToXPos(const double seconds);
@@ -411,7 +425,7 @@ private:
 
 void TimelineComponent::Input::updateInput(Application* app, Container* layoutBounds) {
     if (!app->getWindow().hasFocus()) return;
-  prevLeftMousePressed = leftMousePressed;
+    prevLeftMousePressed = leftMousePressed;
     prevRightMousePressed = rightMousePressed;
     
     mousePosition = app->ui->getMousePosition();
@@ -479,12 +493,27 @@ void TimelineComponent::init() {
     updateEngineState();
     
     uiState.lastUiScale = app->ui->getScale();
-    uiState.initialUpdateCount = 5; // Force 5 initial updates
+    uiState.initialUpdateCount = 2;
     uiState.measureLinesShouldUpdate = true; // Force initial update
-
+    
+    // Force initial visual elements generation
+    updateVirtualCursor();
+    updatePlayhead();
+    updateLoopPoints();
+    
+    // Generate initial automation lanes if needed
+    updateAutomationLanes();
+    
+    // Generate initial waveforms for existing audio tracks
+    for (const auto& track : app->getAllTracks()) {
+        if (track->getType() == Track::TrackType::Audio)
+            generateTrackWaveform(track->getName());
+    }
+    
     app->globalSettings->addSection(
         "Timeline",
         {
+            toggleSetting("Follow Playhead", &uiState.followPlayhead, true),
             sliderSetting("Measure Opacity", &uiState.measureLineOpacity, 0.f, 1.f, 1.f, [this]() {
                 uiState.measureLinesShouldUpdate = true;
             })
@@ -526,6 +555,15 @@ bool TimelineComponent::handleEvents() {
     if (input.leftMouseClicked && !input.isDoubleClick) {
         float mouseY = input.mousePosition.y;
         double clickTimePos = xPosToSeconds(input.mousePosition.x);
+
+        if (app->ui->getRow("Master_lane_row")->m_bounds.getGlobalBounds().contains(app->ui->getMousePosition())) {
+            double nearestGridLine = findNearestGridLine(clickTimePos);
+            uiState.cursorPosition = nearestGridLine;
+            uiState.cursorTrackName = "Master";
+            uiState.showCursor = true;
+            app->setSelectedTrack("Master");
+            cursorBlinkClock.restart();
+        }
         
         for (const auto& trackName : tracksInUI) {
             auto trackLane = app->ui->getRow(trackName + "_lane_scrollable");
@@ -561,6 +599,7 @@ bool TimelineComponent::handleEvents() {
         float mouseY = input.mousePosition.y;
         double clickTimePos = xPosToSeconds(input.mousePosition.x);
         
+        // Handle normal right-click behavior (cursor + deletion)
         for (const auto& trackName : tracksInUI) {
             auto trackLane = app->ui->getRow(trackName + "_lane_scrollable");
             if (!trackLane) continue;
@@ -578,17 +617,88 @@ bool TimelineComponent::handleEvents() {
             }
         }
         
+        // Check Master track if no track was selected yet
+        if (uiState.cursorTrackName.empty()) {
+            auto masterLane = app->ui->getRow("Master_lane_scrollable");
+            if (masterLane) {
+                auto bounds = masterLane->m_bounds;
+                if (mouseY >= bounds.getPosition().y && mouseY <= bounds.getPosition().y + bounds.getSize().y) {
+                    double nearestGridLine = findNearestGridLine(clickTimePos);
+                    uiState.cursorPosition = nearestGridLine;
+                    uiState.cursorTrackName = "Master";
+                    app->setSelectedTrack("Master");
+                }
+            }
+        }
+        
         handleClipDeletion();
     }
+
+    // Check if a color was picked and apply it to the track
+    static bool wasPickerOpen = false;
+    bool isPickerOpen = app->isColorPickerOpen();
+    
+    if (wasPickerOpen && !isPickerOpen && !trackNameForColorPicker.empty()) {
+        // Color picker just closed - only apply if a color was actually selected
+        if (app->wasColorSelected()) {
+            sf::Color pickedColor = app->getRecentColorPicked();
+        
+        // Find the track and update its color
+            auto track = app->getTrack(trackNameForColorPicker);
+            if (!track && trackNameForColorPicker == "Master") {
+                track = app->getMasterTrack();
+            }
+            
+            if (track) {
+                // Check if "no color" was selected (alpha = 0)
+                if (pickedColor.a == 0) {
+                    // Clear the track color - use theme defaults
+                    track->setColorHex("");
+                    
+                    // Reset label to theme color
+                    auto trackLabel = app->ui->getRow(trackNameForColorPicker + "_label");
+                    if (trackLabel)
+                        trackLabel->m_modifier.setColor(app->resources.activeTheme->track_color);
+                } else {
+                    // Convert sf::Color to hex string
+                    char hexString[10];
+                    snprintf(hexString, sizeof(hexString), "#%02X%02X%02X", 
+                            pickedColor.r, pickedColor.g, pickedColor.b);
+                    track->setColorHex(std::string(hexString));
+                    
+                    // Update the track label color
+                    auto trackLabel = app->ui->getRow(trackNameForColorPicker + "_label");
+                    if (trackLabel)
+                        trackLabel->m_modifier.setColor(pickedColor);
+                }
+            }
+        }
+        
+        trackNameForColorPicker = "";
+    }
+    
+    wasPickerOpen = isPickerOpen;
 
     bool zoomHandled = handleZoom();
     bool scrollHandled = handleScroll();
 
     if (app->getSelectedTrack() != uiState.previousSelectedTrack) {
         auto prevLabel = app->ui->getRow(uiState.previousSelectedTrack + "_label");
-        if (prevLabel) prevLabel->m_modifier.setColor(app->resources.activeTheme->track_color);
+        if (prevLabel) {
+            Track* prevTrack = app->getTrack(uiState.previousSelectedTrack);
+            if (prevTrack && !prevTrack->getColorHex().empty())
+                prevLabel->m_modifier.setColor(hexToColor(prevTrack->getColorHex()));
+            else
+                prevLabel->m_modifier.setColor(app->resources.activeTheme->track_color);
+        }
         auto currLabel = app->ui->getRow(app->getSelectedTrack() + "_label");
-        if (currLabel) currLabel->m_modifier.setColor(app->resources.activeTheme->clip_color);
+        if (currLabel) {
+            Track* currTrack = app->getTrack(app->getSelectedTrack());
+            if (currTrack && !currTrack->getColorHex().empty())
+                currLabel->m_modifier.setColor(hexToColor(currTrack->getColorHex()));
+            else
+                currLabel->m_modifier.setColor(app->resources.activeTheme->clip_color);
+        }
         uiState.previousSelectedTrack = app->getSelectedTrack();
     }
 
@@ -599,19 +709,15 @@ bool TimelineComponent::handleEvents() {
     bool d = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::D);
     bool ctrl = input.ctrlPressed;
     
-    if (ctrl && c && !prevC) {
-        handleClipCopy();
-    }
-    if (ctrl && v && !prevV) {
-        handleClipPaste();
-    }
-    if (ctrl && d && !prevD) {
-        handleClipDuplicate();
-    }
+    if (ctrl && c && !prevC) handleClipCopy();
+    if (ctrl && v && !prevV) handleClipPaste();
+    if (ctrl && d && !prevD) handleClipDuplicate();
     
     prevC = c;
     prevV = v;
     prevD = d;
+
+    handleLoopPoints();
 
     return zoomHandled || scrollHandled;
 }
@@ -658,7 +764,6 @@ void TimelineComponent::syncLaneOffsets() {
         if (trackContainers.count(trackName)) {
             for (auto* laneRow : trackContainers[trackName].automationLaneRows) {
                 if (laneRow) {
-                    // laneRow is the wrapper row, we need to get the scrollable child
                     const auto& elements = laneRow->getElements();
                     if (!elements.empty()) {
                         auto automationLane = dynamic_cast<ScrollableRow*>(elements[0]);
@@ -748,9 +853,11 @@ bool TimelineComponent::handleScroll() {
 }
 
 void TimelineComponent::update() {    
-    // Force updates during initial startup phase to ensure proper rendering
     if (uiState.initialUpdateCount > 0) {
-        uiState.measureLinesShouldUpdate = true;
+        input.ctrlPressed = true;
+        updateMeasureLines();
+        uiState.beatWidth = 30.f;
+        handleScroll();
         uiState.initialUpdateCount--;
     }
     
@@ -759,15 +866,22 @@ void TimelineComponent::update() {
     bool isPlaying = app->isPlaying();
     if (wasPlaying && !isPlaying) {
         // Playback just stopped, generate any missing waveforms
-        for (const auto& trackName : tracksInUI) {
-            auto track = app->getTrack(trackName);
-            if (track && track->getType() == Track::TrackType::Audio) {
-                std::lock_guard<std::mutex> lock(waveformMutex);
-                if (trackWaveforms.count(trackName) == 0) {
-                    // Track doesn't have waveform, generate it (will be done outside lock)
-                    generateTrackWaveform(trackName);
+        std::vector<std::string> tracksNeedingWaveforms;
+        
+        {
+            std::lock_guard<std::mutex> lock(waveformMutex);
+            for (const auto& trackName : tracksInUI) {
+                auto track = app->getTrack(trackName);
+                if (track && track->getType() == Track::TrackType::Audio) {
+                    if (trackWaveforms.count(trackName) == 0) {
+                        tracksNeedingWaveforms.push_back(trackName);
+                    }
                 }
             }
+        }
+        
+        for (const auto& trackName : tracksNeedingWaveforms) {
+            generateTrackWaveform(trackName);
         }
     }
     wasPlaying = isPlaying;
@@ -811,13 +925,14 @@ void TimelineComponent::update() {
         updateMeasureLines();
         updateVirtualCursor();
         updatePlayhead();
+        updateLoopPoints();
         
         // Rebuild automation lanes with new scale
         static bool prevShowAutomation = app->readConfig<bool>("show_automation", false);
         bool currentShowAutomation = app->readConfig<bool>("show_automation", false);
-        if (currentShowAutomation) {
+        if (currentShowAutomation)
             updateAutomationLanes();
-        }
+
         prevShowAutomation = currentShowAutomation;
         
         // Sync all lane offsets AFTER automation lanes are recreated
@@ -842,6 +957,20 @@ void TimelineComponent::update() {
                 if (uiState.showCursor && virtualCursor && uiState.cursorTrackName == trackName)
                     customGeom.push_back(virtualCursor);
                 
+                if (loopRangeRect)
+                    customGeom.push_back(loopRangeRect);
+                    
+                if (loopPoint1Line) {
+                    customGeom.push_back(loopPoint1Line);
+                    if (loopPoint1Triangle)
+                        customGeom.push_back(loopPoint1Triangle);
+                }
+                if (loopPoint2Line) {
+                    customGeom.push_back(loopPoint2Line);
+                    if (loopPoint2Triangle)
+                        customGeom.push_back(loopPoint2Triangle);
+                }
+                
                 if (playhead && app->isPlaying())
                     customGeom.push_back(playhead);
                 
@@ -862,6 +991,20 @@ void TimelineComponent::update() {
             if (uiState.showCursor && virtualCursor && uiState.cursorTrackName == "Master")
                 customGeom.push_back(virtualCursor);
             
+            if (loopRangeRect)
+                customGeom.push_back(loopRangeRect);
+                
+            if (loopPoint1Line) {
+                customGeom.push_back(loopPoint1Line);
+                if (loopPoint1Triangle)
+                    customGeom.push_back(loopPoint1Triangle);
+            }
+            if (loopPoint2Line) {
+                customGeom.push_back(loopPoint2Line);
+                if (loopPoint2Triangle)
+                    customGeom.push_back(loopPoint2Triangle);
+            }
+            
             if (playhead && app->isPlaying())
                 customGeom.push_back(playhead);
             
@@ -869,6 +1012,8 @@ void TimelineComponent::update() {
         }
         
         uiState.measureLinesShouldUpdate = false;
+        // Don't reset forceVisualUpdate here - let it carry through to track visual updates
+        // uiState.forceVisualUpdate = false;
     }
     
     bool tracksChanged = false;
@@ -922,6 +1067,11 @@ void TimelineComponent::update() {
             tracksInUI.insert(trackName);
             app->ui->getTextBox(trackName + "_text_box")->setText(trackName);
             tracksChanged = true;
+            
+            // Generate waveform for new audio tracks
+            if (t->getType() == Track::TrackType::Audio) {
+                generateTrackWaveform(trackName);
+            }
         }
     }
 
@@ -946,24 +1096,25 @@ void TimelineComponent::update() {
         }
     }
     
-    if (tracksChanged || prevShowAutomation != currentShowAutomation || potentialAutomationChanged) {
+    if (tracksChanged || prevShowAutomation != currentShowAutomation || potentialAutomationChanged || uiState.forceVisualUpdate) {
         updateAutomationLanes();
         prevShowAutomation = currentShowAutomation;
         // Force visual update when automation visibility changes or tracks change
         uiState.measureLinesShouldUpdate = true;
     }
 
-    if (uiState.xOffset != uiState.prevXOffset || uiState.zoom != uiState.prevZoom) {
+    if (uiState.xOffset != uiState.prevXOffset || uiState.zoom != uiState.prevZoom || uiState.forceVisualUpdate) {
         uiState.measureLinesShouldUpdate = true;
         uiState.prevXOffset = uiState.xOffset;
         uiState.prevZoom = uiState.zoom;
     }
 
     // If zoom or scroll, the measure lines should be updated
-    if (uiState.measureLinesShouldUpdate || uiState.showCursor) {
+    if (uiState.measureLinesShouldUpdate || uiState.showCursor || uiState.forceVisualUpdate) {
         if (uiState.measureLinesShouldUpdate) updateMeasureLines();        
         if (uiState.showCursor) updateVirtualCursor();
         updatePlayhead();
+        updateLoopPoints();
         
         for (const auto& trackName : tracksInUI) {
             auto trackLane = app->ui->getRow(trackName + "_lane_scrollable");
@@ -982,6 +1133,20 @@ void TimelineComponent::update() {
                 
                 if (uiState.showCursor && virtualCursor && uiState.cursorTrackName == trackName)
                     customGeom.push_back(virtualCursor);
+                
+                if (loopRangeRect)
+                    customGeom.push_back(loopRangeRect);
+                    
+                if (loopPoint1Line) {
+                    customGeom.push_back(loopPoint1Line);
+                    if (loopPoint1Triangle)
+                        customGeom.push_back(loopPoint1Triangle);
+                }
+                if (loopPoint2Line) {
+                    customGeom.push_back(loopPoint2Line);
+                    if (loopPoint2Triangle)
+                        customGeom.push_back(loopPoint2Triangle);
+                }
                 
                 if (playhead && app->isPlaying())
                     customGeom.push_back(playhead);
@@ -1006,6 +1171,20 @@ void TimelineComponent::update() {
             if (uiState.showCursor && virtualCursor && uiState.cursorTrackName == "Master")
                 customGeom.push_back(virtualCursor);
             
+            if (loopRangeRect)
+                customGeom.push_back(loopRangeRect);
+                
+            if (loopPoint1Line) {
+                customGeom.push_back(loopPoint1Line);
+                if (loopPoint1Triangle)
+                    customGeom.push_back(loopPoint1Triangle);
+            }
+            if (loopPoint2Line) {
+                customGeom.push_back(loopPoint2Line);
+                if (loopPoint2Triangle)
+                    customGeom.push_back(loopPoint2Triangle);
+            }
+            
             if (playhead && app->isPlaying())
                 customGeom.push_back(playhead);
             
@@ -1013,6 +1192,10 @@ void TimelineComponent::update() {
         }
         
         uiState.measureLinesShouldUpdate = false;
+        // Only reset forceVisualUpdate if we're not in initial startup
+        if (uiState.initialUpdateCount == 0) {
+            uiState.forceVisualUpdate = false;
+        }
     }
     
     // Update automation lanes continuously
@@ -1044,6 +1227,20 @@ void TimelineComponent::update() {
                     customGeom.push_back(subMeasureLines);
                     customGeom.push_back(measureLines);
                     
+                    if (loopRangeRect)
+                        customGeom.push_back(loopRangeRect);
+                        
+                    if (loopPoint1Line) {
+                        customGeom.push_back(loopPoint1Line);
+                        if (loopPoint1Triangle)
+                            customGeom.push_back(loopPoint1Triangle);
+                    }
+                    if (loopPoint2Line) {
+                        customGeom.push_back(loopPoint2Line);
+                        if (loopPoint2Triangle)
+                            customGeom.push_back(loopPoint2Triangle);
+                    }
+                    
                     if (playhead && app->isPlaying())
                         customGeom.push_back(playhead);
                     
@@ -1071,6 +1268,20 @@ void TimelineComponent::update() {
                     
                     customGeom.push_back(subMeasureLines);
                     customGeom.push_back(measureLines);
+                    
+                    if (loopRangeRect)
+                        customGeom.push_back(loopRangeRect);
+                        
+                    if (loopPoint1Line) {
+                        customGeom.push_back(loopPoint1Line);
+                        if (loopPoint1Triangle)
+                            customGeom.push_back(loopPoint1Triangle);
+                    }
+                    if (loopPoint2Line) {
+                        customGeom.push_back(loopPoint2Line);
+                        if (loopPoint2Triangle)
+                            customGeom.push_back(loopPoint2Triangle);
+                    }
                     
                     if (playhead && app->isPlaying())
                         customGeom.push_back(playhead);
@@ -1300,6 +1511,11 @@ Container* TimelineComponent::buildUILayout() {
 void TimelineComponent::newTrack(const Track& track) {
     std::string trackName = track.getName();
     
+    // Determine label color: use track's custom color if set, otherwise theme color
+    sf::Color labelColor = app->resources.activeTheme->track_color;
+    if (!track.getColorHex().empty())
+        labelColor = hexToColor(track.getColorHex());
+    
     auto newTrackLane = scrollableRow(
         Modifier()
             .setColor(app->resources.activeTheme->track_row_color)
@@ -1317,10 +1533,18 @@ void TimelineComponent::newTrack(const Track& track) {
 
     auto newTrackLabel = row(
         Modifier()
-            .setColor(app->resources.activeTheme->track_color)
+            .setColor(labelColor)
             .setfixedHeight(uiState.laneHeight)
             .setfixedWidth(uiState.labelWidth)
-            .align(Align::TOP),
+            .align(Align::TOP)
+            .onRClick([this, trackName]() {
+                if (!app->isColorPickerOpen()) {
+                    sf::Vector2i mousePos = sf::Mouse::getPosition(app->getWindow());
+                    sf::Vector2f worldPos = app->getWindow().mapPixelToCoords(mousePos);
+                    app->openColorPicker(worldPos);
+                    trackNameForColorPicker = trackName;
+                }
+            }),
     contains{
         spacer(Modifier().setfixedWidth(16.f)),
 
@@ -1414,6 +1638,18 @@ void TimelineComponent::newTrack(const Track& track) {
     // Add columns to scrollables
     laneScrollable->addElement(laneColumn);
     labelScrollable->addElement(labelColumn);
+    
+    // Apply saved track color if it exists
+    std::string colorHex = track.getColorHex();
+    if (!colorHex.empty()) {
+        // Parse hex color string (format: "#RRGGBB")
+        if (colorHex.length() >= 7 && colorHex[0] == '#') {
+            unsigned int r, g, b;
+            sscanf(colorHex.c_str(), "#%02x%02x%02x", &r, &g, &b);
+            sf::Color trackColor(r, g, b);
+            newTrackLabel->m_modifier.setColor(trackColor);
+        }
+    }
     
     if (track.getType() == Track::TrackType::Audio)
         generateTrackWaveform(trackName);
@@ -2978,6 +3214,138 @@ void TimelineComponent::updatePlayhead() {
     }
 }
 
+void TimelineComponent::updateLoopPoints() {
+    float scrollableHeight = laneScrollable->m_bounds.getSize().y;
+    
+    sf::Color clipColor = app->resources.activeTheme->clip_color;
+    sf::Color inverseColor(255 - clipColor.r, 255 - clipColor.g, 255 - clipColor.b, 200);
+    
+    const float triangleSize = 16.f;
+    
+    // Update loop range rectangle (between both points)
+    if (uiState.loopPoint1Sec >= 0.0 && uiState.loopPoint2Sec >= 0.0) {
+        if (!loopRangeRect) loopRangeRect = std::make_shared<sf::RectangleShape>();
+        
+        float x1 = secondsToXPos(uiState.loopPoint1Sec);
+        float x2 = secondsToXPos(uiState.loopPoint2Sec);
+        float width = x2 - x1;
+        
+        loopRangeRect->setSize(sf::Vector2f(width, scrollableHeight));
+        loopRangeRect->setPosition(sf::Vector2f(x1, 0.f));
+        loopRangeRect->setFillColor(sf::Color(inverseColor.r, inverseColor.g, inverseColor.b, 30));  // Very transparent
+    } else {
+        loopRangeRect.reset();
+    }
+    
+    // Update loop point 1 line and triangle
+    if (uiState.loopPoint1Sec >= 0.0) {
+        if (!loopPoint1Line) loopPoint1Line = std::make_shared<sf::RectangleShape>();
+        if (!loopPoint1Triangle) loopPoint1Triangle = std::make_shared<sf::ConvexShape>(3);
+        
+        float x = secondsToXPos(uiState.loopPoint1Sec);
+        loopPoint1Line->setSize(sf::Vector2f(2.f, scrollableHeight));
+        loopPoint1Line->setFillColor(inverseColor);
+        loopPoint1Line->setPosition(sf::Vector2f(x, 0.f));
+        
+        // Create downward-pointing triangle at the top
+        loopPoint1Triangle->setPoint(0, sf::Vector2f(x - triangleSize/2.f + 1.f, 0.f));  // Top left
+        loopPoint1Triangle->setPoint(1, sf::Vector2f(x + triangleSize/2.f + 1.f, 0.f));  // Top right
+        loopPoint1Triangle->setPoint(2, sf::Vector2f(x + 1.f, triangleSize));  // Bottom center (pointing down)
+        loopPoint1Triangle->setFillColor(inverseColor);
+    }
+    
+    // Update loop point 2 line and triangle
+    if (uiState.loopPoint2Sec >= 0.0) {
+        if (!loopPoint2Line) loopPoint2Line = std::make_shared<sf::RectangleShape>();
+        if (!loopPoint2Triangle) loopPoint2Triangle = std::make_shared<sf::ConvexShape>(3);
+        
+        float x = secondsToXPos(uiState.loopPoint2Sec);
+        loopPoint2Line->setSize(sf::Vector2f(2.f, scrollableHeight));
+        loopPoint2Line->setFillColor(inverseColor);
+        loopPoint2Line->setPosition(sf::Vector2f(x, 0.f));
+        
+        // Create downward-pointing triangle at the top
+        loopPoint2Triangle->setPoint(0, sf::Vector2f(x - triangleSize/2.f + 1.f, 0.f));  // Top left
+        loopPoint2Triangle->setPoint(1, sf::Vector2f(x + triangleSize/2.f + 1.f, 0.f));  // Top right
+        loopPoint2Triangle->setPoint(2, sf::Vector2f(x + 1.f, triangleSize));  // Bottom center (pointing down)
+        loopPoint2Triangle->setFillColor(inverseColor);
+    }
+}
+
+void TimelineComponent::handleLoopPoints() {
+    static bool prevL = false;
+    bool l = sf::Keyboard::isKeyPressed(sf::Keyboard::Key::L);
+    
+    if (l && !prevL && uiState.showCursor) {
+        double cursorPos = uiState.cursorPosition;
+        const double tolerance = 0.01; // Tolerance for detecting if cursor is on a loop point
+        
+        // Check if cursor is on loop point 1 - remove it
+        if (uiState.loopPoint1Sec >= 0.0 && std::abs(cursorPos - uiState.loopPoint1Sec) < tolerance) {
+            uiState.loopPoint1Sec = -1.0;
+            loopPoint1Line.reset();
+            loopPoint1Triangle.reset();
+        }
+        // Check if cursor is on loop point 2 - remove it
+        else if (uiState.loopPoint2Sec >= 0.0 && std::abs(cursorPos - uiState.loopPoint2Sec) < tolerance) {
+            uiState.loopPoint2Sec = -1.0;
+            loopPoint2Line.reset();
+            loopPoint2Triangle.reset();
+        }
+        // Set new loop point
+        else {
+            // If no loop points set, set as loop point 1
+            if (uiState.loopPoint1Sec < 0.0 && uiState.loopPoint2Sec < 0.0) {
+                uiState.loopPoint1Sec = cursorPos;
+            }
+            // If only loop point 1 is set, determine which is 1 and which is 2 based on position
+            else if (uiState.loopPoint1Sec >= 0.0 && uiState.loopPoint2Sec < 0.0) {
+                if (cursorPos < uiState.loopPoint1Sec) {
+                    uiState.loopPoint2Sec = uiState.loopPoint1Sec;
+                    uiState.loopPoint1Sec = cursorPos;
+                } else {
+                    uiState.loopPoint2Sec = cursorPos;
+                }
+            }
+            // If only loop point 2 is set (shouldn't happen but handle it)
+            else if (uiState.loopPoint1Sec < 0.0 && uiState.loopPoint2Sec >= 0.0) {
+                if (cursorPos < uiState.loopPoint2Sec) {
+                    uiState.loopPoint1Sec = cursorPos;
+                } else {
+                    uiState.loopPoint1Sec = uiState.loopPoint2Sec;
+                    uiState.loopPoint2Sec = cursorPos;
+                }
+            }
+            // Both loop points set - extend the range if cursor is outside current range
+            else {
+                // If cursor is before loop point 1, move loop point 1 to cursor
+                if (cursorPos < uiState.loopPoint1Sec) {
+                    uiState.loopPoint1Sec = cursorPos;
+                }
+                // If cursor is after loop point 2, move loop point 2 to cursor
+                else if (cursorPos > uiState.loopPoint2Sec) {
+                    uiState.loopPoint2Sec = cursorPos;
+                }
+                // If cursor is between the two points, do nothing (or you could decide different behavior)
+            }
+        }
+        
+        updateLoopPoints();
+    }
+    
+    prevL = l;
+    
+    // Check if engine position is at loop point 2, if so set to loop point 1
+    if (uiState.loopPoint1Sec >= 0.0 && uiState.loopPoint2Sec >= 0.0) {
+        double enginePos = app->getPosition();
+        const double tolerance = 0.05; // Small tolerance for position matching
+        
+        if (std::abs(enginePos - uiState.loopPoint2Sec) < tolerance) {
+            app->setPosition(uiState.loopPoint1Sec);
+        }
+    }
+}
+
 std::vector<std::shared_ptr<sf::Drawable>> TimelineComponent::generateClipShapes(const std::string& trackName) {
     std::vector<std::shared_ptr<sf::Drawable>> clipShapes;
     
@@ -2987,7 +3355,11 @@ std::vector<std::shared_ptr<sf::Drawable>> TimelineComponent::generateClipShapes
     double viewStartSeconds = uiState.leftSidePosSeconds;
     double viewEndSeconds = uiState.rightSidePosSeconds;
 
+    // Use track's custom color if set, otherwise theme color
     sf::Color clipColor = app->resources.activeTheme->clip_color;
+    if (!track->getColorHex().empty()) {
+        clipColor = hexToColor(track->getColorHex());
+    }
     sf::Color inverseColor(255 - clipColor.r, 255 - clipColor.g, 255 - clipColor.b, 200);
     
     // Handle MIDI tracks
@@ -3592,6 +3964,88 @@ std::vector<std::shared_ptr<sf::Drawable>> TimelineComponent::generateAutomation
     }
     
     return drawables;
+}
+
+void TimelineComponent::forceApplyGeometryToAllLanes() {
+    // Force update measure lines first
+    updateMeasureLines();
+    updateVirtualCursor();
+    updatePlayhead();
+    updateLoopPoints();
+    
+    // Apply geometry to all track lanes
+    for (const auto& trackName : tracksInUI) {
+        auto trackLane = app->ui->getRow(trackName + "_lane_scrollable");
+        if (trackLane) {
+            std::vector<std::shared_ptr<sf::Drawable>> customGeom;
+            
+            for (auto& bar : measureBarShapes)
+                customGeom.push_back(bar);
+            
+            auto clipShapes = generateClipShapes(trackName);
+            for (auto& clip : clipShapes)
+                customGeom.push_back(clip);
+            
+            if (subMeasureLines) customGeom.push_back(subMeasureLines);
+            if (measureLines) customGeom.push_back(measureLines);
+            
+            if (uiState.showCursor && virtualCursor && uiState.cursorTrackName == trackName)
+                customGeom.push_back(virtualCursor);
+            
+            if (loopRangeRect)
+                customGeom.push_back(loopRangeRect);
+                
+            if (loopPoint1Line) {
+                customGeom.push_back(loopPoint1Line);
+                if (loopPoint1Triangle)
+                    customGeom.push_back(loopPoint1Triangle);
+            }
+            if (loopPoint2Line) {
+                customGeom.push_back(loopPoint2Line);
+                if (loopPoint2Triangle)
+                    customGeom.push_back(loopPoint2Triangle);
+            }
+            
+            if (playhead && app->isPlaying())
+                customGeom.push_back(playhead);
+            
+            trackLane->setCustomGeometry(customGeom);
+        }
+    }
+    
+    // Apply geometry to Master lane
+    auto masterLane = app->ui->getRow("Master_lane_scrollable");
+    if (masterLane) {
+        std::vector<std::shared_ptr<sf::Drawable>> customGeom;
+        
+        for (auto& bar : measureBarShapes)
+            customGeom.push_back(bar);
+        
+        if (subMeasureLines) customGeom.push_back(subMeasureLines);
+        if (measureLines) customGeom.push_back(measureLines);
+        
+        if (uiState.showCursor && virtualCursor && uiState.cursorTrackName == "Master")
+            customGeom.push_back(virtualCursor);
+        
+        if (loopRangeRect)
+            customGeom.push_back(loopRangeRect);
+            
+        if (loopPoint1Line) {
+            customGeom.push_back(loopPoint1Line);
+            if (loopPoint1Triangle)
+                customGeom.push_back(loopPoint1Triangle);
+        }
+        if (loopPoint2Line) {
+            customGeom.push_back(loopPoint2Line);
+            if (loopPoint2Triangle)
+                customGeom.push_back(loopPoint2Triangle);
+        }
+        
+        if (playhead && app->isPlaying())
+            customGeom.push_back(playhead);
+        
+        masterLane->setCustomGeometry(customGeom);
+    }
 }
 
 GET_INTERFACE

@@ -59,6 +59,14 @@ public:
     void requestFullscreenToggle();
     void requestThemeChange(const std::string& themeName);
 
+    void openColorPicker(sf::Vector2f position);
+    void handleColorPicker();
+    void renderColorPicker();
+    const sf::Color& getRecentColorPicked() const;
+    bool isColorPickerOpen() const;
+    bool wasColorSelected() const;
+    void closeColorPicker();
+
     Track* getMasterTrack();
     Track* getTrack(const std::string& name);
     std::vector<std::unique_ptr<Track>>& getAllTracks();
@@ -280,6 +288,14 @@ private:
 
     sf::Clock logoPageTimer;
     std::string currentPage = "";
+
+    // Color picker members
+    sf::RenderWindow colorPickerWindow;
+    std::unique_ptr<UILO> colorPickerUI;
+    uilo::Grid* colorPickerGrid = nullptr;
+    sf::Color recentColorPicked = sf::Color::White;
+    bool colorPickerOpen = false;
+    bool colorWasSelected = false;
 
     void initUI();
     void initUIResources();

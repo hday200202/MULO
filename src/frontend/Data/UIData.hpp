@@ -96,7 +96,47 @@ struct ComponentLayoutData {
     std::string relativeTo = "";
 };
 
+// Helper function to convert hex string to sf::Color
+inline sf::Color hexToColor(const std::string& hex) {
+    std::string hexStr = hex;
+    if (!hexStr.empty() && hexStr[0] == '#')
+        hexStr = hexStr.substr(1);
+    
+    unsigned long long hexValue = 0;
+    try {hexValue = std::stoull(hexStr, nullptr, 16);}
+    catch (...) {return sf::Color::Black;}
+    
+    unsigned char r, g, b, a = 255;
+    
+    // Check if it includes alpha (8 hex digits / 4 bytes)
+    if (hexStr.length() == 8) {
+        r = (hexValue >> 24) & 0xFF;
+        g = (hexValue >> 16) & 0xFF;
+        b = (hexValue >> 8) & 0xFF;
+        a = hexValue & 0xFF;
+    } else {
+        // 6 hex digits / 3 bytes (no alpha)
+        r = (hexValue >> 16) & 0xFF;
+        g = (hexValue >> 8) & 0xFF;
+        b = hexValue & 0xFF;
+    }
+    
+    return sf::Color(r, g, b, a);
+}
+
+// Theme registry
+inline std::unordered_map<std::string, const UITheme*>& getThemeRegistry() {
+    static std::unordered_map<std::string, const UITheme*> registry;
+    return registry;
+}
+
+inline std::vector<std::string>& getThemeNames() {
+    static std::vector<std::string> names;
+    return names;
+}
+
 struct UITheme {
+    std::string name;
     sf::Color button_color;
     sf::Color track_color;
     sf::Color track_row_color;
@@ -120,6 +160,7 @@ struct UITheme {
     sf::Color automation_label_color;
     
     UITheme(
+        const std::string& themeName,
         sf::Color btn = sf::Color::Red,
         sf::Color track = sf::Color(155, 155, 155),
         sf::Color trackRow = sf::Color(120, 120, 120),
@@ -141,258 +182,284 @@ struct UITheme {
         sf::Color selectedTrack = sf::Color(100, 150, 200),
         sf::Color automationLane = sf::Color(100, 100, 100),
         sf::Color automationLabel = sf::Color(140, 140, 140)
-    ) : button_color(btn), track_color(track), track_row_color(trackRow), master_track_color(masterTrack),
+    ) : name(themeName), button_color(btn), track_color(track), track_row_color(trackRow), master_track_color(masterTrack),
         mute_color(mute), foreground_color(fg), primary_text_color(primaryText), secondary_text_color(secondaryText),
         not_muted_color(notMuted), middle_color(middle), alt_button_color(altBtn), white(w), black(b),
         slider_knob_color(sliderKnob), slider_bar_color(sliderBar), clip_color(clip), line_color(line), 
         wave_form_color(waveform), selected_track_color(selectedTrack), automation_lane_color(automationLane),
-        automation_label_color(automationLabel) {}
+        automation_label_color(automationLabel) {
+        // Register this theme only if it's not already registered
+        auto& registry = getThemeRegistry();
+        if (registry.find(themeName) == registry.end()) {
+            registry[themeName] = this;
+            getThemeNames().push_back(themeName);
+        }
+    }
 };
 
 namespace Themes {
-    const UITheme Default = UITheme(
-        sf::Color::Red,               // buttonColor
-        sf::Color(155, 155, 155),     // trackColor  
-        sf::Color(120, 120, 120),     // trackRowColor
-        sf::Color(155, 155, 155),     // masterTrackColor
-        sf::Color::Red,               // muteColor
-        sf::Color(200, 200, 200),     // foregroundColor
-        sf::Color::Black,             // primaryTextColor
-        sf::Color::White,             // secondaryTextColor
-        sf::Color(50, 50, 50),        // notMutedColor
-        sf::Color(100, 100, 100),     // middleColor
-        sf::Color(120, 120, 120),     // altButtonColor
-        sf::Color::White,             // white
-        sf::Color::Black,             // black
-        sf::Color::White,             // sliderKnobColor
-        sf::Color::Black,             // sliderBarColor
-        sf::Color::White,             // clipColor - Light Blue
-        sf::Color(80, 80, 80),        // lineColor - Gray
-        sf::Color::Black,             // waveformColor - Blue
-        sf::Color(100, 150, 200),     // selectedTrackColor
-        sf::Color(100, 100, 100),     // automationLaneColor
-        sf::Color(140, 140, 140)      // automationLabelColor
-    );
-    
-    // Dark Theme
+    // MULO Default Themes
     const UITheme Dark = UITheme(
-        sf::Color(85, 115, 140),      // buttonColor - Muted Blue
-        sf::Color(60, 60, 60),        // trackColor - Dark Gray
-        sf::Color(45, 45, 45),        // trackRowColor - Darker Gray
-        sf::Color(80, 80, 80),        // masterTrackColor - Medium Gray
-        sf::Color(140, 70, 70),       // muteColor - Muted Red
-        sf::Color(70, 70, 70),        // foregroundColor - Dark Gray
-        sf::Color(230, 230, 230),     // primaryTextColor - Soft White
-        sf::Color(230, 230, 230),     // secondaryTextColor - Muted Light Gray
-        sf::Color(30, 30, 30),        // notMutedColor
-        sf::Color(40, 40, 40),        // middleColor
-        sf::Color(50, 50, 50),        // altButtonColor
-        sf::Color::White,             // white
-        sf::Color(20, 20, 20),        // black - Very Dark
-        sf::Color::White,             // sliderKnobColor - Muted Light Blue
-        sf::Color(30, 30, 30),        // sliderBarColor - Dark
-        sf::Color(90, 120, 160),      // clipColor - Muted Blue
-        sf::Color(100, 100, 100),     // lineColor - Medium Gray
-        sf::Color::White,             // waveformColor - Soft Blue
-        sf::Color(90, 120, 160),      // selectedTrackColor - Muted Blue
-        sf::Color(35, 35, 35),        // automationLaneColor - Darker Gray
-        sf::Color(50, 50, 50)         // automationLabelColor - Dark Gray
-    );
-    
-    // Light Theme
-    const UITheme Light = UITheme(
-        sf::Color(90, 130, 160),      // buttonColor - Muted Blue
-        sf::Color(245, 245, 245),     // trackColor - Very Light Gray
-        sf::Color(235, 235, 235),     // trackRowColor - Light Gray
-        sf::Color(220, 220, 220),     // masterTrackColor - Medium Light Gray
-        sf::Color(160, 80, 80),       // muteColor - Muted Red
-        sf::Color(250, 250, 250),     // foregroundColor - Off White
-        sf::Color(40, 40, 40),        // primaryTextColor - Dark Gray
-        sf::Color(80, 80, 80),        // secondaryTextColor - Medium Gray
-        sf::Color(180, 180, 180),     // notMutedColor
-        sf::Color(200, 200, 200),     // middleColor
-        sf::Color(160, 160, 160),     // altButtonColor
-        sf::Color::White,             // white
-        sf::Color::Black,             // black
-        sf::Color(70, 110, 140),      // sliderKnobColor - Muted Dark Blue
-        sf::Color(215, 215, 215),     // sliderBarColor - Soft Gray
-        sf::Color(120, 160, 200),     // clipColor - Light Blue
-        sf::Color(120, 120, 120),     // lineColor - Medium Gray
-        sf::Color(80, 140, 200),      // waveformColor - Blue
-        sf::Color(120, 160, 200),     // selectedTrackColor - Light Blue
-        sf::Color(225, 225, 225),     // automationLaneColor - Very Light Gray
-        sf::Color(210, 210, 210)      // automationLabelColor - Light Gray
-    );
-    
-    // Cyberpunk Theme
-    const UITheme Cyberpunk = UITheme(
-        sf::Color(160, 80, 120),      // buttonColor - Muted Pink
-        sf::Color(55, 50, 65),        // trackColor - Muted Purple
-        sf::Color(45, 40, 55),        // trackRowColor - Dark Muted Purple
-        sf::Color(70, 60, 80),        // masterTrackColor - Soft Purple
-        sf::Color(140, 70, 100),      // muteColor - Muted Pink
-        sf::Color(40, 35, 50),        // foregroundColor - Dark Muted Blue
-        sf::Color(120, 160, 160),     // primaryTextColor - Muted Cyan
-        sf::Color(200, 200, 200),     // secondaryTextColor - Soft White
-        sf::Color(25, 20, 35),        // notMutedColor
-        sf::Color(65, 50, 80),        // middleColor - Muted Purple
-        sf::Color(90, 70, 110),       // altButtonColor - Soft Purple
-        sf::Color(255, 255, 255),     // white
-        sf::Color(15, 10, 25),        // black - Almost Black
-        sf::Color(100, 140, 130),     // sliderKnobColor - Muted Teal
-        sf::Color(80, 60, 100),       // sliderBarColor - Muted Purple
-        sf::Color(120, 80, 140),      // clipColor - Muted Purple-Pink
-        sf::Color(80, 120, 120),      // lineColor - Muted Teal
-        sf::Color(140, 100, 160),     // waveformColor - Soft Purple
-        sf::Color(120, 80, 140),      // selectedTrackColor
-        sf::Color(38, 35, 48),        // automationLaneColor - Dark Purple
-        sf::Color(55, 50, 65)         // automationLabelColor - Muted Purple
-    );
-    
-    // Forest Theme
-    const UITheme Forest = UITheme(
-        sf::Color(80, 110, 80),       // buttonColor - Muted Forest Green
-        sf::Color(90, 100, 75),       // trackColor - Muted Olive
-        sf::Color(100, 115, 85),      // trackRowColor - Soft Olive
-        sf::Color(85, 85, 100),       // masterTrackColor - Muted Slate
-        sf::Color(130, 70, 70),       // muteColor - Muted Red
-        sf::Color(115, 125, 115),     // foregroundColor - Soft Green Gray
-        sf::Color(210, 205, 190),     // primaryTextColor - Soft Beige
-        sf::Color(220, 215, 200),     // secondaryTextColor - Light Beige
-        sf::Color(65, 75, 75),        // notMutedColor - Muted Slate
-        sf::Color(95, 95, 95),        // middleColor - Medium Gray
-        sf::Color(105, 115, 125),     // altButtonColor - Soft Blue Gray
-        sf::Color::White,             // white
-        sf::Color(35, 35, 50),        // black - Dark Blue Gray
-        sf::Color(90, 130, 90),       // sliderKnobColor - Muted Green
-        sf::Color(75, 100, 75),       // sliderBarColor - Darker Muted Green
-        sf::Color(100, 130, 90),      // clipColor - Sage Green
-        sf::Color(110, 120, 100),     // lineColor - Olive Gray
-        sf::Color(120, 150, 100),     // waveformColor - Light Green
-        sf::Color(100, 130, 90),      // selectedTrackColor
-        sf::Color(85, 95, 75),        // automationLaneColor - Dark Olive
-        sf::Color(90, 100, 80)        // automationLabelColor - Muted Olive
-    );
-    
-    // Ocean Theme
-    const UITheme Ocean = UITheme(
-        sf::Color(50, 120, 180),      // buttonColor - Deep Blue
-        sf::Color(30, 60, 90),        // trackColor - Navy
-        sf::Color(40, 80, 120),       // trackRowColor - Blue Gray
-        sf::Color(60, 130, 180),      // masterTrackColor - Light Blue
-        sf::Color(200, 80, 80),       // muteColor - Coral Red
-        sf::Color(20, 40, 60),        // foregroundColor - Deep Navy
-        sf::Color(180, 220, 240),     // primaryTextColor - Pale Blue
-        sf::Color(120, 180, 200),     // secondaryTextColor - Muted Cyan
-        sf::Color(30, 50, 70),        // notMutedColor
-        sf::Color(40, 90, 120),       // middleColor - Blue Gray
-        sf::Color(80, 180, 200),      // altButtonColor - Aqua
-        sf::Color::White,             // white
-        sf::Color(10, 20, 30),        // black - Deepest Blue
-        sf::Color(60, 180, 200),      // sliderKnobColor - Aqua
-        sf::Color(30, 90, 120),       // sliderBarColor - Blue Gray
-        sf::Color(80, 180, 220),      // clipColor - Light Aqua
-        sf::Color(100, 160, 200),     // lineColor - Soft Blue
-        sf::Color(120, 200, 240),     // waveformColor - Bright Blue
-        sf::Color(80, 180, 220),      // selectedTrackColor - Light Aqua
-        sf::Color(35, 70, 105),       // automationLaneColor - Dark Blue
-        sf::Color(40, 80, 120)        // automationLabelColor - Blue Gray
-    );
-    
-    // Sunset Theme
-    const UITheme Sunset = UITheme(
-        sf::Color(255, 120, 60),      // buttonColor - Orange
-        sf::Color(200, 90, 60),       // trackColor - Burnt Orange
-        sf::Color(255, 180, 120),     // trackRowColor - Peach
-        sf::Color(255, 140, 80),      // masterTrackColor - Light Orange
-        sf::Color(200, 60, 60),       // muteColor - Red
-        sf::Color(120, 60, 40),       // foregroundColor - Brown
-        sf::Color(255, 240, 220),     // primaryTextColor - Cream
-        sf::Color(255, 200, 160),     // secondaryTextColor - Light Peach
-        sf::Color(120, 60, 40),       // notMutedColor
-        sf::Color(255, 170, 100),     // middleColor - Light Orange
-        sf::Color(255, 200, 120),     // altButtonColor - Yellow Peach
-        sf::Color::White,             // white
-        sf::Color(60, 30, 20),        // black - Deep Brown
-        sf::Color(255, 180, 80),      // sliderKnobColor - Gold
-        sf::Color(200, 120, 60),      // sliderBarColor - Orange Brown
-        sf::Color(255, 160, 80),      // clipColor - Orange
-        sf::Color(255, 200, 120),     // lineColor - Light Yellow
-        sf::Color(255, 180, 120),     // waveformColor - Peach
-        sf::Color(255, 160, 80),      // selectedTrackColor - Orange
-        sf::Color(220, 140, 90),      // automationLaneColor - Tan
-        sf::Color(200, 120, 80)       // automationLabelColor - Burnt Orange
-    );
-    
-    // Monochrome Theme
-    const UITheme Monochrome = UITheme(
-        sf::Color(120, 120, 120),     // buttonColor - Gray
-        sf::Color(80, 80, 80),        // trackColor - Dark Gray
-        sf::Color(100, 100, 100),     // trackRowColor - Medium Gray
-        sf::Color(150, 150, 150),     // masterTrackColor - Light Gray
-        sf::Color(200, 80, 80),       // muteColor - Red
-        sf::Color(60, 60, 60),        // foregroundColor - Dark Gray
-        sf::Color(230, 230, 230),     // primaryTextColor - White
-        sf::Color(230, 230, 230),     // secondaryTextColor - Light Gray
-        sf::Color(40, 40, 40),        // notMutedColor
-        sf::Color(120, 120, 120),     // middleColor - Gray
-        sf::Color(50, 50, 50),        // altButtonColor - Light Gray
-        sf::Color::White,             // white
-        sf::Color(20, 20, 20),        // black - Very Dark
-        sf::Color(180, 180, 180),     // sliderKnobColor - Light Gray
-        sf::Color(100, 100, 100),     // sliderBarColor - Medium Gray
-        sf::Color(150, 150, 150),     // clipColor - Light Gray
-        sf::Color(120, 120, 120),     // lineColor - Gray
-        sf::Color(50, 50, 50)      // waveformColor - White
-    );
-    
-    // Solarized Theme
-    const UITheme Solarized = UITheme(
-        sf::Color(38, 139, 210),      // buttonColor - Blue
-        sf::Color(101, 123, 131),     // trackColor - Base1
-        sf::Color(131, 148, 150),     // trackRowColor - Base0
-        sf::Color(147, 161, 161),     // masterTrackColor - Base01
-        sf::Color(220, 50, 47),       // muteColor - Red
-        sf::Color(0, 43, 54),         // foregroundColor - Base02
-        sf::Color(253, 246, 227),     // primaryTextColor - Base3
-        sf::Color(238, 232, 213),     // secondaryTextColor - Base2
-        sf::Color(88, 110, 117),      // notMutedColor - Base00
-        sf::Color(133, 153, 0),       // middleColor - Green
-        sf::Color(42, 161, 152),      // altButtonColor - Cyan
-        sf::Color::White,             // white
-        sf::Color(7, 54, 66),         // black - Base03
-        sf::Color(181, 137, 0),       // sliderKnobColor - Yellow
-        sf::Color(203, 75, 22),       // sliderBarColor - Orange
-        sf::Color(38, 139, 210),      // clipColor - Blue
-        sf::Color(42, 161, 152),      // lineColor - Cyan
-        sf::Color(133, 153, 0)        // waveformColor - Green
+        "Dark Default",                       // theme name
+        hexToColor("#55738CFF"),      // buttonColor
+        hexToColor("#3C3C3CFF"),      // trackColor
+        hexToColor("#2D2D2DFF"),      // trackRowColor
+        hexToColor("#505050FF"),      // masterTrackColor
+        hexToColor("#8C4646FF"),      // muteColor
+        hexToColor("#464646FF"),      // foregroundColor
+        hexToColor("#E6E6E6FF"),      // primaryTextColor
+        hexToColor("#E6E6E6FF"),      // secondaryTextColor
+        hexToColor("#1E1E1EFF"),      // notMutedColor
+        hexToColor("#282828FF"),      // middleColor
+        hexToColor("#323232FF"),      // altButtonColor
+        hexToColor("#FFFFFFFF"),      // white
+        hexToColor("#141414FF"),      // black
+        hexToColor("#FFFFFFFF"),      // sliderKnobColor
+        hexToColor("#1E1E1EFF"),      // sliderBarColor
+        hexToColor("#5A78A0FF"),      // clipColor
+        hexToColor("#646464FF"),      // lineColor
+        hexToColor("#FFFFFFFF"),      // waveformColor
+        hexToColor("#5A78A0FF"),      // selectedTrackColor
+        hexToColor("#232323FF"),      // automationLaneColor
+        hexToColor("#323232FF")       // automationLabelColor
     );
 
-    // List of all theme names
-    const std::initializer_list<std::string> AllThemeNames = {
-        "Default",
-        "Dark",
-        "Light",
-        "Cyberpunk",
-        "Forest",
-        "Ocean",
-        "Sunset",
-        "Monochrome",
-        "Solarized"
-    };
+    const UITheme Light = UITheme(
+        "Light Default",                       // theme name
+        hexToColor("#84a4cdff"),      // buttonColor
+        hexToColor("#dbdbdbff"),      // trackColor
+        hexToColor("#959595ff"),      // trackRowColor
+        hexToColor("#b8b8b8ff"),      // masterTrackColor
+        hexToColor("#8C4646FF"),      // muteColor
+        hexToColor("#eeeeeeff"),      // foregroundColor
+        hexToColor("#2a2a2aff"),      // primaryTextColor
+        hexToColor("#d2d2d2ff"),      // secondaryTextColor
+        hexToColor("#1E1E1EFF"),      // notMutedColor
+        hexToColor("#c0c0c0ff"),      // middleColor
+        hexToColor("#909090ff"),      // altButtonColor
+        hexToColor("#FFFFFFFF"),      // white
+        hexToColor("#141414FF"),      // black
+        hexToColor("#2a2a2aff"),      // sliderKnobColor
+        hexToColor("#232323ff"),      // sliderBarColor
+        hexToColor("#84a4cdff"),      // clipColor
+        hexToColor("#eeeeeeff"),      // lineColor
+        hexToColor("#ffffffff"),      // waveformColor
+        hexToColor("#84a4cdff"),      // selectedTrackColor
+        hexToColor("#959595ff"),      // automationLaneColor
+        hexToColor("#84a4cdff")       // automationLabelColor
+    );
+
+    const UITheme DarkForest = UITheme(
+        "Dark Forest",                // theme name
+        hexToColor("#4D7C5Aff"),      // buttonColor - muted green
+        hexToColor("#3A4A3Cff"),      // trackColor - dark green-gray
+        hexToColor("#2B352Dff"),      // trackRowColor - darker green-gray
+        hexToColor("#4A5A4Cff"),      // masterTrackColor - medium green-gray
+        hexToColor("#8C4646ff"),      // muteColor - keep red
+        hexToColor("#424A44ff"),      // foregroundColor - dark green-tinted
+        hexToColor("#D8E6DAff"),      // primaryTextColor - light green-tinted
+        hexToColor("#D8E6DAff"),      // secondaryTextColor - light green-tinted
+        hexToColor("#1C241Eff"),      // notMutedColor - very dark green
+        hexToColor("#343C36ff"),      // middleColor - dark green-gray
+        hexToColor("#3E4A40ff"),      // altButtonColor - muted green-gray
+        hexToColor("#FFFFFFff"),      // white
+        hexToColor("#141814ff"),      // black - slightly green-tinted
+        hexToColor("#D8E6DAff"),      // sliderKnobColor - light green-tinted
+        hexToColor("#1C241Eff"),      // sliderBarColor - dark green
+        hexToColor("#4D7C5Aff"),      // clipColor - muted green
+        hexToColor("#586858ff"),      // lineColor - medium green-gray
+        hexToColor("#D8E6DAff"),      // waveformColor - light green-tinted
+        hexToColor("#4D7C5Aff"),      // selectedTrackColor - muted green
+        hexToColor("#2C362Eff"),      // automationLaneColor - darker green
+        hexToColor("#3A4A3Cff")       // automationLabelColor - dark green-gray
+    );
+
+    const UITheme LightForest = UITheme(
+        "Light Forest",               // theme name
+        hexToColor("#4D7C5Aff"),      // buttonColor - muted green
+        hexToColor("#D5E8D8ff"),      // trackColor - light green-gray
+        hexToColor("#B8D4BCff"),      // trackRowColor - lighter green-gray
+        hexToColor("#C8DFCCff"),      // masterTrackColor - medium light green
+        hexToColor("#C96B6Bff"),      // muteColor - lighter red
+        hexToColor("#E0ECE2ff"),      // foregroundColor - light green-tinted
+        hexToColor("#1C2A1Eff"),      // primaryTextColor - dark green-tinted
+        hexToColor("#3C4A3Eff"),      // secondaryTextColor - dark green-tinted
+        hexToColor("#F5F9F6ff"),      // notMutedColor - very light green
+        hexToColor("#CFE0D2ff"),      // middleColor - light green-gray
+        hexToColor("#C5D8C8ff"),      // altButtonColor - light green-gray
+        hexToColor("#FFFFFFff"),      // white
+        hexToColor("#1C241Eff"),      // black - green-tinted black
+        hexToColor("#1C2A1Eff"),      // sliderKnobColor - dark green-tinted
+        hexToColor("#F5F9F6ff"),      // sliderBarColor - very light green
+        hexToColor("#4D7C5Aff"),      // clipColor - muted green
+        hexToColor("#E0ECE2ff"),      // lineColor - medium green-gray
+        hexToColor("#E0ECE2ff"),      // waveformColor - dark green-tinted
+        hexToColor("#4D7C5Aff"),      // selectedTrackColor - muted green
+        hexToColor("#B8D4BCff"),      // automationLaneColor - light green
+        hexToColor("#4D7C5Aff")       // automationLabelColor - light green-gray
+    );
+
+    const UITheme DarkOcean = UITheme(
+        "Dark Ocean",                      // theme name
+        hexToColor("#4A7BA7ff"),      // buttonColor - ocean blue
+        hexToColor("#2D3E50ff"),      // trackColor - deep blue-gray
+        hexToColor("#252F3Bff"),      // trackRowColor - darker blue-gray
+        hexToColor("#3D5468ff"),      // masterTrackColor - medium blue
+        hexToColor("#8C4646ff"),      // muteColor - red
+        hexToColor("#34465Aff"),      // foregroundColor - dark blue-gray
+        hexToColor("#D6E4F0ff"),      // primaryTextColor - light blue-tinted
+        hexToColor("#D6E4F0ff"),      // secondaryTextColor - light blue-tinted
+        hexToColor("#1A242Eff"),      // notMutedColor - very dark blue
+        hexToColor("#2A3A48ff"),      // middleColor - dark blue-gray
+        hexToColor("#3A4A5Eff"),      // altButtonColor - muted blue
+        hexToColor("#FFFFFFff"),      // white
+        hexToColor("#12161Aff"),      // black - blue-tinted black
+        hexToColor("#D6E4F0ff"),      // sliderKnobColor - light blue-tinted
+        hexToColor("#1A242Eff"),      // sliderBarColor - dark blue
+        hexToColor("#4A7BA7ff"),      // clipColor - ocean blue
+        hexToColor("#506070ff"),      // lineColor - medium blue-gray
+        hexToColor("#D6E4F0ff"),      // waveformColor - light blue-tinted
+        hexToColor("#4A7BA7ff"),      // selectedTrackColor - ocean blue
+        hexToColor("#222E3Aff"),      // automationLaneColor - darker blue
+        hexToColor("#2D3E50ff")       // automationLabelColor - deep blue-gray
+    );
+
+    const UITheme LightOcean = UITheme(
+        "Light Ocean",                // theme name
+        hexToColor("#4A7BA7ff"),      // buttonColor - ocean blue
+        hexToColor("#D3E3F2ff"),      // trackColor - light blue-gray
+        hexToColor("#B5D2EAff"),      // trackRowColor - lighter blue-gray
+        hexToColor("#C6DCEFff"),      // masterTrackColor - medium light blue
+        hexToColor("#C96B6Bff"),      // muteColor - lighter red
+        hexToColor("#DEE9F4ff"),      // foregroundColor - light blue-tinted
+        hexToColor("#1A2838ff"),      // primaryTextColor - dark blue-tinted
+        hexToColor("#3A4858ff"),      // secondaryTextColor - dark blue-tinted
+        hexToColor("#F3F7FBff"),      // notMutedColor - very light blue
+        hexToColor("#CEDFF0ff"),      // middleColor - light blue-gray
+        hexToColor("#C4D6E8ff"),      // altButtonColor - light blue-gray
+        hexToColor("#FFFFFFff"),      // white
+        hexToColor("#1A242Eff"),      // black - blue-tinted black
+        hexToColor("#1A2838ff"),      // sliderKnobColor - dark blue-tinted
+        hexToColor("#F3F7FBff"),      // sliderBarColor - very light blue
+        hexToColor("#4A7BA7ff"),      // clipColor - ocean blue
+        hexToColor("#DEE9F4ff"),      // lineColor - medium blue-gray
+        hexToColor("#DEE9F4ff"),      // waveformColor - dark blue-tinted
+        hexToColor("#4A7BA7ff"),      // selectedTrackColor - ocean blue
+        hexToColor("#B5D2EAff"),      // automationLaneColor - light blue
+        hexToColor("#4A7BA7ff")       // automationLabelColor - light blue-gray
+    );
+
+    const UITheme DarkSunset = UITheme(
+        "Dark Sunset",                     // theme name
+        hexToColor("#D9704Dff"),      // buttonColor - warm orange
+        hexToColor("#4A3838ff"),      // trackColor - warm dark gray
+        hexToColor("#3A2E2Eff"),      // trackRowColor - darker warm gray
+        hexToColor("#5A4646ff"),      // masterTrackColor - warm medium gray
+        hexToColor("#A84646ff"),      // muteColor - deeper red
+        hexToColor("#524242ff"),      // foregroundColor - warm dark
+        hexToColor("#F5E6D3ff"),      // primaryTextColor - warm cream
+        hexToColor("#F5E6D3ff"),      // secondaryTextColor - warm cream
+        hexToColor("#2A1E1Eff"),      // notMutedColor - very dark warm
+        hexToColor("#423636ff"),      // middleColor - warm dark gray
+        hexToColor("#4E3E3Eff"),      // altButtonColor - warm muted
+        hexToColor("#FFFFFFff"),      // white
+        hexToColor("#1A1414ff"),      // black - warm black
+        hexToColor("#F5E6D3ff"),      // sliderKnobColor - warm cream
+        hexToColor("#2A1E1Eff"),      // sliderBarColor - dark warm
+        hexToColor("#D9704Dff"),      // clipColor - warm orange
+        hexToColor("#6E5858ff"),      // lineColor - warm medium
+        hexToColor("#F5E6D3ff"),      // waveformColor - warm cream
+        hexToColor("#D9704Dff"),      // selectedTrackColor - warm orange
+        hexToColor("#342828ff"),      // automationLaneColor - darker warm
+        hexToColor("#4A3838ff")       // automationLabelColor - warm dark gray
+    );
+
+    const UITheme LightSunset = UITheme(
+        "Light Sunset",               // theme name
+        hexToColor("#D9704Dff"),      // buttonColor - warm orange
+        hexToColor("#F5E6DDff"),      // trackColor - light warm gray
+        hexToColor("#E8D3C5ff"),      // trackRowColor - lighter warm gray
+        hexToColor("#F0DDD0ff"),      // masterTrackColor - medium light warm
+        hexToColor("#D96B6Bff"),      // muteColor - warm red
+        hexToColor("#F8EEE6ff"),      // foregroundColor - light warm
+        hexToColor("#2A1E1Eff"),      // primaryTextColor - dark warm
+        hexToColor("#4A3E3Eff"),      // secondaryTextColor - dark warm
+        hexToColor("#FFF9F6ff"),      // notMutedColor - very light warm
+        hexToColor("#EFE0D5ff"),      // middleColor - light warm gray
+        hexToColor("#E8D8CCff"),      // altButtonColor - light warm gray
+        hexToColor("#FFFFFFff"),      // white
+        hexToColor("#2A1E1Eff"),      // black - warm black
+        hexToColor("#2A1E1Eff"),      // sliderKnobColor - dark warm
+        hexToColor("#FFF9F6ff"),      // sliderBarColor - very light warm
+        hexToColor("#D9704Dff"),      // clipColor - warm orange
+        hexToColor("#F8EEE6ff"),      // lineColor - medium warm
+        hexToColor("#F8EEE6ff"),      // waveformColor - dark warm
+        hexToColor("#D9704Dff"),      // selectedTrackColor - warm orange
+        hexToColor("#E8D3C5ff"),      // automationLaneColor - light warm
+        hexToColor("#D9704Dff")       // automationLabelColor - light warm gray
+    );
+
+    const UITheme DarkPurple = UITheme(
+        "Dark Purple",                     // theme name
+        hexToColor("#8B6BA8ff"),      // buttonColor - soft purple
+        hexToColor("#3E3648ff"),      // trackColor - dark purple-gray
+        hexToColor("#302838ff"),      // trackRowColor - darker purple-gray
+        hexToColor("#4E4658ff"),      // masterTrackColor - medium purple
+        hexToColor("#8C4646ff"),      // muteColor - red
+        hexToColor("#443E4Eff"),      // foregroundColor - dark purple-tinted
+        hexToColor("#E6DCEEff"),      // primaryTextColor - light purple-tinted
+        hexToColor("#E6DCEEff"),      // secondaryTextColor - light purple-tinted
+        hexToColor("#221E28ff"),      // notMutedColor - very dark purple
+        hexToColor("#3A3442ff"),      // middleColor - dark purple-gray
+        hexToColor("#4A4252ff"),      // altButtonColor - muted purple
+        hexToColor("#FFFFFFff"),      // white
+        hexToColor("#18141Aff"),      // black - purple-tinted black
+        hexToColor("#E6DCEEff"),      // sliderKnobColor - light purple-tinted
+        hexToColor("#221E28ff"),      // sliderBarColor - dark purple
+        hexToColor("#8B6BA8ff"),      // clipColor - soft purple
+        hexToColor("#5E5266ff"),      // lineColor - medium purple-gray
+        hexToColor("#E6DCEEff"),      // waveformColor - light purple-tinted
+        hexToColor("#8B6BA8ff"),      // selectedTrackColor - soft purple
+        hexToColor("#2C2834ff"),      // automationLaneColor - darker purple
+        hexToColor("#3E3648ff")       // automationLabelColor - dark purple-gray
+    );
+
+    const UITheme LightPurple = UITheme(
+        "Light Purple",               // theme name
+        hexToColor("#8B6BA8ff"),      // buttonColor - soft purple
+        hexToColor("#E8DDF4ff"),      // trackColor - light purple-gray
+        hexToColor("#D5C4E8ff"),      // trackRowColor - lighter purple-gray
+        hexToColor("#DFD3EFff"),      // masterTrackColor - medium light purple
+        hexToColor("#C96B6Bff"),      // muteColor - lighter red
+        hexToColor("#EDE3F6ff"),      // foregroundColor - light purple-tinted
+        hexToColor("#241828ff"),      // primaryTextColor - dark purple-tinted
+        hexToColor("#443848ff"),      // secondaryTextColor - dark purple-tinted
+        hexToColor("#F8F5FCff"),      // notMutedColor - very light purple
+        hexToColor("#E2D6F0ff"),      // middleColor - light purple-gray
+        hexToColor("#D8CCE8ff"),      // altButtonColor - light purple-gray
+        hexToColor("#FFFFFFff"),      // white
+        hexToColor("#221E28ff"),      // black - purple-tinted black
+        hexToColor("#241828ff"),      // sliderKnobColor - dark purple-tinted
+        hexToColor("#F8F5FCff"),      // sliderBarColor - very light purple
+        hexToColor("#8B6BA8ff"),      // clipColor - soft purple
+        hexToColor("#EDE3F6ff"),      // lineColor - medium purple-gray
+        hexToColor("#241828ff"),      // waveformColor - dark purple-tinted
+        hexToColor("#8B6BA8ff"),      // selectedTrackColor - soft purple
+        hexToColor("#D5C4E8ff"),      // automationLaneColor - light purple
+        hexToColor("#8B6BA8ff")       // automationLabelColor - light purple-gray
+    );
 }
 
-// Helper function to apply a theme
+// Helper function to apply the theme
 inline void applyTheme(UIResources& resources, const std::string& themeName) {
-    if (themeName == "Dark") resources.activeTheme = const_cast<UITheme*>(&Themes::Dark);
-    else if (themeName == "Light") resources.activeTheme = const_cast<UITheme*>(&Themes::Light);
-    else if (themeName == "Cyberpunk") resources.activeTheme = const_cast<UITheme*>(&Themes::Cyberpunk);
-    else if (themeName == "Forest") resources.activeTheme = const_cast<UITheme*>(&Themes::Forest);
-    else if (themeName == "Ocean") resources.activeTheme = const_cast<UITheme*>(&Themes::Ocean);
-    else if (themeName == "Sunset") resources.activeTheme = const_cast<UITheme*>(&Themes::Sunset);
-    else if (themeName == "Monochrome") resources.activeTheme = const_cast<UITheme*>(&Themes::Monochrome);
-    else if (themeName == "Solarized") resources.activeTheme = const_cast<UITheme*>(&Themes::Solarized);
-    else resources.activeTheme = const_cast<UITheme*>(&Themes::Default);
+    auto& registry = getThemeRegistry();
+    auto it = registry.find(themeName);
+    if (it != registry.end()) {
+        resources.activeTheme = const_cast<UITheme*>(it->second);
+    } else {
+        // Default to Dark theme
+        resources.activeTheme = const_cast<UITheme*>(&Themes::Dark);
+    }
 }
 
 inline std::string getAlignmentString(uilo::Align alignment) {

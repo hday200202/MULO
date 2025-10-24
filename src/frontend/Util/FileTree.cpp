@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <iostream>
 
+namespace mulo {
+
 FileTree::FileTree(const std::string& rootDirectoryPath) {
     setRootDirectory(rootDirectoryPath);
 }
@@ -168,3 +170,5 @@ std::string FileTree::getFileExtension(const std::string& filename) const {
 void FileTree::loadFromPath(const std::string& directoryPath) {
     setRootDirectory(directoryPath);
 }
+
+} // namespace mulo

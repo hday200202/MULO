@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Extension/MULOComponent.hpp"
+#include "UILO/FileBrowser.hpp"
 #include <fstream>
 
 class ExtensionUploader : public MULOComponent {
@@ -33,12 +34,17 @@ private:
     std::string uploadStatus = "";
     bool isProcessingUpload = false;
 
+    std::unique_ptr<FileBrowser> fileBrowser;
+    bool fileBrowserActive = false;
+    std::string pendingPlatform = "";
+
     Container* initLayout();
     void showWindow();
     void hideWindow();
     void updatePlatformsVector();
     void selectFile(const std::string& platform);
     void uploadExtension();
+    void openFileBrowser(const std::string& platform, const std::vector<std::string>& filters);
 };
 
 #include "Application.hpp"
@@ -64,6 +70,30 @@ void ExtensionUploader::update() {
 
     if (!windowShown && prevWindowShown)
         hideWindow();
+
+    if (fileBrowser && fileBrowserActive) {
+        fileBrowser->update();
+        if (!fileBrowser->isOpen() && !pendingPlatform.empty()) {
+            std::string selectedPath = fileBrowser->getSelectedPath();
+            if (!selectedPath.empty()) {
+                if (pendingPlatform == "linux") {
+                    soPath = selectedPath;
+                } else if (pendingPlatform == "windows") {
+                    dllPath = selectedPath;
+                } else if (pendingPlatform == "mac") {
+                    dylibPath = selectedPath;
+                }
+                updatePlatformsVector();
+                size_t lastSlash = selectedPath.find_last_of("/\\");
+                std::string filename = (lastSlash != std::string::npos) ? 
+                    selectedPath.substr(lastSlash + 1) : selectedPath;
+                uploadStatus = "Selected: " + filename;
+            }
+            fileBrowser.reset();
+            fileBrowserActive = false;
+            pendingPlatform = "";
+        }
+    }
 
     if (window.isOpen() && ui) {
         uploadStatusText->setString(uploadStatus);
@@ -300,33 +330,24 @@ void ExtensionUploader::updatePlatformsVector() {
 }
 
 void ExtensionUploader::selectFile(const std::string& platform) {
-    std::string filter;
-    std::string* pathPtr = nullptr;
+    std::vector<std::string> filters;
     
     if (platform == "linux") {
-        filter = "*.so";
-        pathPtr = &soPath;
+        filters = {"*.so"};
     } else if (platform == "windows") {
-        filter = "*.dll";
-        pathPtr = &dllPath;
+        filters = {"*.dll"};
     } else if (platform == "mac") {
-        filter = "*.dylib";
-        pathPtr = &dylibPath;
+        filters = {"*.dylib"};
     }
     
-    if (pathPtr) {
-        std::string selectedFile = app->selectFile({filter});
-        
-        if (!selectedFile.empty()) {
-            *pathPtr = selectedFile;
-            updatePlatformsVector();
-            
-            size_t lastSlash = selectedFile.find_last_of("/\\");
-            std::string filename = (lastSlash != std::string::npos) ? 
-                selectedFile.substr(lastSlash + 1) : selectedFile;
-            uploadStatus = "Selected: " + filename;
-        }
-    }
+    openFileBrowser(platform, filters);
+}
+
+void ExtensionUploader::openFileBrowser(const std::string& platform, const std::vector<std::string>& filters) {
+    std::string startPath = std::filesystem::current_path().string();
+    fileBrowser = std::make_unique<FileBrowser>(startPath, BrowserMode::SELECT_FILE, filters);
+    fileBrowserActive = true;
+    pendingPlatform = platform;
 }
 
 void ExtensionUploader::uploadExtension() {

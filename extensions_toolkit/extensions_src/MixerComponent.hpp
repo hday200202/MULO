@@ -34,6 +34,7 @@ private:
     std::unordered_map<std::string, Button*> muteButtons;
     std::unordered_map<std::string, Slider*> volumeSliders;
     std::unordered_map<std::string, Slider*> panSliders;
+    std::unordered_map<std::string, Text*> volumeDbTexts;
     std::unordered_map<std::string, bool> lastSoloButtonStates;
     std::unordered_map<std::string, bool> lastMuteButtonStates;
 
@@ -241,6 +242,14 @@ bool MixerComponent::handleEvents() {
                 track->setVolume(sliderDb);
                 forceUpdate = true;
             }
+            
+            // Update dB text display (use sliderDb for accurate reading)
+            auto dbTextIt = volumeDbTexts.find(name);
+            if (dbTextIt != volumeDbTexts.end() && dbTextIt->second) {
+                char dbText[16];
+                snprintf(dbText, sizeof(dbText), "%.1f dB", sliderDb);
+                dbTextIt->second->setString(std::string(dbText));
+            }
         }
 
         if (panIt != panSliders.end() && panIt->second) {
@@ -284,6 +293,18 @@ Column* MixerComponent::createMixerTrack(const std::string& trackName, float vol
         SliderOrientation::Vertical,
         0.75f,
         trackName + "_mixer_volume_slider"
+    );
+
+    // Create dB level text
+    char dbText[16];
+    snprintf(dbText, sizeof(dbText), "%.1f dB", volume);
+    volumeDbTexts[trackName] = text(
+        Modifier()
+            .setColor(app->resources.activeTheme->secondary_text_color)
+            .setfixedHeight(18)
+            .align(Align::CENTER_X | Align::BOTTOM),
+        std::string(dbText),
+        app->resources.dejavuSansFont
     );
 
     panSliders[trackName] = slider(
@@ -336,7 +357,9 @@ Column* MixerComponent::createMixerTrack(const std::string& trackName, float vol
 
             spacer(Modifier().setfixedHeight(12).align(Align::TOP)),
             volumeSliders[trackName],
-            spacer(Modifier().setfixedHeight(12).align(Align::BOTTOM)),
+            spacer(Modifier().setfixedHeight(8).align(Align::BOTTOM)),
+            volumeDbTexts[trackName],
+            spacer(Modifier().setfixedHeight(8).align(Align::BOTTOM)),
             soloButtons[trackName],
             spacer(Modifier().setfixedHeight(12).align(Align::BOTTOM)),
             muteButtons[trackName],
@@ -367,6 +390,20 @@ Column* MixerComponent::createMasterMixerTrack() {
         SliderOrientation::Horizontal,
         0.5f,
         "Master_mixer_pan_slider"
+    );
+
+    // Create dB level text for Master
+    char dbText[16];
+    Track* masterTrackPtr = app->getMasterTrack();
+    float masterVolume = masterTrackPtr ? masterTrackPtr->getVolume() : 0.0f;
+    snprintf(dbText, sizeof(dbText), "%.1f dB", masterVolume);
+    volumeDbTexts["Master"] = text(
+        Modifier()
+            .setColor(app->resources.activeTheme->secondary_text_color)
+            .setfixedHeight(18)
+            .align(Align::CENTER_X | Align::BOTTOM),
+        std::string(dbText),
+        app->resources.dejavuSansFont
     );
 
     soloButtons["Master"] = button(
@@ -411,7 +448,9 @@ Column* MixerComponent::createMasterMixerTrack() {
 
             spacer(Modifier().setfixedHeight(12).align(Align::TOP)),
             volumeSliders["Master"],
-            spacer(Modifier().setfixedHeight(12).align(Align::BOTTOM)),
+            spacer(Modifier().setfixedHeight(8).align(Align::BOTTOM)),
+            volumeDbTexts["Master"],
+            spacer(Modifier().setfixedHeight(8).align(Align::BOTTOM)),
             soloButtons["Master"],
             spacer(Modifier().setfixedHeight(12).align(Align::BOTTOM)),
             muteButtons["Master"],

@@ -3,6 +3,7 @@
 
 #include "Application.hpp"
 #include "../audio/MIDIClip.hpp"
+#include "tinyfiledialogs/tinyfiledialogs.hpp" 
 
 Track* Application::getMasterTrack() { 
     return engine.getMasterTrack(); 
@@ -25,8 +26,8 @@ void Application::removeTrack(const std::string& name) {
 }
 
 void Application::exportAudio() {
-    std::string path = selectDirectory();
-    engine.exportMaster(path);
+    const char* path = tinyfd_selectFolderDialog("Select Export Directory", uiState.getExecutableDirectory().c_str());
+    if (path) engine.exportMaster(std::string(path) + "/export.wav");
 }
 
 void Application::setMetronomeEnabled(bool enabled) { 

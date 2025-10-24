@@ -7,6 +7,8 @@
 #include <memory>
 #include <functional>
 
+namespace mulo {
+
 class FileTree {
 public:
     FileTree() = default;
@@ -68,3 +70,5 @@ private:
     
     std::string getFileExtension(const std::string& filename) const;
 };
+
+} // namespace mulo

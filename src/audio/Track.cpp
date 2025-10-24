@@ -56,6 +56,14 @@ void Track::setPan(float p) {
 }
 float Track::getPan() const { return pan; }
 
+void Track::setColorHex(const std::string& hex) {
+    colorHex = hex;
+}
+
+std::string Track::getColorHex() const {
+    return colorHex;
+}
+
 Effect* Track::addEffect(const std::string& vstPath) {
     auto effect = std::make_unique<Effect>();
     if (effect->loadVST(vstPath)) {

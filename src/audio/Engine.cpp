@@ -1344,6 +1344,7 @@ std::string Engine::getStateString() const {
         masterTrackJson["pan"] = masterTrack->getPan();
         masterTrackJson["muted"] = masterTrack->isMuted();
         masterTrackJson["soloed"] = masterTrack->isSolo();
+        masterTrackJson["colorHex"] = masterTrack->getColorHex();
         
         // Master track effects
         auto& masterEffects = masterTrackJson["effects"];
@@ -1451,6 +1452,7 @@ std::string Engine::getStateString() const {
         trackJson["pan"] = track->getPan();
         trackJson["muted"] = track->isMuted();
         trackJson["soloed"] = track->isSolo();
+        trackJson["colorHex"] = track->getColorHex();
         
         // Track type identification
         trackJson["type"] = (track->getType() == Track::TrackType::Audio) ? "audio" : "midi";
@@ -1758,6 +1760,9 @@ void Engine::load(const std::string& stateData) {
                 if (masterTrackData.contains("soloed")) {
                     masterTrack->setSolo(masterTrackData["soloed"].get<bool>());
                 }
+                if (masterTrackData.contains("colorHex")) {
+                    masterTrack->setColorHex(masterTrackData["colorHex"].get<std::string>());
+                }
                 
                 // Load master track effects
                 if (masterTrackData.contains("effects") && masterTrackData["effects"].is_array()) {
@@ -1872,6 +1877,9 @@ void Engine::load(const std::string& stateData) {
                     }
                     if (trackData.contains("soloed")) {
                         track->setSolo(trackData["soloed"].get<bool>());
+                    }
+                    if (trackData.contains("colorHex")) {
+                        track->setColorHex(trackData["colorHex"].get<std::string>());
                     }
                     
                     // Load reference clip

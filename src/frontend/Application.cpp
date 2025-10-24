@@ -33,7 +33,8 @@ static int x11ErrorHandler(Display* display, XErrorEvent* event) {
 
 namespace fs = std::filesystem;
 
-Application::Application() {}
+Application::Application() {
+}
 
 void Application::initialise(const juce::String& commandLine) {
     logoPageTimer.restart();
@@ -75,7 +76,7 @@ void Application::initialise(const juce::String& commandLine) {
                 setSampleRate(sampleRate);
             } catch (...) {}
         }),
-        dropdownSetting("UI Theme", &uiState.selectedTheme, Themes::AllThemeNames, 
+        dropdownSetting("UI Theme", &uiState.selectedTheme, getThemeNames(), 
             uiState.selectedTheme, [this]() {
             writeConfig("selectedTheme", uiState.selectedTheme);
             requestThemeChange(uiState.selectedTheme);
@@ -162,6 +163,27 @@ void Application::update() {
     
     if (globalSettings)
         globalSettings->update();
+    
+    handleColorPicker();
+    
+    // if (fileBrowserActive) {
+    //     fileBrowser->update();
+
+    //     if (!fileBrowser->isOpen()) {
+    //         std::string selectedPath = fileBrowser->getSelectedPath();
+    //         if (!selectedPath.empty()) {
+    //             switch (pendingFileBrowserAction) {
+    //                 case FileBrowserAction::EXPORT:
+    //                     engine.exportMaster(selectedPath);
+    //                     break;
+    //                 default:
+    //                     break;
+    //             }
+    //         }
+    //         fileBrowserActive = false;
+    //         pendingFileBrowserAction = FileBrowserAction::NONE;
+    //     }
+    // }
 
     // Handle cursor management after all components have updated
     if (uiState.xResizing) {
@@ -232,6 +254,8 @@ void Application::render() {
         window.draw(dragOverlay);
         window.display();
     }
+    
+    renderColorPicker();
 }
 
 void Application::handleEvents() {
@@ -394,6 +418,167 @@ void Application::handleEvents() {
 void Application::requestThemeChange(const std::string& themeName) {
     pendingThemeName = themeName;
     hasPendingThemeChange = true;
+}
+
+void Application::openColorPicker(sf::Vector2f position) {
+    closeColorPicker();
+    
+    std::vector<sf::Color> colors = {
+        hexToColor("#dd6363ff"), hexToColor("#dd7c63ff"), hexToColor("#dd9463ff"), hexToColor("#ddae63ff"),
+        hexToColor("#ddc763ff"), hexToColor("#98dd63ff"), hexToColor("#69dd63ff"), hexToColor("#63dd7cff"),
+        hexToColor("#63dda2ff"), hexToColor("#63a2ddff"), hexToColor("#6382ddff"), hexToColor("#6963ddff"),
+        hexToColor("#9863ddff"), hexToColor("#cd63ddff"), hexToColor("#dd63aeff"), hexToColor("#dd637dff"),
+        hexToColor("#ffffffff"), hexToColor("#c0c0c0ff"), hexToColor("#8d8d8dff"), hexToColor("#525252ff"),
+        hexToColor("#ffa0a0ff"), hexToColor("#ffd4a0ff"), hexToColor("#a0ffa0ff"), hexToColor("#00000000"),
+    };
+
+    const int columns = 4;
+    const int rows = 6;
+    const float cellSize = 48.f;
+    const float padding = 10.f;
+    
+    sf::Vector2u windowSize(
+        static_cast<unsigned int>(columns * cellSize),
+        static_cast<unsigned int>(rows * cellSize)
+    );
+    
+    colorPickerWindow.create(sf::VideoMode(windowSize), "", sf::Style::None);
+    
+    sf::Vector2i screenPos = window.getPosition();
+    sf::Vector2f windowPos = position;
+    colorPickerWindow.setPosition(sf::Vector2i(
+        screenPos.x + static_cast<int>(windowPos.x),
+        screenPos.y + static_cast<int>(windowPos.y)
+    ));
+    
+    sf::View view;
+    view.setSize(static_cast<sf::Vector2f>(windowSize));
+    sf::Vector2f center(view.getSize().x / 2.0f, view.getSize().y / 2.0f);
+    view.setCenter(center);
+    colorPickerWindow.setView(view);
+    
+    colorPickerUI = std::make_unique<UILO>(colorPickerWindow, view);
+    
+    colorPickerGrid = grid(
+        Modifier()
+            .setColor(resources.activeTheme->foreground_color)
+            .align(Align::CENTER_X | Align::CENTER_Y),
+        cellSize,
+        cellSize,
+        columns,
+        rows,
+        contains{},
+        "color_picker_grid"
+    );
+    
+    for (size_t i = 0; i < colors.size(); i++) {
+        sf::Color buttonColor = colors[i];
+        ButtonStyle style = ButtonStyle::Pill;
+        std::string buttonText = "";
+        
+        if (i == colors.size() - 1) {
+            // For the transparent/"clear color" button, display it with middle_color background
+            // but keep the actual stored color as transparent (alpha=0) for detection
+            buttonText = "X";
+        }
+        
+        auto* colorButton = button(
+            Modifier()
+                .setfixedWidth(cellSize)
+                .setfixedHeight(cellSize)
+                .setColor(i == colors.size() - 1 ? resources.activeTheme->middle_color : buttonColor)
+                .align(Align::CENTER_X | Align::CENTER_Y),
+            style,
+            buttonText,
+            "",
+            sf::Color::White,
+            "color_button_" + std::to_string(i)
+        );
+        colorPickerGrid->addElement(colorButton);
+    }
+    
+    auto* container = uilo::row(
+        Modifier()
+            .align(Align::CENTER_X | Align::CENTER_Y),
+        contains{colorPickerGrid},
+        "color_picker_container"
+    );
+    
+    colorPickerUI->addPage(page({container}), "color_picker");
+    
+    colorPickerWindow.setVisible(true);
+    colorPickerWindow.requestFocus();
+    
+    ui->setInputBlocked(true);
+    
+    colorPickerOpen = true;
+    colorWasSelected = false;
+}
+
+void Application::handleColorPicker() {
+    if (!colorPickerOpen) return;
+
+    if (!colorPickerWindow.hasFocus()) {
+        closeColorPicker();
+        return;
+    }
+
+    colorPickerUI->forceUpdate();
+    
+    if (!colorPickerUI->isRunning()) {
+        closeColorPicker();
+        return;
+    }
+
+    if (colorPickerGrid) {
+        auto elements = colorPickerGrid->getElements();
+        for (size_t i = 0; i < elements.size(); i++) {
+            auto* button = dynamic_cast<uilo::Button*>(elements[i]);
+            if (button && button->isClicked()) {
+                // Last button is the "clear color" button (transparent)
+                if (i == elements.size() - 1) {
+                    recentColorPicked = sf::Color(0, 0, 0, 0);
+                } else {
+                    recentColorPicked = elements[i]->m_modifier.getColor();
+                }
+                colorWasSelected = true;
+                closeColorPicker();
+                return;
+            }
+        }
+    }
+}
+
+void Application::renderColorPicker() {
+    if (!colorPickerOpen) return;
+    
+    if (colorPickerUI->windowShouldUpdate()) {
+        colorPickerWindow.clear(resources.activeTheme->foreground_color);
+        colorPickerUI->render();
+        colorPickerWindow.display();
+    }
+}
+
+const sf::Color& Application::getRecentColorPicked() const {
+    return recentColorPicked;
+}
+
+bool Application::isColorPickerOpen() const {
+    return colorPickerOpen;
+}
+
+bool Application::wasColorSelected() const {
+    return colorWasSelected;
+}
+
+void Application::closeColorPicker() {
+    if (colorPickerOpen) {
+        colorPickerWindow.close();
+        colorPickerUI.reset();
+        colorPickerGrid = nullptr;
+        ui->setInputBlocked(false);
+        colorPickerOpen = false;
+    }
 }
 
 void Application::initUI() {

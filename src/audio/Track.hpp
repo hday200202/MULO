@@ -59,6 +59,10 @@ public:
     void setPan(float pan);
     float getPan() const;
     
+    // Track color
+    void setColorHex(const std::string& hex);
+    std::string getColorHex() const;
+    
     // Common track states
     void toggleMute() { muted = !muted; }
     bool isMuted() const { return muted; }
@@ -436,6 +440,7 @@ protected:
     float pan = 0.0f;
     bool muted = false;
     bool soloed = false;
+    std::string colorHex = "";  // Hex color string (e.g., "#FF5733" or empty if not set)
 
     // Audio processing state
     double currentSampleRate = 44100.0;

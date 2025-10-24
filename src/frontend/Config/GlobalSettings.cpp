@@ -67,7 +67,7 @@ void GlobalSettings::hideWindow() {
     }
 }
 
-void GlobalSettings::addSection(const std::string& name, std::initializer_list<Entry*> entries) {
+void GlobalSettings::addSection(const std::string& name, std::initializer_list<mulo::Entry*> entries) {
     if (sections.find(name) != sections.end()) {
         delete sections[name];
         sections.erase(name);
@@ -93,7 +93,7 @@ Section* GlobalSettings::createSection(const std::string& name) {
     return section;
 }
 
-void GlobalSettings::addEntryToSection(Section* section, Entry* entry) {
+void GlobalSettings::addEntryToSection(Section* section,  mulo::Entry* entry) {
     if (!section) {
         delete entry;
         return;
@@ -174,7 +174,18 @@ void GlobalSettings::updateSettings() {
                     break;
                 }
                 
-                case EntryType::Toggle: break;
+                case EntryType::Toggle: {
+                    elemId = "toggle_" + entry->settingName;
+                    if (auto* toggleBtn = ui->getButton(elemId)) {
+                        bool* paramPtr = static_cast<bool*>(entry->paramPtr);
+                        if (paramPtr) {
+                            bool currentValue = *paramPtr;
+                            toggleBtn->setText(currentValue ? "ON" : "OFF");
+                            toggleBtn->m_modifier.setColor(currentValue ? app.resources.activeTheme->button_color : app.resources.activeTheme->middle_color);
+                        }
+                    }
+                    break;
+                }
                 case EntryType::Button: break;
             }
         }
@@ -457,7 +468,7 @@ void GlobalSettings::applySearchFilter(const std::string& query) {
         
         for (size_t i = 0; i < sectionUI.settingRows.size() && i < section->entries.size(); ++i) {
             Element* settingRow = sectionUI.settingRows[i];
-            Entry* entry = section->entries[i];
+             mulo::Entry* entry = section->entries[i];
             
             std::string lowerSettingName = entry->settingName;
             std::transform(lowerSettingName.begin(), lowerSettingName.end(), lowerSettingName.begin(), ::tolower);

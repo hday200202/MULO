@@ -17,6 +17,8 @@ enum class EntryType {
     Button
 };
 
+namespace mulo {
+
 struct Entry {
     std::string settingName = "";
     EntryType type = EntryType::Toggle;
@@ -42,9 +44,11 @@ struct Entry {
     virtual ~Entry() = default;
 };
 
+}
+
 // "Factory" functions
-inline Entry* sliderSetting(const std::string& name, float* paramPtr, float min = 0.0f, float max = 100.0f, float defaultVal = 0.0f, std::function<void()> onChange = nullptr) {
-    Entry* e = new Entry();
+inline mulo::Entry* sliderSetting(const std::string& name, float* paramPtr, float min = 0.0f, float max = 100.0f, float defaultVal = 0.0f, std::function<void()> onChange = nullptr) {
+    mulo::Entry* e = new mulo::Entry ();
     e->settingName = name;
     e->type = EntryType::Slider;
     e->paramPtr = paramPtr;
@@ -55,8 +59,8 @@ inline Entry* sliderSetting(const std::string& name, float* paramPtr, float min 
     return e;
 }
 
-inline Entry* dropdownSetting(const std::string& name, std::string* paramPtr, const std::vector<std::string>& options, const std::string& defaultVal = "", std::function<void()> onChange = nullptr) {
-    Entry* e = new Entry();
+inline mulo::Entry* dropdownSetting(const std::string& name, std::string* paramPtr, const std::vector<std::string>& options, const std::string& defaultVal = "", std::function<void()> onChange = nullptr) {
+    mulo::Entry* e = new mulo::Entry ();
     e->settingName = name;
     e->type = EntryType::Dropdown;
     e->paramPtr = paramPtr;
@@ -66,8 +70,8 @@ inline Entry* dropdownSetting(const std::string& name, std::string* paramPtr, co
     return e;
 }
 
-inline Entry* toggleSetting(const std::string& name, bool* paramPtr, bool defaultVal = false, std::function<void()> onChange = nullptr) {
-    Entry* e = new Entry();
+inline mulo::Entry* toggleSetting(const std::string& name, bool* paramPtr, bool defaultVal = false, std::function<void()> onChange = nullptr) {
+    mulo::Entry* e = new mulo::Entry ();
     e->settingName = name;
     e->type = EntryType::Toggle;
     e->paramPtr = paramPtr;
@@ -76,8 +80,8 @@ inline Entry* toggleSetting(const std::string& name, bool* paramPtr, bool defaul
     return e;
 }
 
-inline Entry* textboxSetting(const std::string& name, std::string* paramPtr, const std::string& initialVal = "", int charLimit = 256, std::function<void()> onChange = nullptr) {
-    Entry* e = new Entry();
+inline mulo::Entry* textboxSetting(const std::string& name, std::string* paramPtr, const std::string& initialVal = "", int charLimit = 256, std::function<void()> onChange = nullptr) {
+    mulo::Entry* e = new mulo::Entry ();
     e->settingName = name;
     e->type = EntryType::TextBox;
     e->paramPtr = paramPtr;
@@ -91,8 +95,8 @@ inline Entry* textboxSetting(const std::string& name, std::string* paramPtr, con
     return e;
 }
 
-inline Entry* buttonSetting(const std::string& name, const std::string& buttonLabel, std::function<void()> onClick) {
-    Entry* e = new Entry();
+inline mulo::Entry* buttonSetting(const std::string& name, const std::string& buttonLabel, std::function<void()> onClick) {
+    mulo::Entry* e = new mulo::Entry ();
     e->settingName = name;
     e->type = EntryType::Button;
     e->buttonLabel = buttonLabel;
@@ -102,13 +106,13 @@ inline Entry* buttonSetting(const std::string& name, const std::string& buttonLa
 
 struct Section {
     Section() {}
-    Section(const std::string& name, std::initializer_list<Entry*> entryList) : name(name) {
+    Section(const std::string& name, std::initializer_list<mulo::Entry*> entryList) : name(name) {
         for (auto* entry : entryList)
             entries.push_back(entry);
     }
     
     std::string name;
-    std::vector<Entry*> entries;
+    std::vector<mulo::Entry*> entries;
     
     ~Section() {
         for (auto* entry : entries)
@@ -126,10 +130,10 @@ public:
     void showWindow();
     void hideWindow();
 
-    void addSection(const std::string& name, std::initializer_list<Entry*> entries);
+    void addSection(const std::string& name, std::initializer_list<mulo::Entry*> entries);
     
     Section* createSection(const std::string& name);
-    void addEntryToSection(Section* section, Entry* entry);
+    void addEntryToSection(Section* section, mulo::Entry* entry);
     
 private:
     Application& app;
