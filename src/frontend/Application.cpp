@@ -622,13 +622,16 @@ void Application::createWindow() {
 }
 
 void Application::rebuildUI() {
+    saveLayoutConfig(); // Save current layout before clearing
     unloadAllPlugins();
     muloComponents.clear();
+    componentLayouts.clear(); // Clear old pointers to avoid dangling references
 
     cleanup();
     initUI();
     createLogoScreen();
     loadComponents();
+    loadLayoutConfig(); // Restore layout from saved JSON
 
     freshRebuild = true; // Notify components that a rebuild happened
     forceUpdatePoll = 5;

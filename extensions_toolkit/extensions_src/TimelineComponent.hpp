@@ -472,7 +472,7 @@ void TimelineComponent::Input::updateInput(Application* app, Container* layoutBo
 void TimelineComponent::init() {
     parentContainer = app->mainContentRow;
     initialized = false;
-    relativeTo = "file_browser";
+    // relativeTo = "file_browser";
 
     layout = buildUILayout();
     labelScrollable->setScrollSpeed(40.f);

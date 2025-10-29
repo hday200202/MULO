@@ -897,41 +897,22 @@ void Application::loginUser(const std::string& emailOrUsername, const std::strin
         }
     }
     
-    // Check if this is a returning user (last logged in user)
-    if (isReturningUser(email)) {
-        // Returning user - skip MFA and login directly
-        auto loginFuture = auth->SignInWithEmailAndPassword(email.c_str(), password.c_str());
-        loginFuture.OnCompletion([this, callback, email](const firebase::Future<firebase::auth::AuthResult>& result) {
-            if (result.error() == firebase::auth::kAuthErrorNone) {
-                authState = AuthState::Success;
-                userLoggedIn = true;
-                currentUserEmail = email;
-                saveLastLoggedInUser(email);
-                callback(AuthState::Success, "Welcome back! Login successful");
-                std::cout << "Returning user login successful: " << email << std::endl;
-            } else {
-                authState = AuthState::Error;
-                callback(AuthState::Error, "Login failed: " + std::string(result.error_message()));
-                std::cout << "Login failed: " << result.error_message() << std::endl;
-            }
-        });
-    } else {
-        // New user or different user - require email verification
-        authState = AuthState::RequiresMFA;
-        mfaRequired = true;
-        pendingMFASessionInfo = email + ":" + password;
-        
-        std::string verificationCode;
-        bool emailSent = EmailService::sendVerificationEmail(email, verificationCode);
-        pendingVerificationCodes[email] = verificationCode;
-        codeTimestamps[email] = std::chrono::steady_clock::now();
-        
-        if (emailSent) {
-            callback(AuthState::RequiresMFA, "Verification code sent to your email");
+    // For login, skip MFA verification for now - just login directly
+    auto loginFuture = auth->SignInWithEmailAndPassword(email.c_str(), password.c_str());
+    loginFuture.OnCompletion([this, callback, email](const firebase::Future<firebase::auth::AuthResult>& result) {
+        if (result.error() == firebase::auth::kAuthErrorNone) {
+            authState = AuthState::Success;
+            userLoggedIn = true;
+            currentUserEmail = email;
+            saveLastLoggedInUser(email);
+            callback(AuthState::Success, "Login successful");
+            std::cout << "User login successful: " << email << std::endl;
         } else {
-            callback(AuthState::Error, "Failed to send verification email");
+            authState = AuthState::Error;
+            callback(AuthState::Error, "Login failed: " + std::string(result.error_message()));
+            std::cout << "Login failed: " << result.error_message() << std::endl;
         }
-    }
+    });
 #else
     callback(AuthState::Error, "Firebase not available");
 #endif

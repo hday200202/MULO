@@ -49,10 +49,21 @@ void Application::saveLayoutConfig() {
     nlohmann::json j;
     for (const auto& [name, layout] : componentLayouts) {
         std::string parentName = layout.parent ? layout.parent->m_name : "";
+        
+        // Save the actual index in the parent container
+        int index = -1;
+        if (layout.parent && muloComponents.find(name) != muloComponents.end()) {
+            auto& component = muloComponents[name];
+            if (component->getLayout()) {
+                index = layout.parent->getElementIndex(component->getLayout());
+            }
+        }
+        
         j[name] = {
             {"parent", parentName},
             {"alignment", static_cast<int>(layout.alignment)},
-            {"relativeTo", layout.relativeTo}
+            {"relativeTo", layout.relativeTo},
+            {"index", index}
         };
     }
     std::string path = exeDirectory + "/layout.json";
@@ -99,20 +110,69 @@ void Application::loadLayoutConfig() {
             parent = containerMap[parentName];
             component->setParentContainer(parent);
             layout.parent = parent;
+            std::cout << "[LAYOUT] Set parent for " << name << " to " << parentName << std::endl;
         }
 
         int alignInt = layoutData.value("alignment", static_cast<int>(Align::NONE));
         Align align = static_cast<Align>(alignInt);
         if (component->getLayout()) {
             component->getLayout()->m_modifier.align(align);
+            std::cout << "[LAYOUT] Set alignment for " << name << " to " << alignInt << std::endl;
         }
         layout.alignment = align;
 
         std::string relTo = layoutData.value("relativeTo", "");
         component->setRelativeTo(relTo);
         layout.relativeTo = relTo;
+        if (!relTo.empty()) {
+            std::cout << "[LAYOUT] Set relativeTo for " << name << " to " << relTo << std::endl;
+        }
     }
+    
+    // Build a list of components with their target indices
+    std::vector<std::tuple<std::string, Element*, Container*, int>> reorderList;
+    
+    for (auto& [name, layoutData] : j.items()) {
+        if (muloComponents.find(name) == muloComponents.end()) continue;
+        auto& component = muloComponents[name];
+        
+        int targetIndex = layoutData.value("index", -1);
+        Container* parent = component->getParentContainer();
+        Element* elem = component->getLayout();
+        
+        if (targetIndex != -1 && parent && elem) {
+            reorderList.push_back({name, elem, parent, targetIndex});
+        }
+    }
+    
+    // Sort by target index and reorder
+    std::sort(reorderList.begin(), reorderList.end(), 
+              [](const auto& a, const auto& b) { return std::get<3>(a) < std::get<3>(b); });
+    
+    // Group by parent and reorder within each parent
+    std::unordered_map<Container*, std::vector<std::tuple<std::string, Element*, int>>> byParent;
+    for (const auto& [name, elem, parent, targetIndex] : reorderList) {
+        byParent[parent].push_back({name, elem, targetIndex});
+    }
+    
+    for (auto& [parent, elements] : byParent) {
+        // Remove all elements that need reordering
+        for (const auto& [name, elem, targetIndex] : elements) {
+            parent->removeElement(elem);
+        }
+        // Re-insert them in the correct order
+        for (const auto& [name, elem, targetIndex] : elements) {
+            parent->insertElementAt(elem, targetIndex);
+            std::cout << "[LAYOUT] Reordered " << name << " to index " << targetIndex << std::endl;
+        }
+    }
+    
     std::cout << "Layout loaded from: " << path << std::endl;
+    
+    // Force UI update to apply changes
+    if (ui) {
+        ui->forceUpdate();
+    }
 }
 
 void Application::syncUIStateToConfig() {
