@@ -853,11 +853,12 @@ bool TimelineComponent::handleScroll() {
 }
 
 void TimelineComponent::update() {    
-    if (uiState.initialUpdateCount > 0) {
+    if (uiState.initialUpdateCount > 0 && app->currentPage != "logo_page") {
         input.ctrlPressed = true;
-        updateMeasureLines();
+        uiState.xOffset -= 0.001;
+        std::cout << "initial update\n";
+
         uiState.beatWidth = 30.f;
-        handleScroll();
         uiState.initialUpdateCount--;
     }
     
@@ -872,11 +873,9 @@ void TimelineComponent::update() {
             std::lock_guard<std::mutex> lock(waveformMutex);
             for (const auto& trackName : tracksInUI) {
                 auto track = app->getTrack(trackName);
-                if (track && track->getType() == Track::TrackType::Audio) {
-                    if (trackWaveforms.count(trackName) == 0) {
+                if (track && track->getType() == Track::TrackType::Audio)
+                    if (trackWaveforms.count(trackName) == 0)
                         tracksNeedingWaveforms.push_back(trackName);
-                    }
-                }
             }
         }
         
@@ -1012,8 +1011,6 @@ void TimelineComponent::update() {
         }
         
         uiState.measureLinesShouldUpdate = false;
-        // Don't reset forceVisualUpdate here - let it carry through to track visual updates
-        // uiState.forceVisualUpdate = false;
     }
     
     bool tracksChanged = false;
@@ -1069,9 +1066,8 @@ void TimelineComponent::update() {
             tracksChanged = true;
             
             // Generate waveform for new audio tracks
-            if (t->getType() == Track::TrackType::Audio) {
+            if (t->getType() == Track::TrackType::Audio)
                 generateTrackWaveform(trackName);
-            }
         }
     }
 
@@ -1110,7 +1106,7 @@ void TimelineComponent::update() {
     }
 
     // If zoom or scroll, the measure lines should be updated
-    if (uiState.measureLinesShouldUpdate || uiState.showCursor || uiState.forceVisualUpdate) {
+    if (uiState.measureLinesShouldUpdate || uiState.showCursor || uiState.forceVisualUpdate || uiState.initialUpdateCount > 0) {
         if (uiState.measureLinesShouldUpdate) updateMeasureLines();        
         if (uiState.showCursor) updateVirtualCursor();
         updatePlayhead();
@@ -1153,9 +1149,6 @@ void TimelineComponent::update() {
                 
                 trackLane->setCustomGeometry(customGeom);
             }
-            
-            // Automation lane drawing is now handled in the continuous update section below
-            // (lines ~937-997) which properly iterates all automation lanes
         }
         
         auto masterLane = app->ui->getRow("Master_lane_scrollable");

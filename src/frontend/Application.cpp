@@ -143,7 +143,7 @@ void Application::update() {
     if (!running) return;
 
     if (logoPageTimer.getElapsedTime().asMilliseconds() > 2000)
-        if (currentPage == "logo_page") ui->switchToPage("base");
+        if (currentPage == "logo_page") { ui->switchToPage("base"); currentPage = "base"; }
     
     processPendingEngineUpdates();
     handleEvents();

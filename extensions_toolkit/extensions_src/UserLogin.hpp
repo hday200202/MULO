@@ -30,6 +30,7 @@ private:
     // Authentication status tracking
     bool isProcessingAuth = false;
     bool showMFAPage = false;
+    bool mfaPageShown = false; // Track if we've already shown the MFA page
     std::string authStatusMessage = "";
     std::string lastLoginError = "";
     std::string lastRegisterError = "";
@@ -78,6 +79,7 @@ inline void UserLogin::update() {
     if (pendingRegister) {
         showRegisterPage = true;
         showMFAPage = false;
+        mfaPageShown = false;
         pendingRegister = false;
 
         hideWindow();
@@ -91,6 +93,7 @@ inline void UserLogin::update() {
     if (pendingLogin) {
         showRegisterPage = false;
         showMFAPage = false;
+        mfaPageShown = false;
         pendingLogin = false;
 
         hideWindow();
@@ -101,7 +104,9 @@ inline void UserLogin::update() {
         }
     }
 
-    if (showMFAPage) {
+    if (showMFAPage && !mfaPageShown) {
+        mfaPageShown = true;
+        
         hideWindow();
         showWindow();
 
@@ -268,6 +273,7 @@ Container* UserLogin::buildLoginLayout() {
                                         authStatusMessage = "Enter MFA code";
                                         pendingMFAEmail = email;
                                         showMFAPage = true;
+                                        mfaPageShown = false; // Reset the flag so update() will show the page
                                         if (ui) {
                                             ui->switchToPage("mfa_page");
                                         }
@@ -499,6 +505,7 @@ Container* UserLogin::buildRegisterLayout() {
                                     authStatusMessage = "Enter verification code";
                                     pendingMFAEmail = email;
                                     showMFAPage = true;
+                                    mfaPageShown = false; // Reset the flag so update() will show the page
                                 } else {
                                     lastRegisterError = message;
                                     authStatusMessage = "Registration failed";

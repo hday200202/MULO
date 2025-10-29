@@ -363,16 +363,6 @@ void ExtensionUploader::uploadExtension() {
         version = versionTextBox->getText();
     }
     
-    if (extDescription.empty()) {
-        uploadStatus = "Must Enter Description";
-        return;
-    }
-    
-    if (version.empty()) {
-        uploadStatus = "Must Enter Version";
-        return;
-    }
-    
     updatePlatformsVector();
     if (platforms.empty()) {
         uploadStatus = "Must Select At Least One File";
@@ -403,6 +393,19 @@ void ExtensionUploader::uploadExtension() {
         if (lastDot != std::string::npos) {
             extensionName = filename.substr(0, lastDot);
         }
+    }
+    
+    // Validate required fields
+    if (extDescription.empty()) {
+        uploadStatus = "Must Enter Description";
+        isProcessingUpload = false;
+        return;
+    }
+    
+    if (version.empty()) {
+        uploadStatus = "Must Enter Version";
+        isProcessingUpload = false;
+        return;
     }
     
     std::string platformString = "";

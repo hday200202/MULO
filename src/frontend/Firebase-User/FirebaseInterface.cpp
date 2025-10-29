@@ -3,6 +3,7 @@
 #include <fstream>
 #include <thread>
 #include <chrono>
+#include <filesystem>
 
 void Application::initFirebase() {
 #ifdef FIREBASE_AVAILABLE
@@ -106,8 +107,60 @@ void Application::uploadExtension(const ExtensionData& extensionData, const std:
     }
     
     std::thread([this, extensionData, filePaths, callback]() {
-        auto docRef = firestore->Collection("extensions").Document();
-        std::string documentId = docRef.id();
+        // First, check if an extension with the same name and author already exists
+        std::cout << "Checking for existing extension: " << extensionData.name << " by " << extensionData.author << std::endl;
+        
+        auto queryFuture = firestore->Collection("extensions")
+            .WhereEqualTo("name", firebase::firestore::FieldValue::String(extensionData.name))
+            .WhereEqualTo("author", firebase::firestore::FieldValue::String(extensionData.author))
+            .Get();
+        
+        while (queryFuture.status() == firebase::kFutureStatusPending) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        
+        std::string documentId;
+        std::string existingStoragePath;
+        bool isUpdate = false;
+        
+        if (queryFuture.error() == 0 && queryFuture.result()->documents().size() > 0) {
+            // Extension exists, get the document ID and existing storage path
+            auto existingDoc = queryFuture.result()->documents()[0];
+            documentId = existingDoc.id();
+            isUpdate = true;
+            
+            // Try to get the existing download URL to extract storage path
+            if (existingDoc.Get("downloadURL").is_string()) {
+                std::string existingURL = existingDoc.Get("downloadURL").string_value();
+                size_t pathStart = existingURL.find("/o/");
+                if (pathStart != std::string::npos) {
+                    pathStart += 3;
+                    size_t pathEnd = existingURL.find("?", pathStart);
+                    if (pathEnd == std::string::npos) pathEnd = existingURL.length();
+                    existingStoragePath = existingURL.substr(pathStart, pathEnd - pathStart);
+                    // URL decode
+                    std::string decodedPath;
+                    for (size_t i = 0; i < existingStoragePath.length(); i++) {
+                        if (existingStoragePath[i] == '%' && i + 2 < existingStoragePath.length()) {
+                            std::string hex = existingStoragePath.substr(i + 1, 2);
+                            char ch = static_cast<char>(std::stoi(hex, nullptr, 16));
+                            decodedPath += ch;
+                            i += 2;
+                        } else {
+                            decodedPath += existingStoragePath[i];
+                        }
+                    }
+                    existingStoragePath = decodedPath;
+                }
+            }
+            
+            std::cout << "Extension already exists (ID: " << documentId << "), updating..." << std::endl;
+        } else {
+            // Create new document
+            auto docRef = firestore->Collection("extensions").Document();
+            documentId = docRef.id();
+            std::cout << "Creating new extension (ID: " << documentId << ")" << std::endl;
+        }
         
         std::string firstFilePath = filePaths[0];
         std::string fileName = firstFilePath.substr(firstFilePath.find_last_of("/\\") + 1);
@@ -180,6 +233,8 @@ void Application::uploadExtension(const ExtensionData& extensionData, const std:
         data["verified"] = firebase::firestore::FieldValue::Boolean(false);
         data["downloadURL"] = firebase::firestore::FieldValue::String(downloadURL);
         
+        // Use the determined document ID (either existing or new)
+        auto docRef = firestore->Collection("extensions").Document(documentId);
         auto setFuture = docRef.Set(data);
         
         while (setFuture.status() == firebase::kFutureStatusPending) {
@@ -187,13 +242,167 @@ void Application::uploadExtension(const ExtensionData& extensionData, const std:
         }
         
         if (setFuture.error() != 0) {
-            callback(FirebaseState::Error, "Failed to create document: " + std::string(setFuture.error_message()));
+            callback(FirebaseState::Error, "Failed to " + std::string(isUpdate ? "update" : "create") + " document: " + std::string(setFuture.error_message()));
             return;
         }
         
-        callback(FirebaseState::Success, "Extension uploaded successfully");
+        callback(FirebaseState::Success, isUpdate ? "Extension updated successfully" : "Extension uploaded successfully");
     
     }).detach(); // Detach thread so it runs independently
+    
+#else
+    callback(FirebaseState::Error, "Firebase not available");
+#endif
+}
+
+bool Application::canUpdateExtension(const std::string& extensionName) const {
+    if (!isUserLoggedIn()) {
+        std::cout << "[canUpdateExtension] User not logged in" << std::endl;
+        return false;
+    }
+    
+    std::string currentUserEmail = getCurrentUserEmail();
+    std::cout << "[canUpdateExtension] Checking for extension: " << extensionName << std::endl;
+    std::cout << "[canUpdateExtension] Current user: " << currentUserEmail << std::endl;
+    std::cout << "[canUpdateExtension] Extensions count: " << extensions.size() << std::endl;
+    
+    // Check if extension exists and belongs to current user
+    // Compare against the full email address stored in the extension data
+    for (const auto& ext : extensions) {
+        std::cout << "[canUpdateExtension] Comparing with: name=" << ext.name << ", author=" << ext.author << std::endl;
+        if (ext.name == extensionName && ext.author == currentUserEmail) {
+            std::cout << "[canUpdateExtension] MATCH FOUND!" << std::endl;
+            return true;
+        }
+    }
+    
+    std::cout << "[canUpdateExtension] No match found" << std::endl;
+    return false;
+}
+
+void Application::downloadExtension(const std::string& downloadURL, const std::string& extensionName,
+                                    std::function<void(FirebaseState, const std::string&)> callback) {
+#ifdef FIREBASE_AVAILABLE
+    if (!storage || !firebaseApp) {
+        callback(FirebaseState::Error, "Firebase Storage not initialized");
+        return;
+    }
+    
+    std::thread([this, downloadURL, extensionName, callback]() {
+        try {
+            std::cout << "Starting download for: " << extensionName << std::endl;
+            std::string storagePath;
+            
+            // Check if it's a Firebase Storage download URL or a direct storage path
+            if (downloadURL.find("https://") == 0 || downloadURL.find("http://") == 0) {
+                // Extract the storage path from the download URL
+                // Firebase Storage URLs format: https://firebasestorage.googleapis.com/v0/b/[bucket]/o/[path]?...
+                size_t pathStart = downloadURL.find("/o/");
+                if (pathStart == std::string::npos) {
+                    std::cout << "ERROR: Invalid download URL format (missing /o/): " << downloadURL << std::endl;
+                    callback(FirebaseState::Error, "Invalid download URL format - missing /o/ in URL");
+                    return;
+                }
+                
+                pathStart += 3; // Skip "/o/"
+                size_t pathEnd = downloadURL.find("?", pathStart);
+                if (pathEnd == std::string::npos) {
+                    pathEnd = downloadURL.length();
+                }
+                
+                std::string encodedPath = downloadURL.substr(pathStart, pathEnd - pathStart);
+                
+                // URL decode the path
+                for (size_t i = 0; i < encodedPath.length(); i++) {
+                    if (encodedPath[i] == '%' && i + 2 < encodedPath.length()) {
+                        std::string hex = encodedPath.substr(i + 1, 2);
+                        char ch = static_cast<char>(std::stoi(hex, nullptr, 16));
+                        storagePath += ch;
+                        i += 2;
+                    } else {
+                        storagePath += encodedPath[i];
+                    }
+                }
+            } else {
+                // Assume it's already a storage path
+                storagePath = downloadURL;
+            }
+            
+            std::cout << "Downloading from storage path: " << storagePath << std::endl;
+            
+            // Get the correct bucket reference (same as used in uploadExtension)
+            std::cout << "Getting bucket reference..." << std::endl;
+            auto bucketRef = firebase::storage::Storage::GetInstance(firebaseApp.get(), "gs://mulo-marketplace.firebasestorage.app");
+            if (!bucketRef) {
+                callback(FirebaseState::Error, "Failed to get bucket reference");
+                return;
+            }
+            
+            std::cout << "Getting storage reference..." << std::endl;
+            auto storageRef = bucketRef->GetReference(storagePath);
+            
+            // Determine file extension from the storage path or use .so as default for Linux
+            std::string fileExtension = ".so";
+#ifdef __APPLE__
+            fileExtension = ".dylib";
+#elif defined(_WIN32)
+            fileExtension = ".dll";
+#endif
+            
+            // Ensure the extension name has the correct file extension
+            std::string fileName = extensionName;
+            if (fileName.find(fileExtension) == std::string::npos) {
+                fileName += fileExtension;
+            }
+            
+            // Create extensions directory if it doesn't exist
+            std::string extensionsDir = exeDirectory + "/extensions";
+            std::filesystem::create_directories(extensionsDir);
+            
+            std::string outputPath = extensionsDir + "/" + fileName;
+            
+            // Check if file already exists
+            if (std::filesystem::exists(outputPath)) {
+                std::cout << "Extension already exists at: " << outputPath << std::endl;
+                callback(FirebaseState::Success, "Extension already installed at: " + outputPath);
+                return;
+            }
+            
+            std::cout << "Downloading to: " << outputPath << std::endl;
+            
+            // Download the file
+            std::cout << "Calling GetFile..." << std::endl;
+            auto downloadFuture = storageRef.GetFile(outputPath.c_str());
+            
+            std::cout << "Waiting for download to complete..." << std::endl;
+            // Use simpler wait like uploadExtension does
+            int counter = 0;
+            while (downloadFuture.status() == firebase::kFutureStatusPending) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                if (++counter % 10 == 0) {
+                    std::cout << "Still waiting... (" << counter/10 << " seconds)" << std::endl;
+                }
+                if (counter > 600) { // 60 second timeout
+                    callback(FirebaseState::Error, "Download timed out");
+                    return;
+                }
+            }
+            
+            std::cout << "Download complete, checking status..." << std::endl;
+            if (downloadFuture.error() != 0) {
+                std::string errorMsg = downloadFuture.error_message() ? downloadFuture.error_message() : "Unknown error";
+                std::cout << "Download failed with error " << downloadFuture.error() << ": " << errorMsg << std::endl;
+                callback(FirebaseState::Error, "Failed to download extension: " + errorMsg);
+                return;
+            }
+            
+            std::cout << "Download succeeded!" << std::endl;
+            callback(FirebaseState::Success, "Extension downloaded to: " + outputPath);
+            
+        } catch (const std::exception& e) {
+            callback(FirebaseState::Error, std::string("Download exception: ") + e.what());
+        }
+    }).detach();
     
 #else
     callback(FirebaseState::Error, "Firebase not available");

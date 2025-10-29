@@ -316,7 +316,10 @@ bool Application::isPluginTrusted(const std::string& pluginName) const {
         "MarketplaceComponent.so",
         "AppControls.so",
         "MULOCollab.so",
-        "UserLogin.so"
+        "UserLogin.so",
+        "FileBrowserComponent.so",
+        "ExtensionUploader.so",
+        "KBShortcuts.so"
     };
     
     bool isTrusted = std::find(fallbackTrustedPlugins.begin(), fallbackTrustedPlugins.end(), pluginName) != fallbackTrustedPlugins.end();

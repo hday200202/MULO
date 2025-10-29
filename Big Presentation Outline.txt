@@ -1,0 +1,31 @@
+18-24 mins presentation. ~9-12 demo
+5-10 mins Q/A
+1-2 mins to switch
+
+Narrative: 
+    Who Wants What Why.
+    List requirements that come from this
+
+Nitty Gritty: 
+    Feature sets for each sprint. 
+    Timeline. 
+    Tooling Decisions.
+    Requirements.
+    Major challenges / Problems solved.
+    Core
+    Lessons Learned
+    Code
+    Diagrams
+
+Demo | Questions:
+    If we had more time...
+    Regrets?
+
+- Dress -
+    Be within a half step of eachother
+
+- Record The Backup Tech Portion
+
+- Record It and Listen Back
+
+- Broad Audience

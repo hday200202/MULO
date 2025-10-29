@@ -1,0 +1,392 @@
+Opening:
+Slide 1
+[H]     "Good afternoon everyone, we are MULO Team.
+[H]     "We are here to present MULO - a modular digital audio workstation"
+[All]   Everybody introduces theirselves [H, S, P, L]
+
+
+Slide 2
+[H]     "So what are the core concepts behind MULO?"
+
+[H]     "We believe the user should have complete control over their 
+        music production process"
+
+[H]     "By default MULO should offer standard DAW features, like a timeline,
+        Mixer, Piano Roll, etc.
+
+[H]     "In order to create an application in which customization is the top
+        priority, the program must be extensible. As such we should support
+        user-created extensions for features that we didn't add or didn't
+        think about adding."
+
+
+Slide 3
+[H]     "But why build another DAW, there are already dozens of available
+        choices, right? Well, we noticed a pattern."
+
+[H]     "There are professional tools like Ableton, Logic, and Pro Tools -
+        incredibly powerful programs, but the learning curve is brutal. And
+        you're paying hundreds of dollars for features you probably will never
+        touch.
+
+[H]     "On the other hand you have relatively simple DAWs like FL Studio and
+        GarageBand - great for getting started, but you hit a ceiling fast. You
+        can't add features that you need. You're stuck waiting on updates, and
+        the developers may not even add it."
+
+[H]     "What's the one thing they all have in common though? Locked ecosystems.
+        you cannot extend them meaningfully. You are stuck with how the developer
+        decided you should make your music. This is the crux of what we tried to 
+        solve"
+
+
+Slide 4
+[H]     "So how WOULD we solve this? So as previously stated, community-driven
+        features put customization as the top priority. If you need audio recording,
+        we didn't add it, maybe somebody created an extension for it. If there isn't
+        one, you can make it yourself. Alternatively, if you don't need to add vst
+        effects to tracks, and you think the FX rack clutters the UI, remove it.
+        It should be this simple."
+
+
+Slide 5
+[H]     "So what do we need to build. First, we need an audio engine. It needs to
+        process audio with low enough latency that the user doesn't notice it, with
+        support for vst effects and synthesizers. Second, we need an extension 
+        framework that supports dynamically loading shared libraries that can interface 
+        with other components in the main application. Third, for the user interface, we
+        need a library in which extensions UI's can be easily prototyped, with room to
+        add custom UI elements as we need them. Finally, we need a marketplace for
+        extensions that allow users to upload extensions they create, and download
+        extensions other users have created.
+
+
+Slide 6
+[S]     "In order to meet the goals of this project, we took a lot of time researching
+        potential tools to get the job done. We landed on these libraries for the core
+        components of MULO."
+
+[S]     "We chose JUCE as our audio processing library for the engine, because it
+        supports VST plugins, has extensive documentation in both text and video form,
+        and is already used in the development of plugins and other DAWs like Traktion
+        Waveform.
+
+[S]     "For the user interface, we needed a library that was easy to prototype in,
+        and we could extend ourselves. So we chose Harrison's UI library UILO, as it
+        met all of our requirements. (Had to shout myself out, no judgement)
+
+[S]     "For the extension marketplace, we could not spend much time on setting it up.
+        We landed on Firebase a little later in development, because it could be easily
+        integrated with our project at that point, and supported all of the features we
+        needed." (I hate firebase)
+
+
+Slide 7
+[L]     "We build MULO over six two-week sprints. Our journey was relatively hiccup free,
+        and we managed to reach 'feature-completeness'."
+
+[L]     "Sprint 1 was our learning phase. None of us had built a DAW before, so we focused
+        on the fundamentals: getting JUCE integrated, implementing basic playback, and
+        creating the foundation of the user interface and extensions."
+
+[L]     "By the end of sprint 2, it was starting to feel like a real digital audio
+        workstation. We improved the timeline with a grid system, added audio clip 
+        visualization with waveforms, and a basic mixer.
+
+[L]     "Sprint 3 was pivotal. We architected the extension-management system, refactored
+        the whole codebase to be extension-based, integrated firebase and the MULO marketplace
+        component, implemented vst effect support for tracks, and added the prototype of 
+        the piano roll."
+
+[L]     "Sprint 4 was about security. We started adding user authentication and extension
+        verification in marketplace, along with extension sandboxing. We also added support
+        for vst virtual instruments (synthesizers), and finished the piano roll for note
+        placement within midi clips."
+
+[L]     "In Sprint 5, we caught up on some technical debt related to user authentication,
+        finished plugin sandboxing on MacOS and Windows, added the extension uploading
+        feature, and implemented per track parameter automation for any modifiable parameter
+        like track volume, track pan, and any parameter in a vst effect or virtual instrument.
+        By the end, we were feature complete."
+
+[L]     "By the time we made it to sprint 6, we were focused on polishing up every aspect
+        of MULO, small quality of life features were added as well. Ensuring MULO works on 
+        all target platforms, fixing UI bugs, and general optimization of the program."
+
+
+Slide 8
+[P]     "One of our biggest challenges was ensuring MULO works on Windows, MacOS, and Linux.
+        All of the libraries we used supported these platforms, but it was a pain to check
+        ourselves with every new feature that was added."
+
+[P]     "Extension sandboxing was a particular pain, because this was a completely new concept
+        to us. How do you block writing disk writes? How do you block network access? This is
+        a major concern for any application in which users develop the features. The solution
+        was a bit difficult to find as there is no single solution that would solve this for
+        every platform."
+
+        (this is where you could talk about your solutions, because I honestly have no clue)
+
+Slide 9
+[H]     ( I'll talk about the architecture )
+
+
+================================================================================
+DEMO SCRIPT - Feature Showcase (10-15 minutes)
+================================================================================
+
+Opening Statement:
+[H]     "Now that you've seen what MULO is all about, let's see it in action."
+
+
+1. CORE DAW FEATURES (3-4 minutes)
+-----------------------------------
+[H]     "Let's start with MULO's core digital audio workstation capabilities."
+
+        * Launch MULO - show the interface
+        * Create a new project or open existing
+        * Show the timeline with existing tracks
+        
+[H]     "Here we have our timeline where you can arrange audio and MIDI clips."
+        
+        * Add/show an audio track with a sample
+        * Demonstrate moving clips, splitting, trimming
+        * Show loop playback
+        
+[H]     "Let's look at the piano roll for MIDI editing."
+        
+        * Open piano roll for a MIDI clip
+        * Show note placement and editing
+        * Play it back
+        
+[H]     "And of course, we have a mixer for controlling levels and effects."
+        
+        * Switch to mixer view
+        * Show volume faders, panning
+        * Demonstrate adding a VST effect (reverb/delay)
+        * Play back to hear the effect
+        
+[H]     "These are the basics - but MULO's real power comes from its extensibility."
+
+
+2. EXTENSION SYSTEM OVERVIEW (1-2 minutes)
+-------------------------------------------
+[H]     "MULO is built on a dynamic plugin architecture."
+
+[H]     "Extensions are compiled shared libraries - .so files on Linux, .dll on 
+        Windows, .dylib on macOS. They're loaded dynamically at runtime and can
+        add entirely new functionality."
+
+[H]     "These aren't just simple plugins - they can be complete UI components,
+        new tools, effects processors, or even collaboration features."
+
+[H]     "Every extension is built using our MULOComponent API, which gives them
+        access to the audio engine, UI framework, and other extensions."
+
+[H]     "For security, we have a sandboxing system. Untrusted extensions run in
+        a restricted environment, while verified extensions - marked with a badge -
+        have full system access."
+
+[H]     "Now let's see how users discover and install these extensions."
+
+
+3. EXTENSION MARKETPLACE - BROWSE & DOWNLOAD (3-4 minutes)
+-----------------------------------------------------------
+[H]     "This is our extension marketplace - the hub for community-created features."
+
+        * Open the Marketplace (keyboard shortcut or menu)
+        * Show the marketplace interface loading
+        
+[H]     "As you can see, we have various extensions available. Each shows the name,
+        author, description, and version."
+
+        * Scroll through the available extensions
+        * Point out different types of extensions
+        
+[H]     "Notice the 'VERIFIED' badge on some extensions - these are trusted extensions
+        that have been vetted for security. They run without restrictions."
+
+        * Point to verified badges (AppControls, PianoRoll, Mixer, etc.)
+        
+[H]     "Here's the Piano Roll editor we were just using."
+[H]     "Here's the Mixer component."
+[H]     "This is our collaboration tool - MULOCollab."
+
+[H]     "Let's download an extension that's not currently installed."
+
+        * Find an extension that shows "download" button
+        * Click the download button
+        * Show it downloading from Firebase Storage
+        
+[H]     "The extension downloads directly from our Firebase Storage backend. Once
+        it's downloaded, the button changes to show it's already installed."
+
+        * Show button change to "downloaded" with alt color
+        
+[H]     "The extension is now in our local extensions folder and will be loaded
+        the next time we restart MULO - or we can reload it dynamically."
+
+        * If possible, show the extension being activated
+        * Demonstrate the new functionality
+        
+[H]     "Users can expand MULO's capabilities without ever touching the core codebase
+        or waiting for us to add features. The community builds what the community needs."
+
+
+4. EXTENSION UPLOAD - DEVELOPER WORKFLOW (3-4 minutes)
+-------------------------------------------------------
+[H]     "Now let's flip perspectives - what if you're a developer who wants to share
+        an extension with the community?"
+
+[H]     "First, you need to be logged in. We use Firebase Authentication with
+        multi-factor authentication support for secure user accounts."
+
+        * Show you're logged in (or quickly log in if needed)
+        * Show username/email in UI
+        
+[H]     "Let's open the Extension Uploader."
+
+        * Open Extension Uploader (menu or keyboard shortcut)
+        * Show the upload dialog
+        
+[H]     "The interface is straightforward. You select your extension file for each
+        platform you want to support, enter a description and version number, then
+        upload."
+
+        * Click the ".so" button (or whichever platform)
+        * Browse to an extension file (e.g., AppControls.so)
+        * Show file selected
+        
+[H]     "I'll upload for Linux, but you can also add Windows .dll and macOS .dylib
+        files for cross-platform support."
+
+        * Fill in Description: "Application controls and menu bar"
+        * Fill in Version: "1.0.0"
+        * (Optional) Show the other platform buttons
+        
+[H]     "Now we click Upload."
+
+        * Click Upload button
+        * Show "Uploading" status
+        * Wait for "Uploaded" confirmation
+        
+[H]     "Behind the scenes, this uploads the binary to Firebase Storage and stores
+        the metadata in Firestore. If an extension with the same name and author
+        already exists, it updates the existing entry - perfect for releasing updates."
+
+[H]     "Let's verify it's in the marketplace."
+
+        * Close uploader
+        * Open Marketplace again
+        * Find the extension you just uploaded
+        
+[H]     "And there it is - our extension is now available for anyone to download.
+        The entire ecosystem is user-driven. Anyone can contribute."
+
+
+5. FIREBASE BACKEND INTEGRATION (1-2 minutes)
+----------------------------------------------
+[H]     "Let's talk briefly about what's happening behind the scenes."
+
+[H]     "Everything is powered by Firebase - Google's Backend-as-a-Service platform."
+
+[H]     "Firestore stores all the extension metadata - names, descriptions, authors,
+        versions, download URLs."
+
+[H]     "Firebase Storage hosts the actual binary files - all those .so, .dll, and
+        .dylib files."
+
+[H]     "Firebase Auth handles user authentication with MFA support for security."
+
+[H]     "And if we were to implement real-time collaboration - which we prototyped
+        with MULOCollab - we'd use Firebase Realtime Database for syncing state
+        between users."
+
+        * (Optional) Quickly show Firebase Console
+        * Show Firestore collections
+        * Show Storage bucket
+        
+[H]     "This gives us a scalable, cloud-based backend without maintaining our own
+        servers. We can focus on building features instead of infrastructure."
+
+
+6. SECURITY & SANDBOXING (1 minute)
+------------------------------------
+[H]     "Security is critical when you're running third-party code on users' machines."
+
+[H]     "That's why we implemented a sandboxing system. Untrusted extensions run in
+        a restricted environment where system calls are intercepted."
+
+[H]     "For example, file writes, network access, and certain system operations are
+        blocked for sandboxed plugins. Users are protected from malicious code."
+
+        * Show in marketplace - point out verified vs unverified
+        
+[H]     "Extensions with the VERIFIED badge have been reviewed and are trusted to
+        run without restrictions. They're typically our core components or extensions
+        from known developers."
+
+[H]     "This keeps the platform open while protecting users."
+
+
+7. CROSS-PLATFORM SUPPORT (30 seconds)
+---------------------------------------
+[H]     "MULO works on Linux, Windows, and macOS."
+
+[H]     "We built it in C++ using JUCE for audio processing and SFML through our
+        UILO framework for the interface."
+
+[H]     "Extensions can be compiled for all three platforms, and the marketplace
+        shows platform availability for each extension."
+
+[H]     "Write once, deploy everywhere - that's the goal."
+
+
+8. CLOSING & FUTURE VISION (1 minute)
+--------------------------------------
+[H]     "So to wrap up, MULO combines:"
+
+[All]   * Full-featured DAW capabilities
+        * Dynamic extension system
+        * Cloud-based marketplace with Firebase backend
+        * Secure authentication with MFA
+        * Community-driven development
+        * Cross-platform support
+        * Security through sandboxing
+
+[H]     "Looking ahead, the possibilities are endless:"
+
+[H]     "Real-time collaboration where multiple producers work on the same project
+        simultaneously."
+
+[H]     "AI-powered tools for automatic mixing, mastering, or even melody generation."
+
+[H]     "Mobile companion apps for remote control or on-the-go editing."
+
+[H]     "Advanced VST plugin hosting with better compatibility."
+
+[H]     "The beauty of MULO's architecture is that any of these features could be
+        built as extensions by the community."
+
+[H]     "MULO is a modular, extensible, and community-powered DAW for the modern era.
+        It puts control back in the hands of the user."
+
+[All]   "Thank you for your time. Are there any questions?"
+
+
+================================================================================
+DEMO TIPS FOR RECORDING:
+================================================================================
+
+1. Practice the demo flow 2-3 times before recording
+2. Have all extensions pre-built and ready to go
+3. Make sure marketplace has content to browse (seed with test data if needed)
+4. Clear Firebase test data if you want a clean demo
+5. Test that download/upload actually works before recording
+6. Have a backup plan if something crashes (mention "prototype" or "still in development")
+7. Keep energy and enthusiasm high throughout
+8. Use smooth transitions between sections
+9. Make sure audio is clear and screen is visible
+10. Time yourself - aim for 12-15 minutes max
+
+Good luck! 🎵🚀

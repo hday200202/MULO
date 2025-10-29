@@ -2,6 +2,7 @@
 
 #include "Extension/MULOComponent.hpp"
 #include "../../src/DebugConfig.hpp"
+#include <filesystem>
 
 class MarketplaceComponent : public MULOComponent {
 public:
@@ -196,12 +197,30 @@ inline void MarketplaceComponent::rebuildExtensionList() {
                 extensionListContainer->addElement(text(Modifier().align(Align::CENTER_X | Align::CENTER_Y).setfixedHeight(20), "No extensions found.", app->resources.dejavuSansFont));
             } else {
                 for (const auto& ext : extensionList) {
+                    // Check if extension is trusted/verified
+                    std::string pluginFileName = ext.name + ".so";
+                    bool isTrusted = app->isPluginTrusted(pluginFileName);
+                    
                     std::string infoText = "by " + ext.author + " | v" + ext.version;
-                    if (ext.verified) {
+                    if (isTrusted) {
                         infoText += " | VERIFIED";
                     } else {
                         infoText += " | UNVERIFIED";
                     }
+                    
+                    // Check if extension is already downloaded
+                    std::string fileExtension = ".so";
+#ifdef __APPLE__
+                    fileExtension = ".dylib";
+#elif defined(_WIN32)
+                    fileExtension = ".dll";
+#endif
+                    std::string fileName = ext.name;
+                    if (fileName.find(fileExtension) == std::string::npos) {
+                        fileName += fileExtension;
+                    }
+                    std::string extensionPath = app->exeDirectory + "/extensions/" + fileName;
+                    bool isDownloaded = std::filesystem::exists(extensionPath);
                     
                     auto extRow = row(Modifier().setfixedHeight(80), contains{
                         spacer(Modifier().setfixedWidth(16).align(Align::LEFT)),
@@ -210,11 +229,27 @@ inline void MarketplaceComponent::rebuildExtensionList() {
                             text(Modifier().setColor(app->resources.activeTheme->secondary_text_color).setfixedHeight(16).align(Align::CENTER_Y), infoText, app->resources.dejavuSansFont)
                         }),
                         button(
-                            Modifier().align(Align::RIGHT | Align::CENTER_Y).setfixedWidth(120).setfixedHeight(40).setColor(app->resources.activeTheme->button_color)
-                                .onLClick([&, url = ext.downloadURL](){
-                                    // Implement file download logic
+                            Modifier().align(Align::RIGHT | Align::CENTER_Y).setfixedWidth(120).setfixedHeight(40)
+                                .setColor(isDownloaded ? app->resources.activeTheme->alt_button_color : app->resources.activeTheme->button_color)
+                                .onLClick([this, url = ext.downloadURL, name = ext.name, isDownloaded](){
+                                    if (isDownloaded) {
+                                        std::cout << "Extension " << name << " is already downloaded" << std::endl;
+                                        return;
+                                    }
+                                    if (url.empty()) {
+                                        std::cout << "Cannot download " << name << ": No download URL available" << std::endl;
+                                        return;
+                                    }
+                                    std::cout << "Downloading extension: " << name << " from " << url << std::endl;
+                                    app->downloadExtension(url, name, [name](Application::FirebaseState state, const std::string& message) {
+                                        if (state == Application::FirebaseState::Success) {
+                                            std::cout << "Download successful: " << message << std::endl;
+                                        } else {
+                                            std::cout << "Download failed: " << message << std::endl;
+                                        }
+                                    });
                                 }),
-                            ButtonStyle::Pill, "download", app->resources.dejavuSansFont
+                            ButtonStyle::Pill, isDownloaded ? "downloaded" : "download", app->resources.dejavuSansFont
                         ),
                         spacer(Modifier().setfixedWidth(16).align(Align::RIGHT))
                     });

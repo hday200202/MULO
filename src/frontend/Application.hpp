@@ -30,6 +30,7 @@ public:
     UIResources resources;
     nlohmann::json config;
     std::unique_ptr<GlobalSettings> globalSettings = nullptr;
+    std::string currentPage = "";
 
 
     const juce::String getApplicationName() override { return "MULO"; }
@@ -153,6 +154,9 @@ public:
     void fetchExtensions(std::function<void(FirebaseState, const std::vector<ExtensionData>&)> callback);
     void uploadExtension(const ExtensionData& extensionData, const std::vector<std::string>& filePaths, 
                         std::function<void(FirebaseState, const std::string&)> callback);
+    void downloadExtension(const std::string& downloadURL, const std::string& extensionName,
+                          std::function<void(FirebaseState, const std::string&)> callback);
+    bool canUpdateExtension(const std::string& extensionName) const;
     FirebaseState getFirebaseState() const { return firebaseState; }
     const std::vector<ExtensionData>& getExtensions() const { return extensions; }
 
@@ -179,8 +183,12 @@ public:
     void updateRoomEngineState(const std::string& roomName, const std::string& engineState);
     void checkRoomEngineState(const std::string& roomName);
     void writeToRoom(const std::string& roomName, const std::string& section, const std::string& data);
+
+    bool isPluginTrusted(const std::string& pluginName) const;
     
     mutable std::mutex firebaseMutex;
+
+    std::string exeDirectory = "";
 
 private:
     sf::Clock deltaClock;
@@ -244,7 +252,6 @@ private:
         std::vector<std::string> allowedPaths;
     } pluginSandboxConfig;
     
-    std::string exeDirectory = "";
     std::unordered_map<std::string, LoadedPlugin> loadedPlugins;
     std::unordered_map<std::string, ComponentLayoutData> componentLayouts;
 
@@ -287,7 +294,6 @@ private:
     std::string pendingThemeName;
 
     sf::Clock logoPageTimer;
-    std::string currentPage = "";
 
     // Color picker members
     sf::RenderWindow colorPickerWindow;
@@ -317,7 +323,6 @@ private:
     void removeTrustedPlugin(const std::string& pluginName);
     void setPluginTrusted(const std::string& pluginName, bool trusted);
     
-    bool isPluginTrusted(const std::string& pluginName) const;
     std::string getAlignmentString(uilo::Align alignment) const;
     
     void cleanupFirebaseResources();    
