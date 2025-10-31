@@ -362,6 +362,9 @@ void FileBrowserComponent::buildFileTreeUI() {
                         .align(Align::CENTER_Y)
                         .setColor(app->resources.activeTheme->primary_text_color)
                         .onLClick([this, favPath](){
+                            // Single click plays the sample
+                            app->playSound(favPath, -12.f);
+                            // Double click adds to timeline
                             handleDoubleClick(favPath, [this, favPath](){
                                 juce::File sampleFile(favPath);
                                 std::string trackName = sampleFile.getFileNameWithoutExtension().toStdString();
@@ -372,6 +375,9 @@ void FileBrowserComponent::buildFileTreeUI() {
                     true
                 );
                 textModifier.onLClick([this, favPath](){
+                    // Single click plays the sample
+                    app->playSound(favPath, -12.f);
+                    // Double click adds to timeline
                     handleDoubleClick(favPath, [this, favPath](){
                         juce::File sampleFile(favPath);
                         std::string trackName = sampleFile.getFileNameWithoutExtension().toStdString();
@@ -605,6 +611,9 @@ void FileBrowserComponent::buildFileTreeUIRecursive(const mulo::FileTree& tree, 
                 .align(Align::CENTER_Y)
                 .setColor(app->resources.activeTheme->primary_text_color)
                 .onLClick([this, filePath](){
+                    // Single click plays the sample
+                    app->playSound(filePath, -12.f);
+                    // Double click adds to timeline
                     handleDoubleClick(filePath, [this, filePath](){
                         juce::File sampleFile(filePath);
                         std::string trackName = sampleFile.getFileNameWithoutExtension().toStdString();
@@ -615,6 +624,9 @@ void FileBrowserComponent::buildFileTreeUIRecursive(const mulo::FileTree& tree, 
             true
         );
         textModifier.onLClick([this, filePath](){
+            // Single click plays the sample
+            app->playSound(filePath, -12.f);
+            // Double click adds to timeline
             handleDoubleClick(filePath, [this, filePath](){
                 juce::File sampleFile(filePath);
                 std::string trackName = sampleFile.getFileNameWithoutExtension().toStdString();
@@ -965,9 +977,14 @@ void FileBrowserComponent::handleResize() {
         }
         
         sf::Vector2f mousePos = app->ui->getMousePosition();
-        Align align = layout->m_modifier.getAlignment();
-        int dir = hasAlign(align, Align::LEFT) ? 1 : -1;
+        sf::FloatRect bounds = layout->m_bounds.getGlobalBounds();
         
+        // Determine which edge we're resizing from
+        float leftEdge = bounds.position.x;
+        float rightEdge = bounds.position.x + bounds.size.x;
+        bool resizingFromLeft = std::abs(resizeStartX - leftEdge) < std::abs(resizeStartX - rightEdge);
+        
+        int dir = resizingFromLeft ? -1 : 1;
         float delta = (mousePos.x - resizeStartX) * dir;
         float currentWidth = layout->m_modifier.getFixedWidth();
         float windowWidth = app->getWindow().getSize().x;
@@ -985,9 +1002,12 @@ void FileBrowserComponent::handleResize() {
         return;
     }
     
-    Align align = layout->m_modifier.getAlignment();
-    float edgeX = hasAlign(align, Align::LEFT) ? bounds.position.x + bounds.size.x : bounds.position.x;
-    bool nearEdge = std::abs(mousePos.x - edgeX) < 10.f;
+    // Check both left and right edges regardless of alignment
+    float leftEdge = bounds.position.x;
+    float rightEdge = bounds.position.x + bounds.size.x;
+    bool nearLeftEdge = std::abs(mousePos.x - leftEdge) < 10.f;
+    bool nearRightEdge = std::abs(mousePos.x - rightEdge) < 10.f;
+    bool nearEdge = nearLeftEdge || nearRightEdge;
     
     if (nearEdge) {
         app->uiState.xResizing = true;

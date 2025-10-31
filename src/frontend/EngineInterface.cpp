@@ -3,7 +3,8 @@
 
 #include "Application.hpp"
 #include "../audio/MIDIClip.hpp"
-#include "tinyfiledialogs/tinyfiledialogs.hpp" 
+#include "tinyfiledialogs/tinyfiledialogs.hpp"
+#include <thread> 
 
 Track* Application::getMasterTrack() { 
     return engine.getMasterTrack(); 
@@ -27,7 +28,21 @@ void Application::removeTrack(const std::string& name) {
 
 void Application::exportAudio() {
     const char* path = tinyfd_selectFolderDialog("Select Export Directory", uiState.getExecutableDirectory().c_str());
-    if (path) engine.exportMaster(std::string(path) + "/export.wav");
+    if (path) {
+        std::string compositionName = engine.getCurrentCompositionName();
+        DEBUG_PRINT("Export: Composition name from engine: '" << compositionName << "'");
+        if (compositionName.empty()) {
+            compositionName = "untitled";
+        }
+        // Ensure .wav extension
+        if (compositionName.find(".wav") == std::string::npos) {
+            compositionName += ".wav";
+        }
+        std::string fullPath = std::string(path) + "/" + compositionName;
+        DEBUG_PRINT("Export: Selected directory: " << path);
+        DEBUG_PRINT("Export: Full path to export: " << fullPath);
+        engine.exportMaster(fullPath);
+    }
 }
 
 void Application::setMetronomeEnabled(bool enabled) { 
@@ -39,11 +54,17 @@ bool Application::isMetronomeEnabled() const {
 }
 
 void Application::playSound(const std::string& filePath, float db) { 
-    engine.playSound(filePath, db); 
+    // Run in a separate thread to avoid blocking the UI
+    std::thread([this, filePath, db]() {
+        engine.playSound(filePath, db);
+    }).detach();
 }
 
 void Application::playSound(const juce::File& file, float db) { 
-    engine.playSound(file, db); 
+    // Run in a separate thread to avoid blocking the UI
+    std::thread([this, file, db]() {
+        engine.playSound(file, db);
+    }).detach();
 }
 
 std::string Application::getEngineStateString() const { 

@@ -169,10 +169,11 @@ void Application::loadLayoutConfig() {
     
     std::cout << "Layout loaded from: " << path << std::endl;
     
-    // Force UI update to apply changes
-    if (ui) {
-        ui->forceUpdate();
-    }
+    // Don't force update here - let the normal update cycle apply the changes
+    // This prevents interrupting component state like resize operations
+    // if (ui) {
+    //     ui->forceUpdate();
+    // }
 }
 
 void Application::syncUIStateToConfig() {

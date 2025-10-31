@@ -2608,7 +2608,7 @@ void TimelineComponent::handleClipResize() {
     }
     
     // Not resizing - check ALL clips (not just selected) for resize initiation
-    const float edgeThreshold = 10.0f; // pixels
+    const float edgeThreshold = 5.0f; // pixels
     const float pixelsPerSecond = uiState.beatWidth * uiState.zoom;
     const double edgeThresholdSeconds = edgeThreshold / pixelsPerSecond;
     
@@ -2771,7 +2771,7 @@ void TimelineComponent::handleClipDrag() {
             if (!uiState.showCursor || uiState.cursorTrackName.empty()) return;
             
             // Make sure cursor is within the clip body (not near edges for resize)
-            const float edgeThreshold = 10.0f;
+            const float edgeThreshold = 5.0f;
             const float pixelsPerSecond = uiState.beatWidth * uiState.zoom;
             const double edgeThresholdSeconds = edgeThreshold / pixelsPerSecond;
             
@@ -3328,12 +3328,12 @@ void TimelineComponent::handleLoopPoints() {
     
     prevL = l;
     
-    // Check if engine position is at loop point 2, if so set to loop point 1
+    // Check if engine position has reached or passed loop point 2, if so set to loop point 1
     if (uiState.loopPoint1Sec >= 0.0 && uiState.loopPoint2Sec >= 0.0) {
         double enginePos = app->getPosition();
-        const double tolerance = 0.05; // Small tolerance for position matching
         
-        if (std::abs(enginePos - uiState.loopPoint2Sec) < tolerance) {
+        // Loop back when we reach or pass the loop point
+        if (enginePos >= uiState.loopPoint2Sec) {
             app->setPosition(uiState.loopPoint1Sec);
         }
     }
@@ -3342,7 +3342,7 @@ void TimelineComponent::handleLoopPoints() {
 std::vector<std::shared_ptr<sf::Drawable>> TimelineComponent::generateClipShapes(const std::string& trackName) {
     std::vector<std::shared_ptr<sf::Drawable>> clipShapes;
     
-    Track* track = engineState.getTrack(trackName);
+    Track* track = app->getTrack(trackName);
     if (!track) return clipShapes;
     
     double viewStartSeconds = uiState.leftSidePosSeconds;

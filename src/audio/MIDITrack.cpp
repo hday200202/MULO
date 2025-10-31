@@ -118,8 +118,17 @@ void MIDITrack::process(double playheadSeconds, juce::AudioBuffer<float>& output
     if (muted) {
         outputBuffer.clear();
     } else {
+        // Apply volume and pan
         float trackGain = juce::Decibels::decibelsToGain(volumeDb);
-        outputBuffer.applyGain(trackGain);
+        float panL = std::cos((pan + 1.0f) * juce::MathConstants<float>::pi * 0.25f);
+        float panR = std::sin((pan + 1.0f) * juce::MathConstants<float>::pi * 0.25f);
+        
+        if (outputBuffer.getNumChannels() >= 2) {
+            outputBuffer.applyGain(0, 0, outputBuffer.getNumSamples(), trackGain * panL);
+            outputBuffer.applyGain(1, 0, outputBuffer.getNumSamples(), trackGain * panR);
+        } else if (outputBuffer.getNumChannels() == 1) {
+            outputBuffer.applyGain(0, 0, outputBuffer.getNumSamples(), trackGain);
+        }
     }
 }
 

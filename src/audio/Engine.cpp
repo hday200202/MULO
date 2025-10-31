@@ -7,6 +7,9 @@
 #include <algorithm>
 #include <cctype>
 #include <nlohmann/json.hpp>
+#ifdef __linux__
+#include <sys/stat.h>
+#endif
 
 using json = nlohmann::json;
 
@@ -148,10 +151,16 @@ void Engine::generateMetronomeTrack() {
 }
 
 void Engine::exportMaster(const std::string& filePath) {
+    if (!currentComposition) {
+        DEBUG_PRINT("Export: No composition loaded");
+        return;
+    }
+    
+    // Find the time range to export
     double startTime = std::numeric_limits<double>::max();
     double endTime = 0.0;
-
     bool hasClips = false;
+    
     for (const auto& track : currentComposition->tracks) {
         for (const auto& clip : track->getClips()) {
             hasClips = true;
@@ -160,6 +169,7 @@ void Engine::exportMaster(const std::string& filePath) {
             if (clipEnd > endTime) endTime = clipEnd;
         }
     }
+    
     if (!hasClips) {
         startTime = 0.0;
         double bpm = getBpm();
@@ -170,87 +180,143 @@ void Engine::exportMaster(const std::string& filePath) {
     }
     if (startTime == std::numeric_limits<double>::max()) startTime = 0.0;
 
-    int sampleRate = static_cast<int>(getSampleRate());
+    // Use exact same parameters as real-time playback
     int numChannels = 2;
-    int startSample = static_cast<int>(startTime * sampleRate);
-    int endSample = static_cast<int>(endTime * sampleRate);
-    int totalSamples = endSample - startSample;
+    int numSamples = currentBufferSize;  // Use same buffer size as real-time
+    int totalSamples = static_cast<int>((endTime - startTime) * sampleRate);
+
+    DEBUG_PRINT("Export: Range " << startTime << "s to " << endTime << "s, " << totalSamples << " samples");
+    DEBUG_PRINT("Export: Using sampleRate=" << sampleRate << ", bufferSize=" << numSamples << " (currentBufferSize=" << currentBufferSize << ")");
 
     juce::AudioBuffer<float> outputBuffer(numChannels, totalSamples);
-
-    setPosition(startTime);
-
-    int blockSize = 512;
-    for (int pos = 0; pos < totalSamples; pos += blockSize) {
-        int samplesToProcess = std::min(blockSize, totalSamples - pos);
-        juce::AudioBuffer<float> tempMixBuffer(numChannels, samplesToProcess);
-        tempMixBuffer.clear();
-
-        if (currentComposition) {
-            bool anyTrackSoloed = false;
-            for (const auto& track : currentComposition->tracks) {
-                if (track && track->isSolo()) {
-                    anyTrackSoloed = true;
-                    break;
+    outputBuffer.clear();
+    
+    // Set playhead on MIDI track effects
+    for (auto& track : currentComposition->tracks) {
+        if (track && track->getType() == Track::TrackType::MIDI) {
+            for (const auto& effect : track->getEffects()) {
+                if (effect) {
+                    effect->setBpm(getBpm());
+                    effect->setPlayHead(playHead.get());
                 }
             }
-            for (const auto& track : currentComposition->tracks) {
-                if (track) {
-                    bool shouldPlay = !anyTrackSoloed ? !track->isMuted() : track->isSolo();
-                    if (shouldPlay) {
-                        juce::AudioBuffer<float> trackBuffer(numChannels, samplesToProcess);
-                        trackBuffer.clear();
-                        track->process(positionSeconds, trackBuffer, samplesToProcess, sampleRate);
-                        track->processEffects(trackBuffer);
-                        for (int ch = 0; ch < numChannels; ++ch) {
-                            tempMixBuffer.addFrom(ch, 0, trackBuffer, ch, 0, samplesToProcess);
-                        }
+        }
+    }
+
+    // Reset position to start
+    double exportPosition = startTime;
+    int outputPos = 0;
+    
+    DEBUG_PRINT("=== EXPORT START ===");
+    DEBUG_PRINT("Total samples: " << totalSamples << ", Sample rate: " << sampleRate << ", Buffer size: " << numSamples);
+    
+    int iterationCount = 0;
+    // Process audio using EXACT same code as real-time playback
+    while (outputPos < totalSamples) {
+        // Use the exact number of samples we need (might be less than numSamples on last iteration)
+        int samplesToProcess = std::min(numSamples, totalSamples - outputPos);
+        
+        if (iterationCount < 3 || outputPos + samplesToProcess >= totalSamples) {
+            DEBUG_PRINT("Iteration " << iterationCount << ": pos=" << exportPosition << "s, outputPos=" << outputPos << ", samplesToProcess=" << samplesToProcess);
+        }
+        
+        juce::AudioBuffer<float> mixBuffer(numChannels, samplesToProcess);
+        mixBuffer.clear();
+        
+        // Update play head
+        double currentBpm = getBpm();
+        auto [timeSigNum, timeSigDen] = getTimeSignature();
+        playHead->updatePosition(exportPosition, currentBpm, true, sampleRate, timeSigNum, timeSigDen);
+        
+        // Check for solo tracks
+        bool anyTrackSoloed = false;
+        for (const auto& track : currentComposition->tracks) {
+            if (track && track->isSolo()) {
+                anyTrackSoloed = true;
+                break;
+            }
+        }
+        
+        // Process each track with exact sample count
+        for (const auto& track : currentComposition->tracks) {
+            if (track) {
+                bool shouldPlay = !anyTrackSoloed ? !track->isMuted() : track->isSolo();
+                if (shouldPlay) {
+                    juce::AudioBuffer<float> isolatedTrackBuffer(2, samplesToProcess);
+                    isolatedTrackBuffer.clear();
+                    
+                    track->applyAutomation(exportPosition);
+                    track->process(exportPosition, isolatedTrackBuffer, samplesToProcess, sampleRate);
+                    
+                    // Mix the stereo track buffer into the output buffer
+                    for (int ch = 0; ch < numChannels; ++ch) {
+                        int sourceChannel = ch % 2;
+                        mixBuffer.addFrom(ch, 0, isolatedTrackBuffer, sourceChannel, 0, samplesToProcess);
                     }
                 }
             }
         }
-
+        
+        // Apply master track effects and gain
         if (masterTrack && !masterTrack->isMuted()) {
-            masterTrack->processEffects(tempMixBuffer);
+            masterTrack->processEffects(mixBuffer);
             float masterGain = juce::Decibels::decibelsToGain(masterTrack->getVolume());
             float masterPan = masterTrack->getPan();
             float panL = std::cos((masterPan + 1.0f) * juce::MathConstants<float>::pi * 0.25f);
             float panR = std::sin((masterPan + 1.0f) * juce::MathConstants<float>::pi * 0.25f);
             if (numChannels >= 2) {
-                tempMixBuffer.applyGain(0, 0, samplesToProcess, masterGain * panL);
-                tempMixBuffer.applyGain(1, 0, samplesToProcess, masterGain * panR);
-                for (int ch = 2; ch < numChannels; ++ch)
-                    tempMixBuffer.applyGain(ch, 0, samplesToProcess, masterGain);
+                mixBuffer.applyGain(0, 0, samplesToProcess, masterGain * panL);
+                mixBuffer.applyGain(1, 0, samplesToProcess, masterGain * panR);
             } else if (numChannels == 1) {
-                tempMixBuffer.applyGain(0, 0, samplesToProcess, masterGain);
+                mixBuffer.applyGain(0, 0, samplesToProcess, masterGain);
             }
         }
-
-        // Copy to output
-        for (int ch = 0; ch < numChannels; ++ch)
-            outputBuffer.copyFrom(ch, pos, tempMixBuffer, ch, 0, samplesToProcess);
-        positionSeconds += samplesToProcess / static_cast<double>(sampleRate);
+        
+        // Copy to output buffer
+        for (int ch = 0; ch < numChannels; ++ch) {
+            outputBuffer.copyFrom(ch, outputPos, mixBuffer, ch, 0, samplesToProcess);
+        }
+        
+        outputPos += samplesToProcess;
+        exportPosition += static_cast<double>(samplesToProcess) / sampleRate;
+        iterationCount++;
     }
+    
+    DEBUG_PRINT("=== EXPORT END: " << iterationCount << " iterations ===" );
 
-    juce::String basePath = juce::String(filePath);
-    if (!basePath.endsWithChar('/') && !basePath.endsWithChar('\\'))
-        basePath += juce::File::getSeparatorString();
-    juce::String fileName = currentComposition->name;
-    if (!fileName.endsWithIgnoreCase(".wav"))
-        fileName += ".wav";
-    juce::File outFile(basePath + fileName);
-    outFile = outFile.getNonexistentSibling();
+    // Write to WAV file
+    juce::File outFile(filePath);
+    if (outFile.existsAsFile()) {
+        outFile = outFile.getNonexistentSibling();
+    }
     outFile.getParentDirectory().createDirectory();
 
     juce::WavAudioFormat wavFormat;
-    std::unique_ptr<juce::FileOutputStream> stream(outFile.createOutputStream());
-    if (stream) {
-        std::unique_ptr<juce::AudioFormatWriter> writer(
-            wavFormat.createWriterFor(stream.get(), sampleRate, numChannels, 16, {}, 0));
-        if (writer) {
+    std::unique_ptr<juce::FileOutputStream> stream = outFile.createOutputStream();
+    
+    if (stream != nullptr) {
+        juce::AudioFormatWriter* writer = wavFormat.createWriterFor(
+            stream.release(), 
+            sampleRate, 
+            numChannels, 
+            16,
+            {}, 
+            0
+        );
+        
+        if (writer != nullptr) {
             writer->writeFromAudioSampleBuffer(outputBuffer, 0, totalSamples);
+            delete writer;
+            
+            // Fix file permissions using chmod
+            #ifdef __linux__
+            chmod(outFile.getFullPathName().toStdString().c_str(), 0644);
+            #else
+            outFile.setReadOnly(false);
+            #endif
+            
+            DEBUG_PRINT("Export: Wrote " << totalSamples << " samples to " << outFile.getFullPathName().toStdString());
         }
-        stream.release();
     }
 }
 
@@ -2456,7 +2522,10 @@ void Engine::playSound(const juce::File& file, float volume) {
     previewSource = std::make_unique<juce::AudioFormatReaderSource>(reader.release(), true);
     previewTransport.prepareToPlay(currentBufferSize, sampleRate);
     previewTransport.setSource(previewSource.get(), 0, nullptr, sampleRate);
-    previewTransport.setGain(juce::jlimit(0.0f, 2.0f, volume));
+    
+    // Convert dB to linear gain: gain = 10^(dB/20)
+    float linearGain = std::pow(10.0f, volume / 20.0f);
+    previewTransport.setGain(juce::jlimit(0.0f, 2.0f, linearGain));
     previewTransport.setPosition(0.0);
     previewTransport.start();
 }
